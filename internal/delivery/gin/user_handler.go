@@ -26,9 +26,9 @@ func NewServer(usersUC *user.UserUsecase) *Server {
 }
 
 func (s *Server) registerRoutes() {
-	v1 := s.engine.Group("/api/v1")
+	v1 := s.engine.Group("")
 	{
-		v1.POST("/users", s.createUser)
+		v1.POST("/users", s.registerUser)
 		//v1.GET("/users/:id", s.getUserByID)
 	}
 }
@@ -37,16 +37,22 @@ func (s *Server) Run(addr string) error {
 	return s.engine.Run(addr)
 }
 
-// ---------------------- Handlers ----------------------
+// Handlers
+func (s *Server) registerUser(c *gin.Context) {
+	var input domain.CreateUserRequest
 
-func (s *Server) createUser(c *gin.Context) {
-	var input domain.User
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	err := s.usersUC.Create(c.Request.Context(), &input)
+	user := domain.User{
+		Email:    input.Email,
+		Password: input.Password,
+		Status:   input.Status,
+	}
+
+	err := s.usersUC.RegisterUser(c.Request.Context(), &user)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
