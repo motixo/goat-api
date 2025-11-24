@@ -10,6 +10,7 @@ import (
 
 type Server struct {
 	engine      *gin.Engine
+	authHandler *handlers.AuthHandler
 	userHandler *handlers.UserHandler
 }
 
@@ -21,10 +22,12 @@ func NewServer(userUC user.UserUseCase) *Server {
 	//router.Use(middleware.Logger())
 	//router.Use(middleware.CORS())
 
+	authHandler := handlers.NewAuthHandler(userUC)
 	userHandler := handlers.NewUserHandler(userUC)
 
 	server := &Server{
 		engine:      router,
+		authHandler: authHandler,
 		userHandler: userHandler,
 	}
 
@@ -37,6 +40,7 @@ func (s *Server) setupRoutes() {
 	v1 := api.Group("/v1")
 
 	routes.RegisterUserRoutes(v1, s.userHandler)
+	routes.RegisterAuthRoutes(v1, s.authHandler)
 
 	// Health check
 	s.engine.GET("/health", func(c *gin.Context) {

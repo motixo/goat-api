@@ -7,8 +7,9 @@ import (
 )
 
 type UserUseCase interface {
-	Register(ctx context.Context, email, password string) (*entity.User, error)
-	Login(ctx context.Context, email, password string) (*entity.User, string, string, error)
+	Register(ctx context.Context, input RegisterInput) (RegisterOutput, error)
+	Login(ctx context.Context, input LoginInput) (LoginOutput, error)
+	Refresh(ctx context.Context, input RefreshInput) (RefreshOutput, error)
 	GetProfile(ctx context.Context, userID string) (*entity.User, error)
 	ValidateToken(ctx context.Context, token string) (string, error)
 }
