@@ -5,7 +5,7 @@ import (
 	"github.com/mot0x0/gopi/internal/delivery/http/handlers"
 	"github.com/mot0x0/gopi/internal/delivery/http/middleware"
 	"github.com/mot0x0/gopi/internal/delivery/http/routes"
-	"github.com/mot0x0/gopi/internal/domain/usecases"
+	"github.com/mot0x0/gopi/internal/domain/usecase/user"
 )
 
 type Server struct {
@@ -13,11 +13,11 @@ type Server struct {
 	userHandler *handlers.UserHandler
 }
 
-func NewServer(userUC usecases.UserUseCase) *Server {
+func NewServer(userUC user.UserUseCase) *Server {
 	router := gin.Default()
 
 	// Global middleware
-	router.Use(middleware.ResponseMiddleware())
+	router.Use(middleware.Recovery())
 	//router.Use(middleware.Logger())
 	//router.Use(middleware.CORS())
 

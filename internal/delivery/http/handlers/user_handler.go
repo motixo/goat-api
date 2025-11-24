@@ -4,27 +4,27 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mot0x0/gopi/internal/delivery/http/dto"
 	"github.com/mot0x0/gopi/internal/delivery/http/response"
-	"github.com/mot0x0/gopi/internal/domain/usecases"
+	"github.com/mot0x0/gopi/internal/domain/usecase/user"
 )
 
 type UserHandler struct {
-	userUC usecases.UserUseCase
+	userUC user.UserUseCase
 }
 
-func NewUserHandler(userUC usecases.UserUseCase) *UserHandler {
+func NewUserHandler(userUC user.UserUseCase) *UserHandler {
 	return &UserHandler{userUC: userUC}
 }
 
 func (h *UserHandler) Register(c *gin.Context) {
 	var req dto.CreateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request payload", err)
+		response.BadRequest(c, "Invalid request payload")
 		return
 	}
 
 	newUser, err := h.userUC.Register(c.Request.Context(), req.Email, req.Password)
 	if err != nil {
-		response.BadRequest(c, "Registration failed", err)
+		response.DomainError(c, err)
 		return
 	}
 
@@ -35,7 +35,7 @@ func (h *UserHandler) Register(c *gin.Context) {
 		CreatedAt: newUser.CreatedAt,
 	}
 
-	response.Created(c, "User created successfully", userResponse)
+	response.Created(c, userResponse)
 }
 
 // func (h *UserHandler) Login(c *gin.Context) {

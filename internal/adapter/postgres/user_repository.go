@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/mot0x0/gopi/internal/domain/entities"
+	"github.com/mot0x0/gopi/internal/domain/entity"
 )
 
 type UserRepo struct {
@@ -15,7 +15,7 @@ func NewUserRepository(db *sqlx.DB) *UserRepo {
 	return &UserRepo{db: db}
 }
 
-func (r *UserRepo) Create(ctx context.Context, u *entities.User) error {
+func (r *UserRepo) Create(ctx context.Context, u *entity.User) error {
 	query := `
         INSERT INTO users (id, email, password, status, created_at, updated_at)
         VALUES (:id, :email, :password, :status, :created_at, :updated_at)
@@ -24,8 +24,8 @@ func (r *UserRepo) Create(ctx context.Context, u *entities.User) error {
 	return err
 }
 
-func (r *UserRepo) GetByID(ctx context.Context, id string) (*entities.User, error) {
-	var user entities.User
+func (r *UserRepo) GetByID(ctx context.Context, id string) (*entity.User, error) {
+	var user entity.User
 	query := `
         SELECT id, email, status, created_at, updated_at
         FROM users
@@ -38,8 +38,8 @@ func (r *UserRepo) GetByID(ctx context.Context, id string) (*entities.User, erro
 	return &user, nil
 }
 
-func (r *UserRepo) GetByEmail(ctx context.Context, email string) (*entities.User, error) {
-	var user entities.User
+func (r *UserRepo) GetByEmail(ctx context.Context, email string) (*entity.User, error) {
+	var user entity.User
 	query := `
         SELECT id, email, status, created_at, updated_at
         FROM users

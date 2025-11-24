@@ -1,7 +1,6 @@
 package postgres
 
 import (
-	"fmt"
 	"log"
 
 	"github.com/jmoiron/sqlx"
@@ -12,12 +11,7 @@ type Database struct {
 	DB *sqlx.DB
 }
 
-func NewDatabase(host, port, user, pass, name string) (*Database, error) {
-	dsn := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		host, port, user, pass, name,
-	)
-
+func NewDatabase(dsn string) (*Database, error) {
 	db, err := sqlx.Connect("postgres", dsn)
 	if err != nil {
 		return nil, err

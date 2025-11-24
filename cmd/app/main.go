@@ -2,40 +2,29 @@ package main
 
 import (
 	"log"
-	"os"
 
-	"github.com/joho/godotenv"
 	"github.com/mot0x0/gopi/internal/adapter/postgres"
+	"github.com/mot0x0/gopi/internal/config"
 	"github.com/mot0x0/gopi/internal/delivery/http"
-	"github.com/mot0x0/gopi/internal/usecase/user"
+	"github.com/mot0x0/gopi/internal/domain/usecase/user"
 )
 
 func main() {
-	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, using default environment variables")
-	}
 
-	dbHost := os.Getenv("DB_HOST")
-	dbPort := os.Getenv("DB_PORT")
-	dbUser := os.Getenv("DB_USER")
-	dbPassword := os.Getenv("DB_PASSWORD")
-	dbName := os.Getenv("DB_NAME")
+	cfg := config.Get()
 
-	serverPort := ":" + os.Getenv("SERVER_PORT")
-	jwtSecret := os.Getenv("JWT_SECRET")
-
-	db, err := postgres.NewDatabase(dbHost, dbPort, dbUser, dbPassword, dbName)
+	db, err := postgres.NewDatabase(cfg.DBConnectionString())
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	userRepo := postgres.NewUserRepository(db.DB)
-	usersUC := user.NewUserUsecase(userRepo, jwtSecret)
+	usersUC := user.NewUserUsecase(userRepo)
 
 	server := http.NewServer(usersUC)
 
-	log.Printf("Server starting on port %s", serverPort)
-	if err := server.Run(serverPort); err != nil {
+	log.Printf("Server starting on port %s", cfg.ServerPort)
+	if err := server.Run(cfg.ServerPort); err != nil {
 		log.Fatal("Failed to start server: ", err)
 	}
 }

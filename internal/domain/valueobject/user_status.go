@@ -1,4 +1,4 @@
-package valueobjects
+package valueobject
 
 type UserStatus uint8
 
