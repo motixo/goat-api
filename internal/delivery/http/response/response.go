@@ -1,3 +1,4 @@
+// internal/delivery/http/response/response.go
 package response
 
 import (
@@ -7,22 +8,6 @@ import (
 	"github.com/mot0x0/gopi/internal/domain/errors"
 )
 
-func OK(c *gin.Context, data any) {
-	c.JSON(http.StatusOK, gin.H{"data": data})
-}
-
-func Created(c *gin.Context, data any) {
-	c.JSON(http.StatusCreated, gin.H{"data": data})
-}
-
-func Accepted(c *gin.Context, data any) {
-	c.JSON(http.StatusAccepted, gin.H{"data": data})
-}
-
-func NoContent(c *gin.Context) {
-	c.Status(http.StatusNoContent)
-}
-
 type Problem struct {
 	Type     string `json:"type,omitempty"`
 	Title    string `json:"title,omitempty"`
@@ -31,10 +16,22 @@ type Problem struct {
 	Instance string `json:"instance,omitempty"`
 }
 
-// Generic error responder
-func Error(c *gin.Context, status int, title, detail string) {
+// Success
+func OK(c *gin.Context, data any) {
+	c.JSON(http.StatusOK, gin.H{"data": data})
+}
+
+func Created(c *gin.Context, data any) {
+	c.JSON(http.StatusCreated, gin.H{"data": data})
+}
+
+func NoContent(c *gin.Context) {
+	c.Status(http.StatusNoContent)
+}
+
+func respondWithProblem(c *gin.Context, status int, title, detail, typ string) {
 	c.AbortWithStatusJSON(status, Problem{
-		Type:     "/errors/" + http.StatusText(status),
+		Type:     typ,
 		Title:    title,
 		Status:   status,
 		Detail:   detail,
@@ -42,7 +39,46 @@ func Error(c *gin.Context, status int, title, detail string) {
 	})
 }
 
-// Map domain errors to proper HTTP responses
+func problemType(err error) string {
+	switch err {
+	case errors.ErrPasswordTooShort,
+		errors.ErrPasswordTooLong,
+		errors.ErrPasswordPolicyViolation:
+		return "/errors/invalid-password"
+
+	case errors.ErrEmailAlreadyExists:
+		return "/errors/email-already-exists"
+
+	case errors.ErrUserNotFound, errors.ErrNotFound:
+		return "/errors/not-found"
+
+	case errors.ErrConflict:
+		return "/errors/conflict"
+
+	default:
+		return "/errors/internal"
+	}
+}
+
+func clientMessage(err error) string {
+	switch err {
+	case errors.ErrPasswordTooShort:
+		return "Password must be at least 8 characters long."
+	case errors.ErrPasswordTooLong:
+		return "Password must not exceed 72 characters."
+	case errors.ErrPasswordPolicyViolation:
+		return "Password must contain uppercase, lowercase, number, and special character."
+	case errors.ErrEmailAlreadyExists:
+		return "This email is already registered."
+	case errors.ErrUserNotFound, errors.ErrNotFound:
+		return "The requested resource was not found."
+	case errors.ErrConflict:
+		return "The request conflicts with current state."
+	default:
+		return "An error occurred while processing your request."
+	}
+}
+
 func DomainError(c *gin.Context, err error) {
 	if err == nil {
 		return
@@ -50,38 +86,27 @@ func DomainError(c *gin.Context, err error) {
 
 	status := errors.HTTPStatus(err)
 	title := http.StatusText(status)
-	detail := err.Error()
 
-	// Customize common cases if needed
 	if status == http.StatusInternalServerError {
-		title = "Internal Server Error"
-		detail = "Something went wrong on the server."
+		respondWithProblem(c, status, "Internal Server Error", "An unexpected error occurred.", "/errors/internal")
+		return
 	}
 
-	Error(c, status, title, detail)
+	respondWithProblem(c, status, title, clientMessage(err), problemType(err))
 }
 
-// Convenience helpers
 func BadRequest(c *gin.Context, detail string) {
-	Error(c, http.StatusBadRequest, "Bad Request", detail)
+	respondWithProblem(c, http.StatusBadRequest, "Bad Request", detail, "/errors/validation")
 }
 
 func Unauthorized(c *gin.Context, detail string) {
-	Error(c, http.StatusUnauthorized, "Unauthorized", detail)
-}
-
-func Forbidden(c *gin.Context) {
-	Error(c, http.StatusForbidden, "Forbidden", "You do not have permission to perform this action.")
+	respondWithProblem(c, http.StatusUnauthorized, "Unauthorized", detail, "/errors/unauthorized")
 }
 
 func NotFound(c *gin.Context) {
-	Error(c, http.StatusNotFound, "Not Found", "The requested resource was not found.")
-}
-
-func Conflict(c *gin.Context, detail string) {
-	Error(c, http.StatusConflict, "Conflict", detail)
+	respondWithProblem(c, http.StatusNotFound, "Not Found", "The requested resource was not found.", "/errors/not-found")
 }
 
 func Internal(c *gin.Context) {
-	Error(c, http.StatusInternalServerError, "Internal Server Error", "Something went wrong on the server.")
+	respondWithProblem(c, http.StatusInternalServerError, "Internal Server Error", "An unexpected error occurred.", "/errors/internal")
 }

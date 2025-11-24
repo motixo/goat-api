@@ -10,7 +10,7 @@ func RegisterUserRoutes(router *gin.RouterGroup, userHandler *handlers.UserHandl
 	users := router.Group("/users")
 	{
 		users.POST("/register", userHandler.Register)
-		//users.POST("/login", userHandler.Login) //TODO
+		users.POST("/login", userHandler.Login)
 
 		// TODO
 		// auth := users.Group("")

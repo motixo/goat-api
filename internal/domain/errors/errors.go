@@ -20,10 +20,17 @@ func HTTPStatus(err error) int {
 		return http.StatusUnauthorized
 	case ErrForbidden:
 		return http.StatusForbidden
-	case ErrNotFound:
+	case ErrNotFound, ErrUserNotFound:
 		return http.StatusNotFound
-	case ErrConflict:
+	case ErrConflict, ErrEmailAlreadyExists:
 		return http.StatusConflict
+
+	case ErrBadRequest,
+		ErrPasswordTooShort,
+		ErrPasswordTooLong,
+		ErrPasswordPolicyViolation:
+		return http.StatusBadRequest
+
 	default:
 		return http.StatusInternalServerError
 	}

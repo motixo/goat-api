@@ -111,3 +111,7 @@ func validatePolicy(p string) error {
 	}
 	return nil
 }
+
+func PasswordFromHash(hash string) Password {
+	return Password{value: hash}
+}

@@ -46,16 +46,6 @@ func (u *UserUsecase) Register(ctx context.Context, email string, password strin
 	return rq, nil
 }
 
-func (u *UserUsecase) Login(ctx context.Context, email, password string) (*entity.User, string, string, error) {
-	// TODO: implement
-	return nil, "", "", nil
-}
-
-func (u *UserUsecase) GetProfile(ctx context.Context, userID string) (*entity.User, error) {
-	// TODO: implement
-	return nil, nil
-}
-
 func (u *UserUsecase) ValidateToken(ctx context.Context, token string) (string, error) {
 	// TODO: implement
 	return "", nil

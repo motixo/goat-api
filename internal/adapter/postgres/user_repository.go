@@ -2,6 +2,9 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/mot0x0/gopi/internal/domain/entity"
@@ -41,13 +44,17 @@ func (r *UserRepo) GetByID(ctx context.Context, id string) (*entity.User, error)
 func (r *UserRepo) GetByEmail(ctx context.Context, email string) (*entity.User, error) {
 	var user entity.User
 	query := `
-        SELECT id, email, status, created_at, updated_at
+        SELECT id, email, password, status, created_at, updated_at
         FROM users
         WHERE email = $1
+		LIMIT 1
     `
 	err := r.db.GetContext(ctx, &user, query, email)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get user by email: %w", err)
 	}
 	return &user, nil
 }

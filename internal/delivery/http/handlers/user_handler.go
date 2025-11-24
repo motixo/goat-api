@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 	"github.com/mot0x0/gopi/internal/delivery/http/dto"
 	"github.com/mot0x0/gopi/internal/delivery/http/response"
@@ -38,27 +40,27 @@ func (h *UserHandler) Register(c *gin.Context) {
 	response.Created(c, userResponse)
 }
 
-// func (h *UserHandler) Login(c *gin.Context) {
-//     var req dto.LoginRequest
-//     if err := c.ShouldBindJSON(&req); err != nil {
-//         c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-//         return
-//     }
+func (h *UserHandler) Login(c *gin.Context) {
+	var req dto.LoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request payload")
+		return
+	}
 
-//     user, accessToken, refreshToken, err := h.userUC.Login(c.Request.Context(), req.Email, req.Password)
-//     if err != nil {
-//         c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
-//         return
-//     }
+	user, accessToken, refreshToken, err := h.userUC.Login(c.Request.Context(), req.Email, req.Password)
+	if err != nil {
+		response.DomainError(c, err)
+		return
+	}
 
-//     c.JSON(http.StatusOK, dto.LoginResponse{
-//         AccessToken:  accessToken,
-//         RefreshToken: refreshToken,
-//         User: dto.UserResponse{
-//             ID:        user.ID,
-//             Email:     user.Email,
-//             Status:    user.Status.String(),
-//             CreatedAt: user.CreatedAt,
-//         },
-//     })
-// }
+	c.JSON(http.StatusOK, dto.LoginResponse{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		User: dto.UserResponse{
+			ID:        user.ID,
+			Email:     user.Email,
+			Status:    user.Status.String(),
+			CreatedAt: user.CreatedAt,
+		},
+	})
+}
