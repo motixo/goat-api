@@ -61,3 +61,18 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 
 	response.OK(c, output)
 }
+
+func (h *AuthHandler) Logout(c *gin.Context) {
+	var input user.LogoutInput
+	if err := c.ShouldBindJSON(&input); err != nil || input.RefreshToken == "" {
+		response.BadRequest(c, "refresh_token is required")
+		return
+	}
+
+	if err := h.usecase.Logout(c.Request.Context(), input); err != nil {
+		response.Unauthorized(c, err.Error())
+		return
+	}
+
+	response.OK(c, "logout successful")
+}

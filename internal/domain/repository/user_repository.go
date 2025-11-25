@@ -1,11 +1,13 @@
-package repositories
+package repository
 
-import "github.com/mot0x0/gopi/internal/domain/entity"
+import (
+	"context"
+
+	"github.com/mot0x0/gopi/internal/domain/entity"
+)
 
 type UserRepository interface {
-	Create(user *entity.User) error
-	FindByID(id string) (*entity.User, error)
-	FindByEmail(email string) (*entity.User, error)
-	Update(user *entity.User) error
-	Delete(id string) error
+	Create(ctx context.Context, u *entity.User) error
+	FindByID(ctx context.Context, id string) (*entity.User, error)
+	FindByEmail(ctx context.Context, email string) (*entity.User, error)
 }

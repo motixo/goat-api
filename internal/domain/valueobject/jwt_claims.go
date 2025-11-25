@@ -24,17 +24,17 @@ type JWTClaims struct {
 }
 
 // NewAccessToken
-func NewAccessToken(userID string, email, secret string) (string, time.Time, error) {
+func NewAccessToken(userID string, email, secret string) (string, string, time.Time, error) {
 	return newToken(userID, email, secret, TokenTypeAccess, 15*time.Minute)
 }
 
 // NewRefreshToken
-func NewRefreshToken(userID string, email, secret string) (string, time.Time, error) {
+func NewRefreshToken(userID string, email, secret string) (string, string, time.Time, error) {
 	return newToken(userID, email, secret, TokenTypeRefresh, 14*24*time.Hour)
 }
 
-func newToken(userID string, email, secret string, tokenType TokenType, duration time.Duration) (string, time.Time, error) {
-	expiresAt := time.Now().Add(duration)
+func newToken(userID string, email, secret string, tokenType TokenType, duration time.Duration) (string, string, time.Time, error) {
+	expiresAt := time.Now().UTC().Add(duration)
 	jti := uuid.New().String()
 
 	claims := JWTClaims{
@@ -47,15 +47,15 @@ func newToken(userID string, email, secret string, tokenType TokenType, duration
 			Subject:   string(tokenType),
 			Audience:  jwt.ClaimStrings{"api"},
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			NotBefore: jwt.NewNumericDate(time.Now()),
+			IssuedAt:  jwt.NewNumericDate(time.Now().UTC()),
+			NotBefore: jwt.NewNumericDate(time.Now().UTC()),
 			ID:        jti,
 		},
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signed, err := token.SignedString([]byte(secret))
-	return signed, expiresAt, err
+	return signed, jti, expiresAt, err
 }
 
 func ParseAndValidate(tokenStr, secret string) (*JWTClaims, error) {

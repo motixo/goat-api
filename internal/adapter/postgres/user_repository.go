@@ -27,7 +27,7 @@ func (r *UserRepo) Create(ctx context.Context, u *entity.User) error {
 	return err
 }
 
-func (r *UserRepo) GetByID(ctx context.Context, id string) (*entity.User, error) {
+func (r *UserRepo) FindByID(ctx context.Context, id string) (*entity.User, error) {
 	var user entity.User
 	query := `
         SELECT id, email, status, created_at, updated_at
@@ -41,7 +41,7 @@ func (r *UserRepo) GetByID(ctx context.Context, id string) (*entity.User, error)
 	return &user, nil
 }
 
-func (r *UserRepo) GetByEmail(ctx context.Context, email string) (*entity.User, error) {
+func (r *UserRepo) FindByEmail(ctx context.Context, email string) (*entity.User, error) {
 	var user entity.User
 	query := `
         SELECT id, email, password, status, created_at, updated_at

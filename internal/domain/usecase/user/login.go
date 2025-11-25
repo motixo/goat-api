@@ -6,6 +6,7 @@ import (
 
 	"github.com/mot0x0/gopi/internal/config"
 	"github.com/mot0x0/gopi/internal/domain/errors"
+	"github.com/mot0x0/gopi/internal/domain/usecase/jti"
 	"github.com/mot0x0/gopi/internal/domain/valueobject"
 )
 
@@ -23,7 +24,7 @@ type LoginOutput struct {
 }
 
 func (u *UserUsecase) Login(ctx context.Context, input LoginInput) (LoginOutput, error) {
-	user, err := u.userRepo.GetByEmail(ctx, input.Email)
+	user, err := u.userRepo.FindByEmail(ctx, input.Email)
 	if err != nil {
 		return LoginOutput{}, err
 	}
@@ -31,21 +32,29 @@ func (u *UserUsecase) Login(ctx context.Context, input LoginInput) (LoginOutput,
 		return LoginOutput{}, errors.ErrNotFound
 	}
 
-	p := valueobject.PasswordFromHash(user.Password)
-	if !p.Check(input.Password) {
+	if !valueobject.PasswordFromHash(user.Password).Check(input.Password) {
 		return LoginOutput{}, errors.ErrUnauthorized
 	}
 
-	access, accessExp, err := valueobject.NewAccessToken(user.ID, user.Email, config.Get().JWTSecret)
+	access, _, accessExp, err := valueobject.NewAccessToken(user.ID, user.Email, config.Get().JWTSecret)
 	if err != nil {
 		return LoginOutput{}, err
 	}
 
-	refresh, refreshExp, err := valueobject.NewRefreshToken(user.ID, user.Email, config.Get().JWTSecret)
+	refresh, jt, refreshExp, err := valueobject.NewRefreshToken(user.ID, user.Email, config.Get().JWTSecret)
 	if err != nil {
 		return LoginOutput{}, err
 	}
 
+	jtiInput := jti.StoreInput{
+		UserID: user.ID,
+		JTI:    jt,
+		Exp:    time.Until(refreshExp),
+	}
+
+	if err := u.jtiUC.StoreJTI(ctx, jtiInput); err != nil {
+		return LoginOutput{}, err
+	}
 	return LoginOutput{
 		AccessToken:           access,
 		AccessTokenExpiresAt:  accessExp,
