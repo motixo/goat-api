@@ -1,4 +1,4 @@
-package user
+package auth
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mot0x0/gopi/internal/domain/entity"
+	"github.com/mot0x0/gopi/internal/domain/usecase/user"
 	"github.com/mot0x0/gopi/internal/domain/valueobject"
 )
 
@@ -15,11 +16,11 @@ type RegisterInput struct {
 }
 
 type RegisterOutput struct {
-	User UserResponse `json:"user"`
+	User user.UserResponse `json:"user"`
 }
 
-func (u *UserUseCase) Register(ctx context.Context, input RegisterInput) (RegisterOutput, error) {
-	hashedPassword, err := valueobject.NewPassword(input.Password)
+func (a *AuthUseCase) Register(ctx context.Context, input RegisterInput) (RegisterOutput, error) {
+	hashedPassword, err := a.passwordService.Hash(ctx, input.Password)
 	if err != nil {
 		return RegisterOutput{}, err
 	}
@@ -32,13 +33,13 @@ func (u *UserUseCase) Register(ctx context.Context, input RegisterInput) (Regist
 		CreatedAt: time.Now().UTC(),
 	}
 
-	err = u.userRepo.Create(ctx, rq)
+	err = a.userRepo.Create(ctx, rq)
 	if err != nil {
 		return RegisterOutput{}, err
 	}
 
 	return RegisterOutput{
-		User: UserResponse{
+		User: user.UserResponse{
 			ID:        rq.ID,
 			Email:     rq.Email,
 			CreatedAt: rq.CreatedAt,

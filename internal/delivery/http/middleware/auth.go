@@ -4,12 +4,19 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mot0x0/gopi/internal/config"
 	"github.com/mot0x0/gopi/internal/delivery/http/response"
 	"github.com/mot0x0/gopi/internal/domain/valueobject"
 )
 
-func AuthRequired() gin.HandlerFunc {
+type AuthMiddleware struct {
+	jwtSecret string
+}
+
+func NewAuthMiddleware(jwtSecret string) *AuthMiddleware {
+	return &AuthMiddleware{jwtSecret: jwtSecret}
+}
+
+func (m *AuthMiddleware) Required() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		auth := c.GetHeader("Authorization")
 		if auth == "" || !strings.HasPrefix(auth, "Bearer ") {
@@ -19,7 +26,7 @@ func AuthRequired() gin.HandlerFunc {
 		}
 
 		token := strings.TrimPrefix(auth, "Bearer ")
-		claims, err := valueobject.ParseAndValidate(token, config.Get().JWTSecret)
+		claims, err := valueobject.ParseAndValidate(token, m.jwtSecret) // Use injected secret
 		if err != nil || claims.TokenType != valueobject.TokenTypeAccess {
 			response.Unauthorized(c, "invalid token")
 			c.Abort()

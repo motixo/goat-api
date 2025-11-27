@@ -24,7 +24,7 @@ func main() {
 	red := redis.NewRedisClient(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
 
 	userRepo := postgres.NewUserRepository(db.DB)
-	jtiRepo := redis.NewJTIRepository(red.Client())
+	jtiRepo := jti.NewRepository(red.Client())
 
 	jtiUC := jti.NewJTIUsecase(jtiRepo)
 	authUC := auth.NewAuthUsecase(jtiUC, userRepo)

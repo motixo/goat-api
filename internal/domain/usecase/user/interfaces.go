@@ -7,7 +7,6 @@ import (
 )
 
 type UseCase interface {
-	Register(ctx context.Context, input RegisterInput) (RegisterOutput, error)
 	GetProfile(ctx context.Context, userID string) (*entity.User, error)
 }
 

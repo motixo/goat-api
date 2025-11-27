@@ -10,26 +10,27 @@ import (
 )
 
 type Server struct {
-	engine      *gin.Engine
-	authHandler *handlers.AuthHandler
-	userHandler *handlers.UserHandler
+	engine         *gin.Engine
+	authHandler    *handlers.AuthHandler
+	userHandler    *handlers.UserHandler
+	authMiddleware *middleware.AuthMiddleware
 }
 
-func NewServer(userUC user.UseCase, authUC auth.UseCase) *Server {
+func NewServer(userUC user.UseCase, authUC auth.UseCase, jwtSecret string) *Server {
 	router := gin.Default()
 
 	// Global middleware
+	authMiddleware := middleware.NewAuthMiddleware(jwtSecret)
 	router.Use(middleware.Recovery())
-	//router.Use(middleware.Logger())
-	//router.Use(middleware.CORS())
 
 	authHandler := handlers.NewAuthHandler(authUC)
 	userHandler := handlers.NewUserHandler(userUC)
 
 	server := &Server{
-		engine:      router,
-		authHandler: authHandler,
-		userHandler: userHandler,
+		engine:         router,
+		authHandler:    authHandler,
+		userHandler:    userHandler,
+		authMiddleware: authMiddleware,
 	}
 
 	server.setupRoutes()
@@ -40,8 +41,8 @@ func (s *Server) setupRoutes() {
 	api := s.engine.Group("/api")
 	v1 := api.Group("/v1")
 
-	routes.RegisterUserRoutes(v1, s.userHandler)
-	routes.RegisterAuthRoutes(v1, s.authHandler)
+	routes.RegisterUserRoutes(v1, s.userHandler, s.authMiddleware)
+	routes.RegisterAuthRoutes(v1, s.authHandler, s.authMiddleware)
 
 	// Health check
 	s.engine.GET("/health", func(c *gin.Context) {

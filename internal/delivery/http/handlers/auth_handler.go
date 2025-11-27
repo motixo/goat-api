@@ -30,6 +30,22 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	response.OK(c, output)
 }
 
+func (h *AuthHandler) Register(c *gin.Context) {
+	var input auth.RegisterInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		response.BadRequest(c, "Invalid request payload")
+		return
+	}
+
+	output, err := h.usecase.Register(c.Request.Context(), input)
+	if err != nil {
+		response.DomainError(c, err)
+		return
+	}
+
+	response.Created(c, output)
+}
+
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	var input auth.RefreshInput
 	if err := c.ShouldBindJSON(&input); err != nil {

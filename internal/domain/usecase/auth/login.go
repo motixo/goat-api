@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/mot0x0/gopi/internal/config"
 	"github.com/mot0x0/gopi/internal/domain/errors"
 	"github.com/mot0x0/gopi/internal/domain/usecase/jti"
 	"github.com/mot0x0/gopi/internal/domain/usecase/user"
@@ -33,16 +32,16 @@ func (a *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput,
 		return LoginOutput{}, errors.ErrNotFound
 	}
 
-	if !valueobject.PasswordFromHash(u.Password).Check(input.Password) {
+	if !a.passwordService.Verify(ctx, input.Password, valueobject.PasswordFromHash(u.Password)) {
 		return LoginOutput{}, errors.ErrUnauthorized
 	}
 
-	access, _, accessExp, err := valueobject.NewAccessToken(u.ID, u.Email, config.Get().JWTSecret)
+	access, _, accessExp, err := valueobject.NewAccessToken(u.ID, u.Email, a.jwtSecret)
 	if err != nil {
 		return LoginOutput{}, err
 	}
 
-	refresh, jt, refreshExp, err := valueobject.NewRefreshToken(u.ID, u.Email, config.Get().JWTSecret)
+	refresh, jt, refreshExp, err := valueobject.NewRefreshToken(u.ID, u.Email, a.jwtSecret)
 	if err != nil {
 		return LoginOutput{}, err
 	}

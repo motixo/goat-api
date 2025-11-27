@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/mot0x0/gopi/internal/config"
 	"github.com/mot0x0/gopi/internal/domain/errors"
 	"github.com/mot0x0/gopi/internal/domain/usecase/jti"
 	"github.com/mot0x0/gopi/internal/domain/valueobject"
@@ -22,9 +21,8 @@ type RefreshOutput struct {
 }
 
 func (a *AuthUseCase) Refresh(ctx context.Context, input RefreshInput) (RefreshOutput, error) {
-	secret := config.Get().JWTSecret
 
-	claims, err := valueobject.ParseAndValidate(input.RefreshToken, secret)
+	claims, err := valueobject.ParseAndValidate(input.RefreshToken, a.jwtSecret)
 	if err != nil {
 		return RefreshOutput{}, errors.ErrUnauthorized
 	}
@@ -49,7 +47,7 @@ func (a *AuthUseCase) Refresh(ctx context.Context, input RefreshInput) (RefreshO
 	var newJTI string
 
 	if refreshRemaining < 24*time.Hour {
-		newRefreshToken, newJTI, newRefreshExp, err = valueobject.NewRefreshToken(claims.UserID, claims.Email, secret)
+		newRefreshToken, newJTI, newRefreshExp, err = valueobject.NewRefreshToken(claims.UserID, claims.Email, a.jwtSecret)
 		if err != nil {
 			return RefreshOutput{}, err
 		}
@@ -65,7 +63,7 @@ func (a *AuthUseCase) Refresh(ctx context.Context, input RefreshInput) (RefreshO
 		newRefreshExp = claims.ExpiresAt.Time
 	}
 
-	accessToken, accessJTI, accessExp, err := valueobject.NewAccessToken(claims.UserID, claims.Email, secret)
+	accessToken, accessJTI, accessExp, err := valueobject.NewAccessToken(claims.UserID, claims.Email, a.jwtSecret)
 	if err != nil {
 		return RefreshOutput{}, err
 	}
