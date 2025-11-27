@@ -1,4 +1,4 @@
-package user
+package auth
 
 import (
 	"context"
@@ -21,7 +21,7 @@ type RefreshOutput struct {
 	RefreshTokenExpiresAt time.Time `json:"refresh_token_expires_at"`
 }
 
-func (u *UserUsecase) Refresh(ctx context.Context, input RefreshInput) (RefreshOutput, error) {
+func (a *AuthUsecase) Refresh(ctx context.Context, input RefreshInput) (RefreshOutput, error) {
 	secret := config.Get().JWTSecret
 
 	claims, err := valueobject.ParseAndValidate(input.RefreshToken, secret)
@@ -33,7 +33,7 @@ func (u *UserUsecase) Refresh(ctx context.Context, input RefreshInput) (RefreshO
 		return RefreshOutput{}, errors.ErrUnauthorized
 	}
 
-	valid, err := u.jtiUC.IsJTIValid(ctx, claims.JTI)
+	valid, err := a.jtiUC.IsJTIValid(ctx, claims.JTI)
 	if err != nil {
 		return RefreshOutput{}, err
 	}
@@ -53,7 +53,7 @@ func (u *UserUsecase) Refresh(ctx context.Context, input RefreshInput) (RefreshO
 		if err != nil {
 			return RefreshOutput{}, err
 		}
-		if err := u.jtiUC.StoreJTI(ctx, jti.StoreInput{
+		if err := a.jtiUC.StoreJTI(ctx, jti.StoreInput{
 			UserID: claims.UserID,
 			JTI:    newJTI,
 			Exp:    newRefreshExp.Sub(now),
@@ -70,7 +70,7 @@ func (u *UserUsecase) Refresh(ctx context.Context, input RefreshInput) (RefreshO
 		return RefreshOutput{}, err
 	}
 
-	if err := u.jtiUC.StoreJTI(ctx, jti.StoreInput{
+	if err := a.jtiUC.StoreJTI(ctx, jti.StoreInput{
 		UserID: claims.UserID,
 		JTI:    accessJTI,
 		Exp:    accessExp.Sub(now),

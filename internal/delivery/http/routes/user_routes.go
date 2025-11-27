@@ -7,6 +7,11 @@ import (
 )
 
 func RegisterUserRoutes(router *gin.RouterGroup, userHandler *handlers.UserHandler) {
+	public := router.Group("/signup")
+	public.Use()
+	{
+		public.POST("", userHandler.Register)
+	}
 	private := router.Group("/user")
 	private.Use(middleware.AuthRequired())
 	{

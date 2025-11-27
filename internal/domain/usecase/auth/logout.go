@@ -1,4 +1,4 @@
-package user
+package auth
 
 import (
 	"context"
@@ -13,7 +13,7 @@ type LogoutInput struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-func (u *UserUsecase) Logout(ctx context.Context, input LogoutInput) error {
+func (a *AuthUsecase) Logout(ctx context.Context, input LogoutInput) error {
 	secret := config.Get().JWTSecret
 
 	accessClaims, err := valueobject.ParseAndValidate(input.AccessToken, secret)
@@ -26,11 +26,11 @@ func (u *UserUsecase) Logout(ctx context.Context, input LogoutInput) error {
 		return errors.ErrUnauthorized
 	}
 
-	if err := u.jtiUC.RevokeJTI(ctx, accessClaims.JTI); err != nil {
+	if err := a.jtiUC.RevokeJTI(ctx, accessClaims.JTI); err != nil {
 		return err
 	}
 
-	if err := u.jtiUC.RevokeJTI(ctx, refreshClaims.JTI); err != nil {
+	if err := a.jtiUC.RevokeJTI(ctx, refreshClaims.JTI); err != nil {
 		return err
 	}
 

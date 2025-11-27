@@ -3,35 +3,19 @@ package handlers
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/mot0x0/gopi/internal/delivery/http/response"
-	"github.com/mot0x0/gopi/internal/domain/usecase/user"
+	"github.com/mot0x0/gopi/internal/domain/usecase/auth"
 )
 
 type AuthHandler struct {
-	usecase user.UserUseCase
+	usecase auth.AuthUseCase
 }
 
-func NewAuthHandler(usecase user.UserUseCase) *AuthHandler {
+func NewAuthHandler(usecase auth.AuthUseCase) *AuthHandler {
 	return &AuthHandler{usecase: usecase}
 }
 
-func (h *AuthHandler) Register(c *gin.Context) {
-	var input user.RegisterInput
-	if err := c.ShouldBindJSON(&input); err != nil {
-		response.BadRequest(c, "Invalid request payload")
-		return
-	}
-
-	output, err := h.usecase.Register(c.Request.Context(), input)
-	if err != nil {
-		response.DomainError(c, err)
-		return
-	}
-
-	response.Created(c, output)
-}
-
 func (h *AuthHandler) Login(c *gin.Context) {
-	var input user.LoginInput
+	var input auth.LoginInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		response.BadRequest(c, "Invalid request payload")
 		return
@@ -47,7 +31,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 }
 
 func (h *AuthHandler) Refresh(c *gin.Context) {
-	var input user.RefreshInput
+	var input auth.RefreshInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		response.BadRequest(c, "token is required")
 		return
@@ -63,7 +47,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 }
 
 func (h *AuthHandler) Logout(c *gin.Context) {
-	var input user.LogoutInput
+	var input auth.LogoutInput
 	if err := c.ShouldBindJSON(&input); err != nil || input.RefreshToken == "" {
 		response.BadRequest(c, "refresh_token is required")
 		return

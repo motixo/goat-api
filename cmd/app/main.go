@@ -7,6 +7,7 @@ import (
 	"github.com/mot0x0/gopi/internal/adapter/redis"
 	"github.com/mot0x0/gopi/internal/config"
 	"github.com/mot0x0/gopi/internal/delivery/http"
+	"github.com/mot0x0/gopi/internal/domain/usecase/auth"
 	"github.com/mot0x0/gopi/internal/domain/usecase/jti"
 	"github.com/mot0x0/gopi/internal/domain/usecase/user"
 )
@@ -26,9 +27,10 @@ func main() {
 	jtiRepo := redis.NewJTIRepository(red.Client())
 
 	jtiUC := jti.NewJTIUsecase(jtiRepo)
-	usersUC := user.NewUserUsecase(userRepo, jtiUC)
+	authUC := auth.NewAuthUsecase(jtiUC, userRepo)
+	usersUC := user.NewUserUsecase(userRepo)
 
-	server := http.NewServer(usersUC)
+	server := http.NewServer(usersUC, authUC)
 
 	log.Printf("Server starting on port %s", cfg.ServerPort)
 	if err := server.Run(cfg.ServerPort); err != nil {
