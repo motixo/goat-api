@@ -9,3 +9,6 @@ go.sum
 
 # Wire generated DI container
 cmd/app/wire_gen.go
+
+# Build file
+gopi

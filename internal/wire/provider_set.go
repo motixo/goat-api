@@ -34,6 +34,7 @@ var RepositorySet = wire.NewSet(
 
 // Service providers
 var ServiceSet = wire.NewSet(
+	service.NewULIDGenerator,
 	service.NewPasswordService,
 )
 

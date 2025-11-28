@@ -21,6 +21,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
+	input.IP = c.ClientIP()
+	input.Device = c.GetHeader("User-Agent")
+
 	output, err := h.usecase.Login(c.Request.Context(), input)
 	if err != nil {
 		response.DomainError(c, err)

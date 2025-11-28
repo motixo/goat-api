@@ -10,43 +10,60 @@ import (
 )
 
 var createSessionLua = redis.NewScript(`
-    -- KEYS[1]: key
-    -- ARGV: sequence of field/value pairs + ttl
+	local sessionKey = KEYS[1]
+	local jtiKey = KEYS[2]
 
-    local key = KEYS[1]
-    local ttl = ARGV[#ARGV]   -- last argument is TTL
-    local fieldCount = #ARGV - 1
+	local ttl = tonumber(ARGV[#ARGV])
+	if not ttl or ttl <= 0 then
+		return redis.error_reply("TTL must be positive integer")
+	end
 
-    -- Build HSET arguments
-    local hsetArgs = {}
-    for i = 1, fieldCount do
-        hsetArgs[i] = ARGV[i]
-    end
+	-- HSET field/value pairs (all except last arg)
+	local hsetArgs = {}
+	for i = 1, #ARGV - 1 do
+		hsetArgs[i] = ARGV[i]
+	end
 
-    redis.call("HSET", key, unpack(hsetArgs))
-    redis.call("EXPIRE", key, ttl)
+	-- write session hash
+	redis.call("HSET", sessionKey, unpack(hsetArgs))
+	redis.call("EXPIRE", sessionKey, ttl)
 
-    return 1
+	-- read sessionID from field "id"
+	local sessionID = redis.call("HGET", sessionKey, "id")
+	if not sessionID then
+		return redis.error_reply("Missing sessionID")
+	end
+
+	redis.call("SET", jtiKey, sessionID, "EX", ttl)
+
+	return 1
 `)
 
 func (r *Repository) CreateSession(ctx context.Context, s *entity.Session) error {
 	key := r.key(s.ID)
+	jtiKey := "jti:" + s.CurrentJTI
 
 	ttl := time.Until(s.ExpiresAt)
 	if ttl <= 0 {
 		return fmt.Errorf("expires_at is in the past")
 	}
 
+	ttlSeconds := int64(ttl.Seconds())
+	if ttlSeconds < 1 {
+		ttlSeconds = 1
+	}
+
 	argv := []interface{}{
+		"id", s.ID,
 		"user_id", s.UserID,
 		"device", s.Device,
 		"ip", s.IP,
 		"created_at", s.CreatedAt.Unix(),
 		"expires_at", s.ExpiresAt.Unix(),
 		"current_jti", s.CurrentJTI,
-		ttl.Seconds(),
+		ttlSeconds,
 	}
 
-	_, err := createSessionLua.Run(ctx, r.client, []string{key}, argv...).Result()
+	_, err := createSessionLua.Run(ctx, r.client, []string{key, jtiKey}, argv...).Result()
 	return err
 }

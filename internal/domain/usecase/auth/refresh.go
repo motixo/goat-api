@@ -47,7 +47,8 @@ func (a *AuthUseCase) Refresh(ctx context.Context, input RefreshInput) (RefreshO
 	var newJTI string
 
 	if refreshRemaining < 24*time.Hour {
-		newRefreshToken, newJTI, newRefreshExp, err = valueobject.NewRefreshToken(claims.UserID, claims.Email, a.jwtSecret)
+		newJTI = a.ulidGen.New()
+		newRefreshToken, newRefreshExp, err = valueobject.NewRefreshToken(claims.UserID, claims.Email, a.jwtSecret, newJTI)
 		if err != nil {
 			return RefreshOutput{}, err
 		}
@@ -63,7 +64,8 @@ func (a *AuthUseCase) Refresh(ctx context.Context, input RefreshInput) (RefreshO
 		newRefreshExp = claims.ExpiresAt.Time
 	}
 
-	accessToken, accessJTI, accessExp, err := valueobject.NewAccessToken(claims.UserID, claims.Email, a.jwtSecret)
+	accessJTI := a.ulidGen.New()
+	accessToken, accessExp, err := valueobject.NewAccessToken(claims.UserID, claims.Email, a.jwtSecret, accessJTI)
 	if err != nil {
 		return RefreshOutput{}, err
 	}

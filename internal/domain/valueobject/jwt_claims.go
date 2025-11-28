@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
 	"github.com/mot0x0/gopi/internal/domain/errors"
 )
 
@@ -24,19 +23,17 @@ type JWTClaims struct {
 }
 
 // NewAccessToken
-func NewAccessToken(userID string, email, secret string) (string, string, time.Time, error) {
-	return newToken(userID, email, secret, TokenTypeAccess, 15*time.Minute)
+func NewAccessToken(userID string, email, secret string, jti string) (string, time.Time, error) {
+	return newToken(userID, email, secret, jti, TokenTypeAccess, 15*time.Minute)
 }
 
 // NewRefreshToken
-func NewRefreshToken(userID string, email, secret string) (string, string, time.Time, error) {
-	return newToken(userID, email, secret, TokenTypeRefresh, 14*24*time.Hour)
+func NewRefreshToken(userID string, email, secret string, jti string) (string, time.Time, error) {
+	return newToken(userID, email, secret, jti, TokenTypeRefresh, 14*24*time.Hour)
 }
 
-func newToken(userID string, email, secret string, tokenType TokenType, duration time.Duration) (string, string, time.Time, error) {
+func newToken(userID string, email, secret string, jti string, tokenType TokenType, duration time.Duration) (string, time.Time, error) {
 	expiresAt := time.Now().UTC().Add(duration)
-	jti := uuid.New().String()
-
 	claims := JWTClaims{
 		UserID:    userID,
 		Email:     email,
@@ -55,7 +52,7 @@ func newToken(userID string, email, secret string, tokenType TokenType, duration
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signed, err := token.SignedString([]byte(secret))
-	return signed, jti, expiresAt, err
+	return signed, expiresAt, err
 }
 
 func ParseAndValidate(tokenStr, secret string) (*JWTClaims, error) {

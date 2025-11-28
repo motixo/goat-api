@@ -7,7 +7,7 @@ import (
 )
 
 type UseCase interface {
-	Create(ctx context.Context, s *entity.Session) error
+	Create(ctx context.Context, input CreateInput) error
 	Get(ctx context.Context, sessionID string) (*entity.Session, error)
 	ListUserSessions(ctx context.Context, userID string) ([]*entity.Session, error)
 	Delete(ctx context.Context, sessionID string) error
