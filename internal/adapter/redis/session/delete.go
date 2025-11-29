@@ -12,7 +12,7 @@ var deleteSessionsLua = redis.NewScript(`
 		local jti = redis.call("HGET", sessionKey, "current_jti")
 
 		if userId then
-			redis.call("DEL", "user:" .. userId)
+			redis.call("SREM", "user:" .. userId, sessionKey)
 		end
 		if jti then
 			redis.call("DEL", "jti:" .. jti)

@@ -46,6 +46,7 @@ var UseCaseSet = wire.NewSet(
 var HTTPSet = wire.NewSet(
 	handlers.NewAuthHandler,
 	handlers.NewUserHandler,
+	handlers.NewSessionHandler,
 	middleware.NewAuthMiddleware,
 	http.NewServer,
 )

@@ -56,6 +56,9 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
+	input.IP = c.ClientIP()
+	input.Device = c.GetHeader("User-Agent")
+
 	output, err := h.usecase.Refresh(c.Request.Context(), input)
 	if err != nil {
 		response.Unauthorized(c, "invalid refresh token")

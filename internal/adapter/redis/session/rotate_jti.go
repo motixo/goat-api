@@ -17,8 +17,9 @@ var rotateJtiLua = redis.NewScript(`
 	local ip = ARGV[2]
 	local device = ARGV[3]
 	local updatedAt = ARGV[4]
-	local jtiTTL = tonumber(ARGV[5])
-	local sessionTTL = tonumber(ARGV[6])
+	local expiresAt = ARGV[5]
+	local jtiTTL = tonumber(ARGV[6])
+	local sessionTTL = tonumber(ARGV[7])
 
 	if jtiTTL <= 0 then
 		return redis.error_reply("JTI TTL must be positive")
@@ -39,6 +40,7 @@ var rotateJtiLua = redis.NewScript(`
 	redis.call("HSET", sessionKey,
 		"current_jti", newJTI,
 		"updated_at", updatedAt,
+		"expires_at", expiresAt,
 		"ip", ip,
 		"device", device
 	)
@@ -51,18 +53,21 @@ var rotateJtiLua = redis.NewScript(`
 func (r *Repository) RotateJTI(
 	ctx context.Context,
 	oldJTI, newJTI, ip, device string,
+	expiresAt time.Time,
 	jtiTTLSeconds, sessionTTLSeconds int,
 ) (string, error) {
 
 	oldJTIKey := r.key("jti", oldJTI)
 	newJTIKey := r.key("jti", newJTI)
-	updatedAt := fmt.Sprintf("%d", time.Now().UTC().Unix())
+
+	updatedAt := time.Now().UTC().Unix()
 
 	argv := []interface{}{
 		newJTI,
 		ip,
 		device,
 		updatedAt,
+		expiresAt.Unix(),
 		jtiTTLSeconds,
 		sessionTTLSeconds,
 	}

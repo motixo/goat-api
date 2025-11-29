@@ -3,7 +3,7 @@ package session
 import (
 	"context"
 
-	"github.com/mot0x0/gopi/internal/domain/dto"
+	"github.com/mot0x0/gopi/internal/domain/entity"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -37,7 +37,7 @@ var createSessionLua = redis.NewScript(`
 	return 1
 `)
 
-func (r *Repository) Create(ctx context.Context, s *dto.Session) error {
+func (r *Repository) Create(ctx context.Context, s *entity.Session) error {
 	sessionkey := r.key("session", s.ID)
 	jtiKey := r.key("jti", s.CurrentJTI)
 	userkey := r.key("user", s.UserID)

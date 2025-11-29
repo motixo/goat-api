@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/mot0x0/gopi/internal/domain/dto"
+	"github.com/mot0x0/gopi/internal/domain/entity"
 )
 
 type CreateInput struct {
@@ -18,7 +18,7 @@ type CreateInput struct {
 func (s *SessionUseCase) CreateSession(ctx context.Context, input CreateInput) (string, error) {
 
 	now := time.Now().UTC()
-	session := &dto.Session{
+	session := &entity.Session{
 		ID:                s.ulidGen.New(),
 		UserID:            input.UserID,
 		CurrentJTI:        input.CurrentJTI,

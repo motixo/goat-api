@@ -15,6 +15,7 @@ type Server struct {
 	engine         *gin.Engine
 	authHandler    *handlers.AuthHandler
 	userHandler    *handlers.UserHandler
+	sessionHandler *handlers.SessionHandler
 	authMiddleware *middleware.AuthMiddleware
 }
 
@@ -26,6 +27,7 @@ func NewServer(userUC user.UseCase, authUC auth.UseCase, sessionUC session.UseCa
 	router.Use(middleware.Recovery())
 
 	authHandler := handlers.NewAuthHandler(authUC)
+	sessionHandler := handlers.NewSessionHandler(sessionUC)
 	userHandler := handlers.NewUserHandler(userUC)
 
 	server := &Server{
@@ -33,6 +35,7 @@ func NewServer(userUC user.UseCase, authUC auth.UseCase, sessionUC session.UseCa
 		authHandler:    authHandler,
 		userHandler:    userHandler,
 		authMiddleware: authMiddleware,
+		sessionHandler: sessionHandler,
 	}
 
 	server.setupRoutes()
@@ -43,7 +46,7 @@ func (s *Server) setupRoutes() {
 	api := s.engine.Group("/api")
 	v1 := api.Group("/v1")
 
-	routes.RegisterUserRoutes(v1, s.userHandler, s.authMiddleware)
+	routes.RegisterUserRoutes(v1, s.userHandler, s.sessionHandler, s.authMiddleware)
 	routes.RegisterAuthRoutes(v1, s.authHandler, s.authMiddleware)
 
 	// Health check

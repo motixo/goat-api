@@ -30,8 +30,9 @@ func (s *SessionUseCase) RotateSessionJTI(ctx context.Context, input RotateInput
 		ctx,
 		input.OldJTI,
 		input.CurrentJTI,
-		input.Device,
 		input.IP,
+		input.Device,
+		input.ExpiresAt,
 		int(time.Until(input.JTIExpiresAt).Seconds()),
 		int(time.Until(input.ExpiresAt).Seconds()),
 	)
