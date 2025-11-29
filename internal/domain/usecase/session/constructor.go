@@ -1,7 +1,7 @@
 package session
 
 import (
-	"github.com/mot0x0/gopi/internal/domain/service"
+	"github.com/mot0x0/goth-api/internal/domain/service"
 )
 
 type SessionUseCase struct {

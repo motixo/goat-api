@@ -1,4 +1,4 @@
-module github.com/mot0x0/gopi
+module github.com/mot0x0/goth-api
 
 go 1.25.4
 

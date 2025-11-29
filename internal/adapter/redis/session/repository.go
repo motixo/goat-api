@@ -3,7 +3,7 @@ package session
 import (
 	"fmt"
 
-	"github.com/mot0x0/gopi/internal/domain/usecase/session"
+	"github.com/mot0x0/goth-api/internal/domain/usecase/session"
 	"github.com/redis/go-redis/v9"
 )
 

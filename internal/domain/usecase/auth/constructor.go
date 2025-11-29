@@ -1,10 +1,10 @@
 package auth
 
 import (
-	"github.com/mot0x0/gopi/internal/config"
-	"github.com/mot0x0/gopi/internal/domain/service"
-	"github.com/mot0x0/gopi/internal/domain/usecase/session"
-	"github.com/mot0x0/gopi/internal/domain/usecase/user"
+	"github.com/mot0x0/goth-api/internal/config"
+	"github.com/mot0x0/goth-api/internal/domain/service"
+	"github.com/mot0x0/goth-api/internal/domain/usecase/session"
+	"github.com/mot0x0/goth-api/internal/domain/usecase/user"
 )
 
 type AuthUseCase struct {

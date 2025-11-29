@@ -2,17 +2,17 @@ package wire
 
 import (
 	"github.com/google/wire"
-	"github.com/mot0x0/gopi/internal/adapter/postgres"
-	postgresUser "github.com/mot0x0/gopi/internal/adapter/postgres/user"
-	redisSession "github.com/mot0x0/gopi/internal/adapter/redis/session"
-	"github.com/mot0x0/gopi/internal/config"
-	"github.com/mot0x0/gopi/internal/delivery/http"
-	"github.com/mot0x0/gopi/internal/delivery/http/handlers"
-	"github.com/mot0x0/gopi/internal/delivery/http/middleware"
-	"github.com/mot0x0/gopi/internal/domain/service"
-	"github.com/mot0x0/gopi/internal/domain/usecase/auth"
-	"github.com/mot0x0/gopi/internal/domain/usecase/session"
-	"github.com/mot0x0/gopi/internal/domain/usecase/user"
+	"github.com/mot0x0/goth-api/internal/adapter/postgres"
+	postgresUser "github.com/mot0x0/goth-api/internal/adapter/postgres/user"
+	redisSession "github.com/mot0x0/goth-api/internal/adapter/redis/session"
+	"github.com/mot0x0/goth-api/internal/config"
+	"github.com/mot0x0/goth-api/internal/delivery/http"
+	"github.com/mot0x0/goth-api/internal/delivery/http/handlers"
+	"github.com/mot0x0/goth-api/internal/delivery/http/middleware"
+	"github.com/mot0x0/goth-api/internal/domain/service"
+	"github.com/mot0x0/goth-api/internal/domain/usecase/auth"
+	"github.com/mot0x0/goth-api/internal/domain/usecase/session"
+	"github.com/mot0x0/goth-api/internal/domain/usecase/user"
 	"github.com/redis/go-redis/v9"
 )
 

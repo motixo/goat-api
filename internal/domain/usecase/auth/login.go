@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/mot0x0/gopi/internal/domain/errors"
-	"github.com/mot0x0/gopi/internal/domain/usecase/session"
-	"github.com/mot0x0/gopi/internal/domain/usecase/user"
-	"github.com/mot0x0/gopi/internal/domain/valueobject"
+	"github.com/mot0x0/goth-api/internal/domain/errors"
+	"github.com/mot0x0/goth-api/internal/domain/usecase/session"
+	"github.com/mot0x0/goth-api/internal/domain/usecase/user"
+	"github.com/mot0x0/goth-api/internal/domain/valueobject"
 )
 
 type LoginInput struct {

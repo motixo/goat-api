@@ -4,9 +4,9 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mot0x0/gopi/internal/delivery/http/response"
-	"github.com/mot0x0/gopi/internal/domain/usecase/session"
-	"github.com/mot0x0/gopi/internal/domain/valueobject"
+	"github.com/mot0x0/goth-api/internal/delivery/http/response"
+	"github.com/mot0x0/goth-api/internal/domain/usecase/session"
+	"github.com/mot0x0/goth-api/internal/domain/valueobject"
 )
 
 type AuthMiddleware struct {

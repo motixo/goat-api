@@ -3,7 +3,7 @@ package entity
 import (
 	"time"
 
-	"github.com/mot0x0/gopi/internal/domain/valueobject"
+	"github.com/mot0x0/goth-api/internal/domain/valueobject"
 )
 
 type User struct {

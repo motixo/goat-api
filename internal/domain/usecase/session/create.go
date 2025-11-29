@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/mot0x0/gopi/internal/domain/entity"
+	"github.com/mot0x0/goth-api/internal/domain/entity"
 )
 
 type CreateInput struct {

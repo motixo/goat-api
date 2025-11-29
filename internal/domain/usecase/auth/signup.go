@@ -5,9 +5,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/mot0x0/gopi/internal/domain/entity"
-	"github.com/mot0x0/gopi/internal/domain/usecase/user"
-	"github.com/mot0x0/gopi/internal/domain/valueobject"
+	"github.com/mot0x0/goth-api/internal/domain/entity"
+	"github.com/mot0x0/goth-api/internal/domain/usecase/user"
+	"github.com/mot0x0/goth-api/internal/domain/valueobject"
 )
 
 type RegisterInput struct {
