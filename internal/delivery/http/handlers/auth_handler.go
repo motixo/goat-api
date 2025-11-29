@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"strings"
-
 	"github.com/gin-gonic/gin"
 	"github.com/mot0x0/gopi/internal/delivery/http/response"
 	"github.com/mot0x0/gopi/internal/domain/usecase/auth"
@@ -68,22 +66,23 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 }
 
 func (h *AuthHandler) Logout(c *gin.Context) {
-	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		response.BadRequest(c, "Authorization header is required")
+	sessionVal, exists := c.Get("session_id")
+	if !exists {
+		response.BadRequest(c, "missing session identifier")
 		return
 	}
 
-	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-	if tokenStr == authHeader {
-		response.BadRequest(c, "Invalid Authorization header format")
+	session, ok := sessionVal.(string)
+	if !ok || session == "" {
+		response.BadRequest(c, "invalid session identifier")
 		return
 	}
 
-	if err := h.usecase.Logout(c.Request.Context(), tokenStr); err != nil {
+	if err := h.usecase.Logout(c.Request.Context(), session); err != nil {
 		response.Unauthorized(c, err.Error())
 		return
 	}
 
 	response.OK(c, "logout successful")
+
 }

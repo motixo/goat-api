@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -44,14 +45,14 @@ var rotateJtiLua = redis.NewScript(`
 
 	redis.call("EXPIRE", sessionKey, sessionTTL)
 
-	return 1
+	return sessionKey
 `)
 
 func (r *Repository) RotateJTI(
 	ctx context.Context,
 	oldJTI, newJTI, ip, device string,
 	jtiTTLSeconds, sessionTTLSeconds int,
-) error {
+) (string, error) {
 
 	oldJTIKey := r.key("jti", oldJTI)
 	newJTIKey := r.key("jti", newJTI)
@@ -66,9 +67,19 @@ func (r *Repository) RotateJTI(
 		sessionTTLSeconds,
 	}
 
-	_, err := rotateJtiLua.Run(ctx, r.client, []string{oldJTIKey, newJTIKey}, argv...).Result()
+	res, err := rotateJtiLua.Run(ctx, r.client, []string{oldJTIKey, newJTIKey}, argv...).Result()
 	if err != nil {
-		return fmt.Errorf("failed to rotate JTI: %w", err)
+		return "", fmt.Errorf("failed to rotate JTI: %w", err)
 	}
-	return nil
+
+	sessionID, ok := res.(string)
+	if !ok {
+		return "", fmt.Errorf("unexpected type returned from Redis: %T", res)
+	}
+
+	parts := strings.Split(sessionID, ":")
+	if len(parts) == 2 {
+		sessionID = parts[1]
+	}
+	return sessionID, nil
 }

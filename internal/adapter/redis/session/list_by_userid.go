@@ -3,41 +3,51 @@ package session
 import (
 	"context"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/mot0x0/gopi/internal/domain/entity"
 )
 
 func (r *Repository) ListByUser(ctx context.Context, userID string) ([]*entity.Session, error) {
-	var sessions []*entity.Session
+	userKey := r.key("user", userID)
 
-	iter := r.client.Scan(ctx, 0, "session:*", 100).Iterator()
-	for iter.Next(ctx) {
-		key := iter.Val()
-
-		res, err := r.client.HGetAll(ctx, key).Result()
-		if err != nil {
-			continue
-		}
-
-		if res["user_id"] != userID {
-			continue
-		}
-
-		createdAtUnix, _ := strconv.ParseInt(res["created_at"], 10, 64)
-		expiresAtUnix, _ := strconv.ParseInt(res["expires_at"], 10, 64)
-
-		sessions = append(sessions, &entity.Session{
-			ID:         strings.TrimPrefix(key, "session:"),
-			UserID:     res["user_id"],
-			Device:     res["device"],
-			IP:         res["ip"],
-			CreatedAt:  time.Unix(createdAtUnix, 0),
-			ExpiresAt:  time.Unix(expiresAtUnix, 0),
-			CurrentJTI: res["current_jti"],
-		})
+	sessionKeys, err := r.client.SMembers(ctx, userKey).Result()
+	if err != nil {
+		return nil, err
 	}
 
-	return sessions, iter.Err()
+	sessions := make([]*entity.Session, 0, len(sessionKeys))
+
+	for _, sessionKey := range sessionKeys {
+		fields, err := r.client.HGetAll(ctx, sessionKey).Result()
+		if err != nil {
+			return nil, err
+		}
+
+		if len(fields) == 0 {
+			continue
+		}
+
+		s := &entity.Session{
+			ID:         fields["id"],
+			UserID:     fields["user_id"],
+			Device:     fields["device"],
+			IP:         fields["ip"],
+			CurrentJTI: fields["current_jti"],
+		}
+
+		if createdAt, err := strconv.ParseInt(fields["created_at"], 10, 64); err == nil {
+			s.CreatedAt = time.Unix(createdAt, 0)
+		}
+		if updatedAt, err := strconv.ParseInt(fields["updated_at"], 10, 64); err == nil {
+			s.UpdatedAt = time.Unix(updatedAt, 0)
+		}
+		if expiresAt, err := strconv.ParseInt(fields["expires_at"], 10, 64); err == nil {
+			s.ExpiresAt = time.Unix(expiresAt, 0)
+		}
+
+		sessions = append(sessions, s)
+	}
+
+	return sessions, nil
 }

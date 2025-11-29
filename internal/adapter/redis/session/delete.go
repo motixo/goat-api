@@ -6,18 +6,32 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-var deleteSessionLua = redis.NewScript(`
-    local sessionKey = KEYS[1]
-    local jtiKey  = KEYS[2]
-    redis.call("DEL", jtiKey)
-    redis.call("DEL", sessionKey)
-    return 1
+var deleteSessionsLua = redis.NewScript(`
+	for i, sessionKey in ipairs(KEYS) do
+		local userId = redis.call("HGET", sessionKey, "user_id")
+		local jti = redis.call("HGET", sessionKey, "current_jti")
+
+		if userId then
+			redis.call("DEL", "user:" .. userId)
+		end
+		if jti then
+			redis.call("DEL", "jti:" .. jti)
+		end
+		redis.call("DEL", sessionKey)
+	end
+	return 1
 `)
 
-func (r *Repository) Delete(ctx context.Context, sessionID, JTI string) error {
-	sessionKey := r.key("session", sessionID)
-	jtiPrefix := r.key("jti", JTI)
+func (r *Repository) Delete(ctx context.Context, sessionIDs []string) error {
+	if len(sessionIDs) == 0 {
+		return nil
+	}
 
-	_, err := deleteSessionLua.Run(ctx, r.client, []string{sessionKey, jtiPrefix}).Result()
+	sessionKeys := make([]string, 0, len(sessionIDs))
+	for _, sessionID := range sessionIDs {
+		sessionKeys = append(sessionKeys, r.key("session", sessionID))
+	}
+
+	_, err := deleteSessionsLua.Run(ctx, r.client, sessionKeys).Result()
 	return err
 }

@@ -16,17 +16,17 @@ type RotateInput struct {
 	JTIExpiresAt time.Time
 }
 
-func (s *SessionUseCase) RotateSessionJTI(ctx context.Context, input RotateInput) error {
+func (s *SessionUseCase) RotateSessionJTI(ctx context.Context, input RotateInput) (string, error) {
 
 	valid, err := s.sessionRepo.ExistsJTI(ctx, input.OldJTI)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !valid {
-		return errors.ErrUnauthorized
+		return "", errors.ErrUnauthorized
 	}
 
-	return s.sessionRepo.RotateJTI(
+	sessionID, err := s.sessionRepo.RotateJTI(
 		ctx,
 		input.OldJTI,
 		input.CurrentJTI,
@@ -35,4 +35,8 @@ func (s *SessionUseCase) RotateSessionJTI(ctx context.Context, input RotateInput
 		int(time.Until(input.JTIExpiresAt).Seconds()),
 		int(time.Until(input.ExpiresAt).Seconds()),
 	)
+	if err != nil {
+		return "", err
+	}
+	return sessionID, nil
 }

@@ -10,5 +10,5 @@ type Session struct {
 	CurrentJTI string    `json:"current_jti,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 	ExpiresAt  time.Time `json:"expires_at"`
-	UpdateAt   time.Time `json:"updated_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }

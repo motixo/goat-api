@@ -10,6 +10,7 @@ import (
 var createSessionLua = redis.NewScript(`
 	local sessionKey = KEYS[1]
 	local jtiKey = KEYS[2]
+	local userKey = KEYS[3]
 
 	local sessionTTL = tonumber(ARGV[#ARGV - 1])
 	local jtiTTL = tonumber(ARGV[#ARGV])
@@ -30,6 +31,8 @@ var createSessionLua = redis.NewScript(`
 	redis.call("EXPIRE", sessionKey, sessionTTL)
 
 	redis.call("SET", jtiKey, sessionKey, "EX", jtiTTL)
+	redis.call("SADD", userKey, sessionKey)
+	redis.call("EXPIRE", userKey, sessionTTL)
 
 	return 1
 `)
@@ -37,6 +40,7 @@ var createSessionLua = redis.NewScript(`
 func (r *Repository) Create(ctx context.Context, s *dto.Session) error {
 	sessionkey := r.key("session", s.ID)
 	jtiKey := r.key("jti", s.CurrentJTI)
+	userkey := r.key("user", s.UserID)
 
 	argv := []interface{}{
 		"id", s.ID,
@@ -51,6 +55,6 @@ func (r *Repository) Create(ctx context.Context, s *dto.Session) error {
 		s.JTITTLSeconds,
 	}
 
-	_, err := createSessionLua.Run(ctx, r.client, []string{sessionkey, jtiKey}, argv...).Result()
+	_, err := createSessionLua.Run(ctx, r.client, []string{sessionkey, jtiKey, userkey}, argv...).Result()
 	return err
 }

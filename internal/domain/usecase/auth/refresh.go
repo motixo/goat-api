@@ -49,11 +49,12 @@ func (a *AuthUseCase) Refresh(ctx context.Context, input RefreshInput) (RefreshO
 		JTIExpiresAt: refreshExp,
 	}
 
-	if err := a.sessionUC.RotateSessionJTI(ctx, rotateInput); err != nil {
+	sessionID, err := a.sessionUC.RotateSessionJTI(ctx, rotateInput)
+	if err != nil {
 		return RefreshOutput{}, err
 	}
 
-	access, accessExp, err := valueobject.NewAccessToken(claims.UserID, a.jwtSecret, claims.SessionID, refreshJTI)
+	access, accessExp, err := valueobject.NewAccessToken(claims.UserID, a.jwtSecret, sessionID, refreshJTI)
 	if err != nil {
 		return RefreshOutput{}, err
 	}

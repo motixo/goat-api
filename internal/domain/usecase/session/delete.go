@@ -4,6 +4,6 @@ import (
 	"context"
 )
 
-func (s *SessionUseCase) DeleteSession(ctx context.Context, sessionID, JTI string) error {
-	return s.sessionRepo.Delete(ctx, sessionID, JTI)
+func (s *SessionUseCase) DeleteSessions(ctx context.Context, sessionIDs []string) error {
+	return s.sessionRepo.Delete(ctx, sessionIDs)
 }
