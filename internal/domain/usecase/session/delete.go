@@ -1,7 +1,9 @@
 package session
 
-import "context"
+import (
+	"context"
+)
 
-func (s *SessionUseCase) Delete(ctx context.Context, sessionID string) error {
-	return s.sessionRepo.DeleteSession(ctx, sessionID)
+func (s *SessionUseCase) DeleteSession(ctx context.Context, sessionID, JTI string) error {
+	return s.sessionRepo.Delete(ctx, sessionID, JTI)
 }

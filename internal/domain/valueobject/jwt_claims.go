@@ -16,28 +16,27 @@ const (
 
 type JWTClaims struct {
 	UserID    string    `json:"user_id"`
-	Email     string    `json:"email"`
 	TokenType TokenType `json:"token_type"`
+	SessionID string    `json:"session_id,omitempty"`
 	JTI       string    `json:"jti,omitempty"`
 	jwt.RegisteredClaims
 }
 
-// NewAccessToken
-func NewAccessToken(userID string, email, secret string, jti string) (string, time.Time, error) {
-	return newToken(userID, email, secret, jti, TokenTypeAccess, 15*time.Minute)
+func NewAccessToken(userID, secret, sessionID, jti string) (string, time.Time, error) {
+	return newToken(userID, secret, sessionID, jti, TokenTypeAccess, 15*time.Minute)
 }
 
-// NewRefreshToken
-func NewRefreshToken(userID string, email, secret string, jti string) (string, time.Time, error) {
-	return newToken(userID, email, secret, jti, TokenTypeRefresh, 14*24*time.Hour)
+func NewRefreshToken(userID, secret, jti string) (string, time.Time, error) {
+	return newToken(userID, secret, "", jti, TokenTypeRefresh, 14*24*time.Hour)
 }
 
-func newToken(userID string, email, secret string, jti string, tokenType TokenType, duration time.Duration) (string, time.Time, error) {
+func newToken(userID, secret, sessionID, jti string, tokenType TokenType, duration time.Duration) (string, time.Time, error) {
 	expiresAt := time.Now().UTC().Add(duration)
+
 	claims := JWTClaims{
 		UserID:    userID,
-		Email:     email,
 		TokenType: tokenType,
+		SessionID: sessionID,
 		JTI:       jti,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    "gopi",

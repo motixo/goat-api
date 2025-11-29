@@ -5,15 +5,20 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mot0x0/gopi/internal/delivery/http/response"
+	"github.com/mot0x0/gopi/internal/domain/usecase/session"
 	"github.com/mot0x0/gopi/internal/domain/valueobject"
 )
 
 type AuthMiddleware struct {
+	sessionUC session.UseCase
 	jwtSecret string
 }
 
-func NewAuthMiddleware(jwtSecret string) *AuthMiddleware {
-	return &AuthMiddleware{jwtSecret: jwtSecret}
+func NewAuthMiddleware(jwtSecret string, sessionUC session.UseCase) *AuthMiddleware {
+	return &AuthMiddleware{
+		jwtSecret: jwtSecret,
+		sessionUC: sessionUC,
+	}
 }
 
 func (m *AuthMiddleware) Required() gin.HandlerFunc {
@@ -33,8 +38,19 @@ func (m *AuthMiddleware) Required() gin.HandlerFunc {
 			return
 		}
 
+		isValid, err := m.sessionUC.IsJTIValid(c, claims.JTI)
+		if err != nil {
+			response.Internal(c)
+			c.Abort()
+			return
+		}
+		if !isValid {
+			response.Unauthorized(c, "invalid token")
+			c.Abort()
+			return
+		}
+
 		c.Set("user_id", claims.UserID)
-		c.Set("user_email", claims.Email)
 		c.Next()
 	}
 }

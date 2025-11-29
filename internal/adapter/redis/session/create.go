@@ -2,10 +2,8 @@ package session
 
 import (
 	"context"
-	"fmt"
-	"time"
 
-	"github.com/mot0x0/gopi/internal/domain/entity"
+	"github.com/mot0x0/gopi/internal/domain/dto"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -13,45 +11,32 @@ var createSessionLua = redis.NewScript(`
 	local sessionKey = KEYS[1]
 	local jtiKey = KEYS[2]
 
-	local ttl = tonumber(ARGV[#ARGV])
-	if not ttl or ttl <= 0 then
-		return redis.error_reply("TTL must be positive integer")
+	local sessionTTL = tonumber(ARGV[#ARGV - 1])
+	local jtiTTL = tonumber(ARGV[#ARGV])
+
+	if not sessionTTL or sessionTTL <= 0 then
+		return redis.error_reply("Session TTL must be positive integer")
+	end
+	if not jtiTTL or jtiTTL <= 0 then
+		return redis.error_reply("JTI TTL must be positive integer")
 	end
 
-	-- HSET field/value pairs (all except last arg)
 	local hsetArgs = {}
-	for i = 1, #ARGV - 1 do
+	for i = 1, #ARGV - 2 do
 		hsetArgs[i] = ARGV[i]
 	end
 
-	-- write session hash
 	redis.call("HSET", sessionKey, unpack(hsetArgs))
-	redis.call("EXPIRE", sessionKey, ttl)
+	redis.call("EXPIRE", sessionKey, sessionTTL)
 
-	-- read sessionID from field "id"
-	local sessionID = redis.call("HGET", sessionKey, "id")
-	if not sessionID then
-		return redis.error_reply("Missing sessionID")
-	end
-
-	redis.call("SET", jtiKey, sessionID, "EX", ttl)
+	redis.call("SET", jtiKey, sessionKey, "EX", jtiTTL)
 
 	return 1
 `)
 
-func (r *Repository) CreateSession(ctx context.Context, s *entity.Session) error {
-	key := r.key(s.ID)
-	jtiKey := "jti:" + s.CurrentJTI
-
-	ttl := time.Until(s.ExpiresAt)
-	if ttl <= 0 {
-		return fmt.Errorf("expires_at is in the past")
-	}
-
-	ttlSeconds := int64(ttl.Seconds())
-	if ttlSeconds < 1 {
-		ttlSeconds = 1
-	}
+func (r *Repository) Create(ctx context.Context, s *dto.Session) error {
+	sessionkey := r.key("session", s.ID)
+	jtiKey := r.key("jti", s.CurrentJTI)
 
 	argv := []interface{}{
 		"id", s.ID,
@@ -59,11 +44,13 @@ func (r *Repository) CreateSession(ctx context.Context, s *entity.Session) error
 		"device", s.Device,
 		"ip", s.IP,
 		"created_at", s.CreatedAt.Unix(),
+		"updated_at", s.UpdatedAt.Unix(),
 		"expires_at", s.ExpiresAt.Unix(),
 		"current_jti", s.CurrentJTI,
-		ttlSeconds,
+		s.SessionTTLSeconds,
+		s.JTITTLSeconds,
 	}
 
-	_, err := createSessionLua.Run(ctx, r.client, []string{key, jtiKey}, argv...).Result()
+	_, err := createSessionLua.Run(ctx, r.client, []string{sessionkey, jtiKey}, argv...).Result()
 	return err
 }

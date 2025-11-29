@@ -15,6 +15,6 @@ func NewRepository(client *redis.Client) session.Repository {
 	return &Repository{client: client}
 }
 
-func (r *Repository) key(sessionID string) string {
-	return fmt.Sprintf("session:%s", sessionID)
+func (r *Repository) key(perfix string, sessionID string) string {
+	return fmt.Sprintf("%s:%s", perfix, sessionID)
 }

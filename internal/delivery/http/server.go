@@ -7,6 +7,7 @@ import (
 	"github.com/mot0x0/gopi/internal/delivery/http/middleware"
 	"github.com/mot0x0/gopi/internal/delivery/http/routes"
 	"github.com/mot0x0/gopi/internal/domain/usecase/auth"
+	"github.com/mot0x0/gopi/internal/domain/usecase/session"
 	"github.com/mot0x0/gopi/internal/domain/usecase/user"
 )
 
@@ -17,11 +18,11 @@ type Server struct {
 	authMiddleware *middleware.AuthMiddleware
 }
 
-func NewServer(userUC user.UseCase, authUC auth.UseCase, cfg *config.Config) *Server {
+func NewServer(userUC user.UseCase, authUC auth.UseCase, sessionUC session.UseCase, cfg *config.Config) *Server {
 	router := gin.Default()
 
 	// Global middleware
-	authMiddleware := middleware.NewAuthMiddleware(cfg.JWTSecret)
+	authMiddleware := middleware.NewAuthMiddleware(cfg.JWTSecret, sessionUC)
 	router.Use(middleware.Recovery())
 
 	authHandler := handlers.NewAuthHandler(authUC)

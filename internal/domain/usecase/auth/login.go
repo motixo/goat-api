@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/mot0x0/gopi/internal/domain/errors"
-	"github.com/mot0x0/gopi/internal/domain/usecase/jti"
 	"github.com/mot0x0/gopi/internal/domain/usecase/session"
 	"github.com/mot0x0/gopi/internal/domain/usecase/user"
 	"github.com/mot0x0/gopi/internal/domain/valueobject"
@@ -39,35 +38,27 @@ func (a *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput,
 		return LoginOutput{}, errors.ErrUnauthorized
 	}
 
-	access, accessExp, err := valueobject.NewAccessToken(u.ID, u.Email, a.jwtSecret, a.ulidGen.New())
-	if err != nil {
-		return LoginOutput{}, err
-	}
-
 	refreshJTI := a.ulidGen.New()
-	refresh, refreshExp, err := valueobject.NewRefreshToken(u.ID, u.Email, a.jwtSecret, refreshJTI)
+	refresh, refreshExp, err := valueobject.NewRefreshToken(u.ID, a.jwtSecret, refreshJTI)
 	if err != nil {
-		return LoginOutput{}, err
-	}
-
-	jtiInput := jti.StoreInput{
-		UserID: u.ID,
-		JTI:    refreshJTI,
-		Exp:    time.Until(refreshExp),
-	}
-
-	if err := a.jtiUC.StoreJTI(ctx, jtiInput); err != nil {
 		return LoginOutput{}, err
 	}
 
 	sessionInput := session.CreateInput{
-		UserID:     u.ID,
-		CurrentJTI: refreshJTI,
-		IP:         input.IP,
-		Device:     input.Device,
-		ExpiresAt:  refreshExp,
+		UserID:       u.ID,
+		CurrentJTI:   refreshJTI,
+		IP:           input.IP,
+		Device:       input.Device,
+		JTIExpiresAt: refreshExp,
 	}
-	if err := a.sessionUC.Create(ctx, sessionInput); err != nil {
+
+	seseeionID, err := a.sessionUC.CreateSession(ctx, sessionInput)
+	if err != nil {
+		return LoginOutput{}, err
+	}
+
+	access, accessExp, err := valueobject.NewAccessToken(u.ID, a.jwtSecret, seseeionID, refreshJTI)
+	if err != nil {
 		return LoginOutput{}, err
 	}
 

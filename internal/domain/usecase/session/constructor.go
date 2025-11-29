@@ -1,6 +1,8 @@
 package session
 
-import "github.com/mot0x0/gopi/internal/domain/service"
+import (
+	"github.com/mot0x0/gopi/internal/domain/service"
+)
 
 type SessionUseCase struct {
 	sessionRepo Repository

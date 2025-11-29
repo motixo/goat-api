@@ -7,5 +7,5 @@ import (
 )
 
 func (s *SessionUseCase) ListUserSessions(ctx context.Context, userID string) ([]*entity.Session, error) {
-	return s.sessionRepo.ListSessionsByUser(ctx, userID)
+	return s.sessionRepo.ListByUser(ctx, userID)
 }

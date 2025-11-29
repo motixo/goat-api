@@ -5,12 +5,14 @@ import (
 	"time"
 
 	"github.com/mot0x0/gopi/internal/domain/errors"
-	"github.com/mot0x0/gopi/internal/domain/usecase/jti"
+	"github.com/mot0x0/gopi/internal/domain/usecase/session"
 	"github.com/mot0x0/gopi/internal/domain/valueobject"
 )
 
 type RefreshInput struct {
 	RefreshToken string `json:"refresh_token"`
+	IP           string `json:"-"`
+	Device       string `json:"-"`
 }
 
 type RefreshOutput struct {
@@ -31,57 +33,35 @@ func (a *AuthUseCase) Refresh(ctx context.Context, input RefreshInput) (RefreshO
 		return RefreshOutput{}, errors.ErrUnauthorized
 	}
 
-	valid, err := a.jtiUC.IsJTIValid(ctx, claims.JTI)
+	refreshJTI := a.ulidGen.New()
+	refresh, refreshExp, err := valueobject.NewRefreshToken(claims.UserID, a.jwtSecret, refreshJTI)
 	if err != nil {
 		return RefreshOutput{}, err
-	}
-	if !valid {
-		return RefreshOutput{}, errors.ErrUnauthorized
 	}
 
 	now := time.Now().UTC()
-	refreshRemaining := time.Until(claims.ExpiresAt.Time)
-
-	var newRefreshToken string
-	var newRefreshExp time.Time
-	var newJTI string
-
-	if refreshRemaining < 24*time.Hour {
-		newJTI = a.ulidGen.New()
-		newRefreshToken, newRefreshExp, err = valueobject.NewRefreshToken(claims.UserID, claims.Email, a.jwtSecret, newJTI)
-		if err != nil {
-			return RefreshOutput{}, err
-		}
-		if err := a.jtiUC.StoreJTI(ctx, jti.StoreInput{
-			UserID: claims.UserID,
-			JTI:    newJTI,
-			Exp:    newRefreshExp.Sub(now),
-		}); err != nil {
-			return RefreshOutput{}, err
-		}
-	} else {
-		newRefreshToken = input.RefreshToken
-		newRefreshExp = claims.ExpiresAt.Time
+	rotateInput := session.RotateInput{
+		OldJTI:       claims.JTI,
+		CurrentJTI:   refreshJTI,
+		Device:       input.Device,
+		IP:           input.IP,
+		ExpiresAt:    now.Add(365 * 24 * time.Hour),
+		JTIExpiresAt: refreshExp,
 	}
 
-	accessJTI := a.ulidGen.New()
-	accessToken, accessExp, err := valueobject.NewAccessToken(claims.UserID, claims.Email, a.jwtSecret, accessJTI)
-	if err != nil {
+	if err := a.sessionUC.RotateSessionJTI(ctx, rotateInput); err != nil {
 		return RefreshOutput{}, err
 	}
 
-	if err := a.jtiUC.StoreJTI(ctx, jti.StoreInput{
-		UserID: claims.UserID,
-		JTI:    accessJTI,
-		Exp:    accessExp.Sub(now),
-	}); err != nil {
+	access, accessExp, err := valueobject.NewAccessToken(claims.UserID, a.jwtSecret, claims.SessionID, refreshJTI)
+	if err != nil {
 		return RefreshOutput{}, err
 	}
 
 	return RefreshOutput{
-		AccessToken:           accessToken,
+		AccessToken:           access,
 		AccessTokenExpiresAt:  accessExp,
-		RefreshToken:          newRefreshToken,
-		RefreshTokenExpiresAt: newRefreshExp,
+		RefreshToken:          refresh,
+		RefreshTokenExpiresAt: refreshExp,
 	}, nil
 }

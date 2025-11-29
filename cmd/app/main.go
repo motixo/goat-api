@@ -10,19 +10,16 @@ import (
 )
 
 func main() {
-	// Load config first (for error handling before Wire)
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal("Failed to load config: ", err)
 	}
 
-	// Wire-generated function handles all DI
 	server, err := InitializeApp()
 	if err != nil {
 		log.Fatal("Failed to initialize app: ", err)
 	}
 
-	// Graceful shutdown
 	go func() {
 		log.Printf("Server starting on port %s", cfg.ServerPort)
 		if err := server.Run(cfg.ServerPort); err != nil {

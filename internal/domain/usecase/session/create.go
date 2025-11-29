@@ -4,28 +4,36 @@ import (
 	"context"
 	"time"
 
-	"github.com/mot0x0/gopi/internal/domain/entity"
+	"github.com/mot0x0/gopi/internal/domain/dto"
 )
 
 type CreateInput struct {
-	UserID     string
-	Device     string
-	IP         string
-	CreatedAt  time.Time
-	ExpiresAt  time.Time
-	CurrentJTI string
+	UserID       string
+	Device       string
+	IP           string
+	CurrentJTI   string
+	JTIExpiresAt time.Time
 }
 
-func (s *SessionUseCase) Create(ctx context.Context, input CreateInput) error {
+func (s *SessionUseCase) CreateSession(ctx context.Context, input CreateInput) (string, error) {
 
-	session := &entity.Session{
-		ID:         s.ulidGen.New(),
-		UserID:     input.UserID,
-		CurrentJTI: input.CurrentJTI,
-		IP:         input.IP,
-		Device:     input.Device,
-		ExpiresAt:  input.ExpiresAt,
-		CreatedAt:  time.Now().UTC(),
+	now := time.Now().UTC()
+	session := &dto.Session{
+		ID:                s.ulidGen.New(),
+		UserID:            input.UserID,
+		CurrentJTI:        input.CurrentJTI,
+		IP:                input.IP,
+		Device:            input.Device,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+		ExpiresAt:         now.Add(365 * 24 * time.Hour),
+		JTITTLSeconds:     int(time.Until(input.JTIExpiresAt).Seconds()),
+		SessionTTLSeconds: int(time.Until(now.Add(365 * 24 * time.Hour)).Seconds()),
 	}
-	return s.sessionRepo.CreateSession(ctx, session)
+	err := s.sessionRepo.Create(ctx, session)
+	if err != nil {
+		return "", err
+	}
+	return session.ID, nil
+
 }

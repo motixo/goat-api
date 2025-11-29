@@ -9,8 +9,8 @@ import (
 	"github.com/mot0x0/gopi/internal/domain/entity"
 )
 
-func (r *Repository) GetSession(ctx context.Context, sessionID string) (*entity.Session, error) {
-	key := r.key(sessionID)
+func (r *Repository) Get(ctx context.Context, sessionID string) (*entity.Session, error) {
+	key := r.key("session", sessionID)
 
 	res, err := r.client.HGetAll(ctx, key).Result()
 	if err != nil {

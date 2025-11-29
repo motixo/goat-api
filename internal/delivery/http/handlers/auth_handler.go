@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/mot0x0/gopi/internal/delivery/http/response"
 	"github.com/mot0x0/gopi/internal/domain/usecase/auth"
@@ -40,7 +42,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	output, err := h.usecase.Register(c.Request.Context(), input)
+	output, err := h.usecase.Signup(c.Request.Context(), input)
 	if err != nil {
 		response.DomainError(c, err)
 		return
@@ -66,13 +68,19 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 }
 
 func (h *AuthHandler) Logout(c *gin.Context) {
-	var input auth.LogoutInput
-	if err := c.ShouldBindJSON(&input); err != nil || input.RefreshToken == "" {
-		response.BadRequest(c, "refresh_token is required")
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		response.BadRequest(c, "Authorization header is required")
 		return
 	}
 
-	if err := h.usecase.Logout(c.Request.Context(), input); err != nil {
+	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+	if tokenStr == authHeader {
+		response.BadRequest(c, "Invalid Authorization header format")
+		return
+	}
+
+	if err := h.usecase.Logout(c.Request.Context(), tokenStr); err != nil {
 		response.Unauthorized(c, err.Error())
 		return
 	}

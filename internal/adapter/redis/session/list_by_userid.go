@@ -9,7 +9,7 @@ import (
 	"github.com/mot0x0/gopi/internal/domain/entity"
 )
 
-func (r *Repository) ListSessionsByUser(ctx context.Context, userID string) ([]*entity.Session, error) {
+func (r *Repository) ListByUser(ctx context.Context, userID string) ([]*entity.Session, error) {
 	var sessions []*entity.Session
 
 	iter := r.client.Scan(ctx, 0, "session:*", 100).Iterator()
