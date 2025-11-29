@@ -5,7 +5,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
-	"github.com/mot0x0/gopi/internal/config"
+	"github.com/mot0x0/goth-api/internal/config"
 )
 
 func NewDatabase(cfg *config.Config) (*sqlx.DB, error) {

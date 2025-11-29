@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/mot0x0/gopi/internal/domain/errors"
+	"github.com/mot0x0/goth-api/internal/domain/errors"
 )
 
 type TokenType string
@@ -39,7 +39,7 @@ func newToken(userID, secret, sessionID, jti string, tokenType TokenType, durati
 		SessionID: sessionID,
 		JTI:       jti,
 		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    "gopi",
+			Issuer:    "goth-api",
 			Subject:   string(tokenType),
 			Audience:  jwt.ClaimStrings{"api"},
 			ExpiresAt: jwt.NewNumericDate(expiresAt),

@@ -2,13 +2,13 @@ package http
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/mot0x0/gopi/internal/config"
-	"github.com/mot0x0/gopi/internal/delivery/http/handlers"
-	"github.com/mot0x0/gopi/internal/delivery/http/middleware"
-	"github.com/mot0x0/gopi/internal/delivery/http/routes"
-	"github.com/mot0x0/gopi/internal/domain/usecase/auth"
-	"github.com/mot0x0/gopi/internal/domain/usecase/session"
-	"github.com/mot0x0/gopi/internal/domain/usecase/user"
+	"github.com/mot0x0/goth-api/internal/config"
+	"github.com/mot0x0/goth-api/internal/delivery/http/handlers"
+	"github.com/mot0x0/goth-api/internal/delivery/http/middleware"
+	"github.com/mot0x0/goth-api/internal/delivery/http/routes"
+	"github.com/mot0x0/goth-api/internal/domain/usecase/auth"
+	"github.com/mot0x0/goth-api/internal/domain/usecase/session"
+	"github.com/mot0x0/goth-api/internal/domain/usecase/user"
 )
 
 type Server struct {

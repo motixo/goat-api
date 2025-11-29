@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/mot0x0/gopi/internal/delivery/http/response"
-	"github.com/mot0x0/gopi/internal/domain/usecase/auth"
+	"github.com/mot0x0/goth-api/internal/delivery/http/response"
+	"github.com/mot0x0/goth-api/internal/domain/usecase/auth"
 )
 
 type AuthHandler struct {

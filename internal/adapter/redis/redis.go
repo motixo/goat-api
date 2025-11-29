@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mot0x0/gopi/internal/config"
+	"github.com/mot0x0/goth-api/internal/config"
 	"github.com/redis/go-redis/v9"
 )
 
