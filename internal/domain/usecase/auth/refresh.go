@@ -39,13 +39,11 @@ func (a *AuthUseCase) Refresh(ctx context.Context, input RefreshInput) (RefreshO
 		return RefreshOutput{}, err
 	}
 
-	now := time.Now().UTC()
 	rotateInput := session.RotateInput{
 		OldJTI:       claims.JTI,
 		CurrentJTI:   refreshJTI,
 		Device:       input.Device,
 		IP:           input.IP,
-		ExpiresAt:    now.Add(365 * 24 * time.Hour),
 		JTIExpiresAt: refreshExp,
 	}
 

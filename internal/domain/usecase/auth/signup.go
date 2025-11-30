@@ -29,7 +29,7 @@ func (a *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (Register
 		ID:        uuid.New().String(),
 		Email:     input.Email,
 		Password:  hashedPassword.Value(),
-		Status:    valueobject.StatusInactive,
+		Status:    valueobject.StatusActive,
 		CreatedAt: time.Now().UTC(),
 	}
 

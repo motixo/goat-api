@@ -16,8 +16,8 @@ type AuthUseCase struct {
 }
 
 func NewUsecase(
-	sessionUC session.UseCase,
 	userRepo user.Repository,
+	sessionUC session.UseCase,
 	passwordSvc *service.PasswordService,
 	ulidGen *service.ULIDGenerator,
 	cfg *config.Config,

@@ -12,7 +12,6 @@ type RotateInput struct {
 	CurrentJTI   string
 	Device       string
 	IP           string
-	ExpiresAt    time.Time
 	JTIExpiresAt time.Time
 }
 
@@ -26,15 +25,18 @@ func (s *SessionUseCase) RotateSessionJTI(ctx context.Context, input RotateInput
 		return "", errors.ErrUnauthorized
 	}
 
+	now := time.Now().UTC()
+	ExpiresAt := now.Add(365 * 24 * time.Hour)
+
 	sessionID, err := s.sessionRepo.RotateJTI(
 		ctx,
 		input.OldJTI,
 		input.CurrentJTI,
 		input.IP,
 		input.Device,
-		input.ExpiresAt,
+		ExpiresAt,
 		int(time.Until(input.JTIExpiresAt).Seconds()),
-		int(time.Until(input.ExpiresAt).Seconds()),
+		int(time.Until(ExpiresAt).Seconds()),
 	)
 	if err != nil {
 		return "", err
