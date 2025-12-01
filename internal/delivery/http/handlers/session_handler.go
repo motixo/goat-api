@@ -22,14 +22,14 @@ func NewSessionHandler(usecase session.UseCase, logger service.Logger) *SessionH
 
 func (s *SessionHandler) GetAllUserSessions(c *gin.Context) {
 	helper.LogRequest(s.logger, c)
-	userID, err := helper.GetStringFromContext(c, "user_id")
-	if err != nil {
+	userID := c.GetString("user_id")
+	if userID == "" {
 		response.Internal(c)
 		return
 	}
 
-	sessionID, err := helper.GetStringFromContext(c, "session_id")
-	if err != nil {
+	sessionID := c.GetString("session_id")
+	if sessionID == "" {
 		response.Internal(c)
 		return
 	}
@@ -52,13 +52,13 @@ func (s *SessionHandler) DeleteSessions(c *gin.Context) {
 		return
 	}
 
-	userID, err := helper.GetStringFromContext(c, "user_id")
-	if err != nil {
+	userID := c.GetString("user_id")
+	if userID == "" {
 		response.Internal(c)
 		return
 	}
-	sessionID, err := helper.GetStringFromContext(c, "session_id")
-	if err != nil {
+	sessionID := c.GetString("session_id")
+	if sessionID == "" {
 		response.Internal(c)
 		return
 	}
