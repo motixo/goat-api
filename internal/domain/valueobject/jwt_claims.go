@@ -27,7 +27,7 @@ func NewAccessToken(userID, secret, sessionID, jti string) (string, time.Time, e
 }
 
 func NewRefreshToken(userID, secret, jti string) (string, time.Time, error) {
-	return newToken(userID, secret, "", jti, TokenTypeRefresh, 14*24*time.Hour)
+	return newToken(userID, secret, "", jti, TokenTypeRefresh, 30*24*time.Hour)
 }
 
 func newToken(userID, secret, sessionID, jti string, tokenType TokenType, duration time.Duration) (string, time.Time, error) {

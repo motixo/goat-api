@@ -6,9 +6,9 @@ MAIN_PKG := ./cmd/app
 ENV_FILE := .env
 
 
-.PHONY: all build clean run
+.PHONY: all build clean run test
 
-all: build
+all: clean test build
 
 build:
 	@echo "==> Creating build directory..."
@@ -23,3 +23,7 @@ clean:
 run: build
 	@echo "==> Running $(APP)..."
 	@export $(shell cat $(ENV_FILE) | xargs) && $(APP)
+
+test:
+	@echo "==> Running tests..."
+	go test ./... -v

@@ -17,7 +17,10 @@ type CreateInput struct {
 
 func (s *SessionUseCase) CreateSession(ctx context.Context, input CreateInput) (string, error) {
 	s.logger.Debug("creating session", "userID", input.UserID, "device", input.Device, "ip", input.IP, "currentJTI", input.CurrentJTI)
+
 	now := time.Now().UTC()
+	expiresAt := now.Add(365 * 24 * time.Hour)
+
 	session := &entity.Session{
 		ID:                s.ulidGen.New(),
 		UserID:            input.UserID,
@@ -26,9 +29,9 @@ func (s *SessionUseCase) CreateSession(ctx context.Context, input CreateInput) (
 		Device:            input.Device,
 		CreatedAt:         now,
 		UpdatedAt:         now,
-		ExpiresAt:         now.Add(365 * 24 * time.Hour),
+		ExpiresAt:         expiresAt,
 		JTITTLSeconds:     int(time.Until(input.JTIExpiresAt).Seconds()),
-		SessionTTLSeconds: int(time.Until(now.Add(365 * 24 * time.Hour)).Seconds()),
+		SessionTTLSeconds: int(time.Until(expiresAt).Seconds()),
 	}
 	err := s.sessionRepo.Create(ctx, session)
 	if err != nil {

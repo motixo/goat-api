@@ -37,7 +37,7 @@ func (a *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput,
 		return LoginOutput{}, errors.ErrNotFound
 	}
 
-	if !a.passwordService.Verify(ctx, input.Password, valueobject.PasswordFromHash(u.Password)) {
+	if !a.passwordHasher.Verify(ctx, input.Password, valueobject.PasswordFromHash(u.Password)) {
 		a.logger.Warn("login failed: invalid password", "email", input.Email, "ip", input.IP, "device", input.Device)
 		return LoginOutput{}, errors.ErrUnauthorized
 	}

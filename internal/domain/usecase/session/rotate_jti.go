@@ -28,7 +28,7 @@ func (s *SessionUseCase) RotateSessionJTI(ctx context.Context, input RotateInput
 	}
 
 	now := time.Now().UTC()
-	ExpiresAt := now.Add(365 * 24 * time.Hour)
+	expiresAt := now.Add(365 * 24 * time.Hour)
 
 	sessionID, err := s.sessionRepo.RotateJTI(
 		ctx,
@@ -36,9 +36,9 @@ func (s *SessionUseCase) RotateSessionJTI(ctx context.Context, input RotateInput
 		input.CurrentJTI,
 		input.IP,
 		input.Device,
-		ExpiresAt,
+		expiresAt,
 		int(time.Until(input.JTIExpiresAt).Seconds()),
-		int(time.Until(ExpiresAt).Seconds()),
+		int(time.Until(expiresAt).Seconds()),
 	)
 	if err != nil {
 		s.logger.Error("failed to rotate JTI", "oldJTI", input.OldJTI, "newJTI", input.CurrentJTI, "ip", input.IP, "device", input.Device, "error", err)

@@ -23,14 +23,21 @@ const (
 	saltLen      = 32
 )
 
+type PasswordHasher interface {
+	Hash(ctx context.Context, plaintext string) (valueobject.Password, error)
+	Verify(ctx context.Context, plaintext string, hashed valueobject.Password) bool
+}
+
 // PasswordService handles password hashing and verification
 type PasswordService struct {
 	pepper string
 }
 
 // NewPasswordService creates a service with injected pepper
-func NewPasswordService(cfg *config.Config) *PasswordService {
-	return &PasswordService{pepper: cfg.PasswordPepper}
+func NewPasswordService(cfg *config.Config) PasswordHasher {
+	return &PasswordService{
+		pepper: cfg.PasswordPepper,
+	}
 }
 
 // Hash creates a Password from plaintext

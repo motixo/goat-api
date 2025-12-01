@@ -8,28 +8,28 @@ import (
 )
 
 type AuthUseCase struct {
-	userRepo        user.Repository
-	sessionUC       session.UseCase
-	ulidGen         *service.ULIDGenerator
-	passwordService *service.PasswordService
-	logger          service.Logger
-	jwtSecret       string
+	userRepo       user.Repository
+	sessionUC      session.UseCase
+	ulidGen        *service.ULIDGenerator
+	passwordHasher service.PasswordHasher
+	logger         service.Logger
+	jwtSecret      string
 }
 
 func NewUsecase(
 	userRepo user.Repository,
 	sessionUC session.UseCase,
-	passwordSvc *service.PasswordService,
+	passwordHasher service.PasswordHasher,
 	logger service.Logger,
 	ulidGen *service.ULIDGenerator,
 	cfg *config.Config,
 ) UseCase {
 	return &AuthUseCase{
-		userRepo:        userRepo,
-		sessionUC:       sessionUC,
-		passwordService: passwordSvc,
-		logger:          logger,
-		ulidGen:         ulidGen,
-		jwtSecret:       cfg.JWTSecret,
+		userRepo:       userRepo,
+		sessionUC:      sessionUC,
+		passwordHasher: passwordHasher,
+		logger:         logger,
+		ulidGen:        ulidGen,
+		jwtSecret:      cfg.JWTSecret,
 	}
 }
