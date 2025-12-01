@@ -78,6 +78,7 @@ func (a *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput,
 		User: user.UserResponse{
 			ID:        u.ID,
 			Email:     u.Email,
+			Role:      u.Role.String(),
 			CreatedAt: u.CreatedAt,
 		},
 	}, nil

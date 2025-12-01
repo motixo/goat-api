@@ -32,6 +32,7 @@ func (a *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (Register
 		Email:     input.Email,
 		Password:  hashedPassword.Value(),
 		Status:    valueobject.StatusActive,
+		Role:      valueobject.RoleClient,
 		CreatedAt: time.Now().UTC(),
 	}
 
@@ -46,6 +47,7 @@ func (a *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (Register
 		User: user.UserResponse{
 			ID:        rq.ID,
 			Email:     rq.Email,
+			Role:      rq.Role.String(),
 			CreatedAt: rq.CreatedAt,
 		},
 	}, nil

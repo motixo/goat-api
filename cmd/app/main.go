@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -21,7 +20,6 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("Server starting on port %s", cfg.ServerPort)
 		if err := server.Run(cfg.ServerPort); err != nil {
 			panic("server failed" + err.Error())
 		}
@@ -30,5 +28,4 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	log.Println("Shutting down...")
 }

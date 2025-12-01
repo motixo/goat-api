@@ -20,6 +20,7 @@ func NewDatabase(cfg *config.Config, logger service.Logger) (*sqlx.DB, error) {
 		email TEXT NOT NULL UNIQUE,
 		password TEXT NOT NULL,
 		status SMALLINT NOT NULL,
+		role SMALLINT NOT NULL,
 		created_at TIMESTAMP NOT NULL DEFAULT NOW(),
 		updated_at TIMESTAMP NULL
 	);`

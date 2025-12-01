@@ -21,8 +21,8 @@ func NewRepository(db *sqlx.DB) user.Repository {
 
 func (r *Repository) Create(ctx context.Context, u *entity.User) error {
 	query := `
-        INSERT INTO users (id, email, password, status, created_at, updated_at)
-        VALUES (:id, :email, :password, :status, :created_at, :updated_at)
+        INSERT INTO users (id, email, password, status, role, created_at, updated_at)
+        VALUES (:id, :email, :password, :status, :role, :created_at, :updated_at)
     `
 	_, err := r.db.NamedExecContext(ctx, query, u)
 	return err
@@ -31,7 +31,7 @@ func (r *Repository) Create(ctx context.Context, u *entity.User) error {
 func (r *Repository) FindByID(ctx context.Context, id string) (*entity.User, error) {
 	var user entity.User
 	query := `
-        SELECT id, email, status, created_at, updated_at
+        SELECT id, email, status, role, created_at, updated_at
         FROM users
         WHERE id = $1
     `
@@ -45,7 +45,7 @@ func (r *Repository) FindByID(ctx context.Context, id string) (*entity.User, err
 func (r *Repository) FindByEmail(ctx context.Context, email string) (*entity.User, error) {
 	var user entity.User
 	query := `
-        SELECT id, email, password, status, created_at, updated_at
+        SELECT id, email, password, status, role, created_at, updated_at
         FROM users
         WHERE email = $1
 		LIMIT 1
