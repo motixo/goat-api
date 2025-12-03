@@ -14,7 +14,7 @@ func NewDatabase(cfg *config.Config, logger service.Logger) (*sqlx.DB, error) {
 		return nil, err
 	}
 
-	schema := `
+	userSchema := `
 	CREATE TABLE IF NOT EXISTS users (
 		id UUID PRIMARY KEY,
 		email TEXT NOT NULL UNIQUE,
@@ -25,12 +25,27 @@ func NewDatabase(cfg *config.Config, logger service.Logger) (*sqlx.DB, error) {
 		updated_at TIMESTAMP NULL
 	);`
 
-	if _, err := db.Exec(schema); err != nil {
+	permissionSchema := `
+	CREATE TABLE IF NOT EXISTS permissions (
+		id UUID PRIMARY KEY,
+		role_id SMALLINT NOT NULL,
+		action TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMP NULL
+	);`
+
+	if _, err := db.Exec(userSchema); err != nil {
 		logger.Error("failed to ensure users table", "error", err)
 		return nil, err
 	}
 
+	if _, err := db.Exec(permissionSchema); err != nil {
+		logger.Error("failed to ensure permissions table", "error", err)
+		return nil, err
+	}
+
 	logger.Info("Database connected and users table ensured")
+	logger.Info("Database connected and permissions table ensured")
 
 	return sqlx.Connect("postgres", cfg.DSN())
 }

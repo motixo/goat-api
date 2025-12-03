@@ -8,6 +8,7 @@ import (
 	"github.com/motixo/goth-api/internal/delivery/http/routes"
 	"github.com/motixo/goth-api/internal/domain/service"
 	"github.com/motixo/goth-api/internal/domain/usecase/auth"
+	"github.com/motixo/goth-api/internal/domain/usecase/permission"
 	"github.com/motixo/goth-api/internal/domain/usecase/session"
 	"github.com/motixo/goth-api/internal/domain/usecase/user"
 )
@@ -18,13 +19,22 @@ type Server struct {
 	userHandler    *handlers.UserHandler
 	sessionHandler *handlers.SessionHandler
 	authMiddleware *middleware.AuthMiddleware
+	permMiddleware *middleware.PermMiddleware
 }
 
-func NewServer(userUC user.UseCase, authUC auth.UseCase, sessionUC session.UseCase, logger service.Logger, cfg *config.Config) *Server {
+func NewServer(
+	userUC user.UseCase,
+	authUC auth.UseCase,
+	permUC permission.UseCase,
+	sessionUC session.UseCase,
+	logger service.Logger,
+	cfg *config.Config,
+) *Server {
 	router := gin.New()
 
 	// Global middleware
 	authMiddleware := middleware.NewAuthMiddleware(cfg.JWTSecret, sessionUC)
+	permMiddleware := middleware.NewPermMiddleware(userUC, permUC)
 	router.Use(middleware.Recovery(logger))
 
 	authHandler := handlers.NewAuthHandler(authUC, logger)
@@ -36,6 +46,7 @@ func NewServer(userUC user.UseCase, authUC auth.UseCase, sessionUC session.UseCa
 		authHandler:    authHandler,
 		userHandler:    userHandler,
 		authMiddleware: authMiddleware,
+		permMiddleware: permMiddleware,
 		sessionHandler: sessionHandler,
 	}
 
@@ -47,7 +58,7 @@ func (s *Server) setupRoutes() {
 	api := s.engine.Group("/api")
 	v1 := api.Group("/v1")
 
-	routes.RegisterUserRoutes(v1, s.userHandler, s.sessionHandler, s.authMiddleware)
+	routes.RegisterUserRoutes(v1, s.userHandler, s.sessionHandler, s.authMiddleware, s.permMiddleware)
 	routes.RegisterAuthRoutes(v1, s.authHandler, s.authMiddleware)
 
 	// Health check

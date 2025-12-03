@@ -1,32 +1,17 @@
 package valueobject
 
-type Permission struct {
-	Name string
-}
+type Permission string
 
-var P = struct {
-	User struct {
-		Read        Permission
-		Write       Permission
-		Delete      Permission
-		Update      Permission
-		ChangeRole  Permission
-		ChangeSatus Permission
-	}
-}{
-	User: struct {
-		Read        Permission
-		Write       Permission
-		Delete      Permission
-		Update      Permission
-		ChangeRole  Permission
-		ChangeSatus Permission
-	}{
-		Read:        Permission{Name: "user:read"},
-		Write:       Permission{Name: "user:write"},
-		Update:      Permission{Name: "user:update"},
-		Delete:      Permission{Name: "user:delete"},
-		ChangeRole:  Permission{Name: "user:change_role"},
-		ChangeSatus: Permission{Name: "user:change_status"},
-	},
-}
+const (
+	// User
+	PermUserRead         Permission = "user:read"
+	PermUserWrite        Permission = "user:write"
+	PermUserUpdate       Permission = "user:update"
+	PermUserDelete       Permission = "user:delete"
+	PermUserChangeRole   Permission = "user:change_role"
+	PermUserChangeStatus Permission = "user:change_status"
+
+	// Session
+	PermSessionRead   Permission = "session:read"
+	PermSessionDelete Permission = "session:delete"
+)
