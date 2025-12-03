@@ -110,3 +110,7 @@ func NotFound(c *gin.Context) {
 func Internal(c *gin.Context) {
 	respondWithProblem(c, http.StatusInternalServerError, "Internal Server Error", "An unexpected error occurred.", "/errors/internal")
 }
+
+func Forbidden(c *gin.Context, detail string) {
+	respondWithProblem(c, http.StatusForbidden, "Forbidden", detail, "/errors/forbidden")
+}

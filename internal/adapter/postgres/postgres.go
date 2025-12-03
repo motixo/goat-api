@@ -7,7 +7,7 @@ import (
 	"github.com/motixo/goth-api/internal/domain/service"
 )
 
-func NewDatabase(cfg *config.Config, logger service.Logger) (*sqlx.DB, error) {
+func NewDatabase(cfg *config.Config, logger service.Logger, passwordSrv service.PasswordHasher) (*sqlx.DB, error) {
 	db, err := sqlx.Connect("postgres", cfg.DSN())
 	if err != nil {
 		logger.Error("failed to connect to database", "error", err)
@@ -31,7 +31,8 @@ func NewDatabase(cfg *config.Config, logger service.Logger) (*sqlx.DB, error) {
 		role_id SMALLINT NOT NULL,
 		action TEXT NOT NULL,
 		created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-		updated_at TIMESTAMP NULL
+		updated_at TIMESTAMP NULL,
+		CONSTRAINT unique_role_action UNIQUE(role_id, action)
 	);`
 
 	if _, err := db.Exec(userSchema); err != nil {
@@ -44,8 +45,20 @@ func NewDatabase(cfg *config.Config, logger service.Logger) (*sqlx.DB, error) {
 		return nil, err
 	}
 
-	logger.Info("Database connected and users table ensured")
-	logger.Info("Database connected and permissions table ensured")
+	logger.Info("Database connected and users, permissions table ensured")
 
+	if cfg.IsSeeded == 0 {
+		if err := SeedPermissions(db); err != nil {
+			logger.Error("failed to seed permissions", "error", err)
+			return nil, err
+		}
+		logger.Info("Permissions seeded successfully")
+
+		if err := SeedAdminUser(db, passwordSrv, cfg); err != nil {
+			logger.Error("failed to seed admin user", "error", err)
+			return nil, err
+		}
+		logger.Info("admin user seeded successfully")
+	}
 	return sqlx.Connect("postgres", cfg.DSN())
 }

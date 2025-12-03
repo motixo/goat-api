@@ -8,12 +8,12 @@ import (
 )
 
 func (p *PermissionUseCase) GetPermissionsByRole(ctx context.Context, roleID valueobject.UserRole) (*[]entity.Permission, error) {
-	p.logger.Info("", "role_id", roleID)
+	p.logger.Info("fetching permissions for role", "role_id", roleID)
 	perms, err := p.permissionRepo.GetByRoleID(ctx, int8(roleID))
 	if err != nil {
-		p.logger.Error("", "role_id", roleID, "Error", err)
+		p.logger.Error("failed to fetch permissions", "role_id", roleID, "Error", err)
 		return nil, err
 	}
-	p.logger.Info("", "role_id", roleID)
+	p.logger.Info("permissions fetched successfully", "role_id", roleID)
 	return perms, nil
 }

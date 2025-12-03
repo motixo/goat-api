@@ -3,6 +3,10 @@ package valueobject
 type Permission string
 
 const (
+
+	// Full access
+	PermFullAccess Permission = "full_access"
+
 	// User
 	PermUserRead         Permission = "user:read"
 	PermUserWrite        Permission = "user:write"

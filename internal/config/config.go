@@ -26,6 +26,9 @@ type Config struct {
 	RedisDB        int           `envconfig:"REDIS_DB" default:"0"`
 	JWTExpiration  time.Duration `envconfig:"JWT_EXPIRATION" default:"24h"`
 	GinMode        string        `envconfig:"GIN_MODE" default:"debug"`
+	IsSeeded       int           `envconfig:"SEEDED" default:"1"`
+	AdminEmail     string        `envconfig:"ADMIN_EMAIL" default:"admin@goth.api"`
+	AdminPassword  string        `envconfig:"ADMIN_PASSWORD" default:"Qwerty@123"`
 }
 
 // Load reads configuration from environment variables and .env file

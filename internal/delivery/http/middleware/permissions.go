@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/motixo/goth-api/internal/delivery/http/response"
+	"github.com/motixo/goth-api/internal/domain/entity"
 	"github.com/motixo/goth-api/internal/domain/usecase/permission"
 	"github.com/motixo/goth-api/internal/domain/usecase/user"
 	"github.com/motixo/goth-api/internal/domain/valueobject"
@@ -18,30 +20,45 @@ func NewPermMiddleware(userUC user.UseCase, permissionUS permission.UseCase) *Pe
 		permissionUS: permissionUS,
 	}
 }
+
 func (p *PermMiddleware) Require(permValue valueobject.Permission) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID := c.GetString("user_id")
+		if userID == "" {
+			response.Unauthorized(c, "Missing or invalid authentication token.")
+			return
+		}
+
 		user, err := p.userUC.GetUser(c.Request.Context(), userID)
 		if err != nil {
-			c.AbortWithStatusJSON(404, gin.H{"error": "user not found"})
+			response.DomainError(c, err)
 			return
 		}
-		permissions, err := p.permissionUS.GetPermissionsByRole(c.Request.Context(), user.Role)
+
+		perms, err := p.permissionUS.GetPermissionsByRole(c.Request.Context(), user.Role)
 		if err != nil {
-			c.AbortWithStatusJSON(500, gin.H{"error": "cannot load permissions"})
+			response.Internal(c)
 			return
 		}
-		allowed := false
-		for _, perm := range *permissions {
-			if perm.Action == string(permValue) {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			c.AbortWithStatusJSON(403, gin.H{"error": "permission denied"})
+
+		if !hasPermission(perms, permValue) {
+			response.Forbidden(c, "You do not have permission to perform this action.")
 			return
 		}
+
 		c.Next()
 	}
+}
+
+func hasPermission(perms *[]entity.Permission, required valueobject.Permission) bool {
+	if perms == nil {
+		return false
+	}
+
+	for _, p := range *perms {
+		if p.Action == string(required) || p.Action == string(valueobject.PermFullAccess) {
+			return true
+		}
+	}
+	return false
 }
