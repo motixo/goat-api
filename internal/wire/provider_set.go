@@ -1,11 +1,15 @@
 package wire
 
 import (
+	"time"
+
 	"github.com/google/wire"
 	"github.com/motixo/goth-api/internal/adapter/log"
+	adapterPerm "github.com/motixo/goth-api/internal/adapter/permission"
 	"github.com/motixo/goth-api/internal/adapter/postgres"
 	postgresPerm "github.com/motixo/goth-api/internal/adapter/postgres/permission"
 	postgresUser "github.com/motixo/goth-api/internal/adapter/postgres/user"
+	redisPerm "github.com/motixo/goth-api/internal/adapter/redis/permission"
 	redisSession "github.com/motixo/goth-api/internal/adapter/redis/session"
 	"github.com/motixo/goth-api/internal/config"
 	"github.com/motixo/goth-api/internal/delivery/http"
@@ -29,8 +33,10 @@ var InfrastructureSet = wire.NewSet(
 // Repository providers
 var RepositorySet = wire.NewSet(
 	postgresUser.NewRepository,
-	postgresPerm.NewRepository,
 	redisSession.NewRepository,
+	postgresPerm.NewRepository,
+	ProvidePermissionCache,
+	ProvideCachedPermissionRepository,
 )
 
 // Service providers
@@ -78,4 +84,16 @@ func ProvideRedisClient(cfg *config.Config) *redis.Client {
 		Password: cfg.RedisPassword,
 		DB:       cfg.RedisDB,
 	})
+}
+
+func ProvidePermissionCache(rdb *redis.Client) *redisPerm.Cache {
+	return redisPerm.NewCache(rdb, 5*time.Minute)
+}
+
+func ProvideCachedPermissionRepository(
+	dbRepo *postgresPerm.Repository,
+	cache *redisPerm.Cache,
+	logger service.Logger,
+) permission.Repository {
+	return adapterPerm.NewCachedRepository(dbRepo, cache, logger)
 }

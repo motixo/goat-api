@@ -1,18 +1,17 @@
-package user
+package permission
 
 import (
 	"context"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/motixo/goth-api/internal/domain/entity"
-	"github.com/motixo/goth-api/internal/domain/usecase/permission"
 )
 
 type Repository struct {
 	db *sqlx.DB
 }
 
-func NewRepository(db *sqlx.DB) permission.Repository {
+func NewRepository(db *sqlx.DB) *Repository {
 	return &Repository{db: db}
 }
 

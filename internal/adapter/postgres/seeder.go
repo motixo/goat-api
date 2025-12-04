@@ -67,7 +67,6 @@ func SeedPermissions(db *sqlx.DB) error {
 	}
 
 	return tx.Commit()
-
 }
 
 func SeedAdminUser(db *sqlx.DB, passwordHasher service.PasswordHasher, cfg *config.Config) error {
