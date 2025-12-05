@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/motixo/goat-api/refs/heads/main/assets/mascot.png" alt="GOAT Mascot" width="250">
+</p>
+
 # GOAT API - under develop
 
 A production-grade Go backend built on Clean Architecture, featuring JWT authentication with refresh tokens, Redis-powered session management and permission caching, and PostgreSQL for data persistence—all designed for security, performance, and maintainability.
