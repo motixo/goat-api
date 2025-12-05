@@ -7,8 +7,8 @@ import (
 	"fmt"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/motixo/goth-api/internal/domain/entity"
-	"github.com/motixo/goth-api/internal/domain/repository"
+	"github.com/motixo/goat-api/internal/domain/entity"
+	"github.com/motixo/goat-api/internal/domain/repository"
 )
 
 type Repository struct {

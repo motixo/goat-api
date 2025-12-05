@@ -4,8 +4,8 @@ import (
 	"runtime/debug"
 
 	"github.com/gin-gonic/gin"
-	"github.com/motixo/goth-api/internal/delivery/http/response"
-	"github.com/motixo/goth-api/internal/domain/service"
+	"github.com/motixo/goat-api/internal/delivery/http/response"
+	"github.com/motixo/goat-api/internal/domain/service"
 )
 
 // Recovery returns a middleware that recovers from panics,

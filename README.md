@@ -1,4 +1,4 @@
-# Goth API
+# GOAT API - under develop
 
 A production-grade Go backend built on Clean Architecture, featuring JWT authentication with refresh tokens, Redis-powered session management and permission caching, and PostgreSQL for data persistence—all designed for security, performance, and maintainability.
 
@@ -13,7 +13,7 @@ A production-grade Go backend built on Clean Architecture, featuring JWT authent
 
 ## Overview
 
-Goth API is a production-ready backend application built with Go, following Clean Architecture principles. It provides a secure, scalable foundation for web applications with modern authentication, session management, and permission-based access control.
+Goat API is a production-ready backend application built with Go, following Clean Architecture principles. It provides a secure, scalable foundation for web applications with modern authentication, session management, and permission-based access control.
 
 ## Features
 
@@ -135,6 +135,6 @@ This project follows Clean Architecture principles:
 
 ## Support
 
-If you encounter any issues or have questions, please file an issue on the [GitHub repository](https://github.com/motixo/goth-api/issues).
+If you encounter any issues or have questions, please file an issue on the [GitHub repository](https://github.com/motixo/goat-api/issues).
 
 ---

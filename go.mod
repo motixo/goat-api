@@ -1,4 +1,4 @@
-module github.com/motixo/goth-api
+module github.com/motixo/goat-api
 
 go 1.25.4
 

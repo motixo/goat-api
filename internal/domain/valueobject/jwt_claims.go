@@ -4,7 +4,7 @@ package valueobject
 import (
 	"time"
 
-	"github.com/motixo/goth-api/internal/domain/errors"
+	"github.com/motixo/goat-api/internal/domain/errors"
 )
 
 type TokenType string
@@ -43,7 +43,7 @@ func NewJWTClaims(userID string, tokenType TokenType, sessionID, jti string, exp
 		TokenType: tokenType,
 		SessionID: sessionID,
 		JTI:       jti,
-		Issuer:    "goth-api",
+		Issuer:    "goat-api",
 		Subject:   string(tokenType),
 		Audience:  []string{"api"},
 		ExpiresAt: expiresAt,

@@ -2,7 +2,7 @@
 package valueobject
 
 import (
-	"github.com/motixo/goth-api/internal/domain/validation"
+	"github.com/motixo/goat-api/internal/domain/validation"
 )
 
 type Password struct {

@@ -3,7 +3,7 @@ package session
 import (
 	"fmt"
 
-	"github.com/motixo/goth-api/internal/domain/repository"
+	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/redis/go-redis/v9"
 )
 

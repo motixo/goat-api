@@ -2,7 +2,7 @@ package helper
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/motixo/goth-api/internal/domain/service"
+	"github.com/motixo/goat-api/internal/domain/service"
 )
 
 func LogRequest(logger service.Logger, c *gin.Context) {

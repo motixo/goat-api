@@ -2,10 +2,10 @@ package handlers
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/motixo/goth-api/internal/delivery/http/helper"
-	"github.com/motixo/goth-api/internal/delivery/http/response"
-	"github.com/motixo/goth-api/internal/domain/service"
-	"github.com/motixo/goth-api/internal/domain/usecase/auth"
+	"github.com/motixo/goat-api/internal/delivery/http/helper"
+	"github.com/motixo/goat-api/internal/delivery/http/response"
+	"github.com/motixo/goat-api/internal/domain/service"
+	"github.com/motixo/goat-api/internal/domain/usecase/auth"
 )
 
 type AuthHandler struct {

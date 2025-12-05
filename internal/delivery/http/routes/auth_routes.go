@@ -2,9 +2,9 @@ package routes
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/motixo/goth-api/internal/delivery/http/handlers"
-	"github.com/motixo/goth-api/internal/delivery/http/middleware"
-	"github.com/motixo/goth-api/internal/domain/valueobject"
+	"github.com/motixo/goat-api/internal/delivery/http/handlers"
+	"github.com/motixo/goat-api/internal/delivery/http/middleware"
+	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
 func RegisterAuthRoutes(

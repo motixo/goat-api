@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/motixo/goth-api/internal/config"
-	"github.com/motixo/goth-api/internal/domain/service"
+	"github.com/motixo/goat-api/internal/config"
+	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/redis/go-redis/v9"
 )
 

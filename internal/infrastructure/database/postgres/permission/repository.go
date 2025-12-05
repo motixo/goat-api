@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/motixo/goth-api/internal/domain/entity"
+	"github.com/motixo/goat-api/internal/domain/entity"
 )
 
 type Repository struct {

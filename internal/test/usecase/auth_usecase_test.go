@@ -5,13 +5,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/motixo/goth-api/internal/config"
-	"github.com/motixo/goth-api/internal/domain/entity"
-	"github.com/motixo/goth-api/internal/domain/service"
-	authUC "github.com/motixo/goth-api/internal/domain/usecase/auth"
-	"github.com/motixo/goth-api/internal/domain/usecase/session"
-	"github.com/motixo/goth-api/internal/domain/usecase/user"
-	"github.com/motixo/goth-api/internal/domain/valueobject"
+	"github.com/motixo/goat-api/internal/config"
+	"github.com/motixo/goat-api/internal/domain/entity"
+	"github.com/motixo/goat-api/internal/domain/service"
+	authUC "github.com/motixo/goat-api/internal/domain/usecase/auth"
+	"github.com/motixo/goat-api/internal/domain/usecase/session"
+	"github.com/motixo/goat-api/internal/domain/usecase/user"
+	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
 // --- Mock ---

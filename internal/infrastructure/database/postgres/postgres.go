@@ -3,8 +3,8 @@ package postgres
 import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
-	"github.com/motixo/goth-api/internal/config"
-	"github.com/motixo/goth-api/internal/domain/service"
+	"github.com/motixo/goat-api/internal/config"
+	"github.com/motixo/goat-api/internal/domain/service"
 )
 
 func NewDatabase(cfg *config.Config, logger service.Logger, passwordSrv service.PasswordHasher) (*sqlx.DB, error) {

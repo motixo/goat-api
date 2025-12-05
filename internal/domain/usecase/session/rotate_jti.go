@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/motixo/goth-api/internal/domain/errors"
+	"github.com/motixo/goat-api/internal/domain/errors"
 )
 
 func (us *SessionUseCase) RotateSessionJTI(ctx context.Context, input RotateInput) (string, error) {

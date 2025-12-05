@@ -3,9 +3,9 @@ package permission
 import (
 	"context"
 
-	"github.com/motixo/goth-api/internal/domain/entity"
-	"github.com/motixo/goth-api/internal/domain/repository"
-	"github.com/motixo/goth-api/internal/domain/service"
+	"github.com/motixo/goat-api/internal/domain/entity"
+	"github.com/motixo/goat-api/internal/domain/repository"
+	"github.com/motixo/goat-api/internal/domain/service"
 )
 
 type CachedRepository struct {

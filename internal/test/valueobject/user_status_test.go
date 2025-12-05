@@ -3,7 +3,7 @@ package valueobject_test
 import (
 	"testing"
 
-	"github.com/motixo/goth-api/internal/domain/valueobject"
+	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
 func TestUserStatus_String(t *testing.T) {

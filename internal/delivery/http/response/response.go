@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/motixo/goth-api/internal/domain/errors"
+	"github.com/motixo/goat-api/internal/domain/errors"
 )
 
 type Problem struct {

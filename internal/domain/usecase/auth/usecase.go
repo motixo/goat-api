@@ -3,9 +3,9 @@ package auth
 import (
 	"time"
 
-	"github.com/motixo/goth-api/internal/domain/repository"
-	"github.com/motixo/goth-api/internal/domain/service"
-	"github.com/motixo/goth-api/internal/domain/usecase/session"
+	"github.com/motixo/goat-api/internal/domain/repository"
+	"github.com/motixo/goat-api/internal/domain/service"
+	"github.com/motixo/goat-api/internal/domain/usecase/session"
 )
 
 type AuthUseCase struct {

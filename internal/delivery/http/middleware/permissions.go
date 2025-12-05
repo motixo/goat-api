@@ -2,11 +2,11 @@ package middleware
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/motixo/goth-api/internal/delivery/http/response"
-	"github.com/motixo/goth-api/internal/domain/entity"
-	"github.com/motixo/goth-api/internal/domain/usecase/permission"
-	"github.com/motixo/goth-api/internal/domain/usecase/user"
-	"github.com/motixo/goth-api/internal/domain/valueobject"
+	"github.com/motixo/goat-api/internal/delivery/http/response"
+	"github.com/motixo/goat-api/internal/domain/entity"
+	"github.com/motixo/goat-api/internal/domain/usecase/permission"
+	"github.com/motixo/goat-api/internal/domain/usecase/user"
+	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
 type PermMiddleware struct {

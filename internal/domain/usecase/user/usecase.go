@@ -1,8 +1,8 @@
 package user
 
 import (
-	"github.com/motixo/goth-api/internal/domain/repository"
-	"github.com/motixo/goth-api/internal/domain/service"
+	"github.com/motixo/goat-api/internal/domain/repository"
+	"github.com/motixo/goat-api/internal/domain/service"
 )
 
 type UserUseCase struct {

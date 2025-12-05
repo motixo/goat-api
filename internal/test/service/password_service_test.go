@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/motixo/goth-api/internal/config"
-	"github.com/motixo/goth-api/internal/domain/errors"
-	"github.com/motixo/goth-api/internal/domain/service"
+	"github.com/motixo/goat-api/internal/config"
+	"github.com/motixo/goat-api/internal/domain/errors"
+	"github.com/motixo/goat-api/internal/domain/service"
 )
 
 func TestPasswordService_HashAndVerify(t *testing.T) {

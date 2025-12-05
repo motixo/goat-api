@@ -4,8 +4,8 @@ package main
 
 import (
 	"github.com/google/wire"
-	"github.com/motixo/goth-api/internal/delivery/http"
-	appWire "github.com/motixo/goth-api/internal/wire"
+	"github.com/motixo/goat-api/internal/delivery/http"
+	appWire "github.com/motixo/goat-api/internal/wire"
 )
 
 func InitializeApp() (*http.Server, error) {

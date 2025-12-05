@@ -29,7 +29,7 @@ type Config struct {
 	SessionExpiration      time.Duration `envconfig:"SESSION_EXPIRATION" default:"720h"`
 	GinMode                string        `envconfig:"GIN_MODE" default:"debug"`
 	Seed                   int           `envconfig:"SEED" default:"1"`
-	AdminEmail             string        `envconfig:"ADMIN_EMAIL" default:"admin@goth.api"`
+	AdminEmail             string        `envconfig:"ADMIN_EMAIL" default:"admin@goat.api"`
 	AdminPassword          string        `envconfig:"ADMIN_PASSWORD" default:"Qwerty@123"`
 }
 

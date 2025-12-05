@@ -3,9 +3,9 @@ package auth
 import (
 	"context"
 
-	"github.com/motixo/goth-api/internal/domain/errors"
-	"github.com/motixo/goth-api/internal/domain/usecase/session"
-	"github.com/motixo/goth-api/internal/domain/valueobject"
+	"github.com/motixo/goat-api/internal/domain/errors"
+	"github.com/motixo/goat-api/internal/domain/usecase/session"
+	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
 func (us *AuthUseCase) Refresh(ctx context.Context, input RefreshInput) (RefreshOutput, error) {

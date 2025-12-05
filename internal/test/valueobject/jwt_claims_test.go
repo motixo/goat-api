@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/motixo/goth-api/internal/domain/valueobject"
+	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
 func TestJWT_NewAndParseAccessToken(t *testing.T) {

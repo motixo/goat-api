@@ -3,7 +3,7 @@ package session
 import (
 	"context"
 
-	"github.com/motixo/goth-api/internal/domain/entity"
+	"github.com/motixo/goat-api/internal/domain/entity"
 )
 
 func (r *Repository) Create(ctx context.Context, s *entity.Session) error {

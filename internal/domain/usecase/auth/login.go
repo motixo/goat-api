@@ -3,10 +3,10 @@ package auth
 import (
 	"context"
 
-	"github.com/motixo/goth-api/internal/domain/errors"
-	"github.com/motixo/goth-api/internal/domain/usecase/session"
-	"github.com/motixo/goth-api/internal/domain/usecase/user"
-	"github.com/motixo/goth-api/internal/domain/valueobject"
+	"github.com/motixo/goat-api/internal/domain/errors"
+	"github.com/motixo/goat-api/internal/domain/usecase/session"
+	"github.com/motixo/goat-api/internal/domain/usecase/user"
+	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
 func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput, error) {

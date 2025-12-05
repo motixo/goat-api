@@ -3,7 +3,7 @@ package validation
 import (
 	"unicode"
 
-	"github.com/motixo/goth-api/internal/domain/errors"
+	"github.com/motixo/goat-api/internal/domain/errors"
 )
 
 func ValidatePasswordPolicy(plaintext string) error {

@@ -3,7 +3,7 @@ package auth
 import (
 	"context"
 
-	"github.com/motixo/goth-api/internal/domain/usecase/session"
+	"github.com/motixo/goat-api/internal/domain/usecase/session"
 )
 
 func (us *AuthUseCase) Logout(ctx context.Context, sessionID, userID string) error {

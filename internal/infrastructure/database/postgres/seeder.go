@@ -4,9 +4,9 @@ import (
 	"context"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/motixo/goth-api/internal/config"
-	"github.com/motixo/goth-api/internal/domain/service"
-	"github.com/motixo/goth-api/internal/domain/valueobject"
+	"github.com/motixo/goat-api/internal/config"
+	"github.com/motixo/goat-api/internal/domain/service"
+	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
 func SeedPermissions(db *sqlx.DB) error {

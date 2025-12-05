@@ -5,7 +5,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/motixo/goth-api/internal/config"
+	"github.com/motixo/goat-api/internal/config"
 )
 
 func main() {

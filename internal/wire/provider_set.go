@@ -7,27 +7,27 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/motixo/goth-api/internal/config"
-	"github.com/motixo/goth-api/internal/delivery/http"
-	"github.com/motixo/goth-api/internal/delivery/http/handlers"
-	"github.com/motixo/goth-api/internal/delivery/http/middleware"
+	"github.com/motixo/goat-api/internal/config"
+	"github.com/motixo/goat-api/internal/delivery/http"
+	"github.com/motixo/goat-api/internal/delivery/http/handlers"
+	"github.com/motixo/goat-api/internal/delivery/http/middleware"
 
 	// Domain layer
-	"github.com/motixo/goth-api/internal/domain/repository"
-	"github.com/motixo/goth-api/internal/domain/service"
-	"github.com/motixo/goth-api/internal/domain/usecase/auth"
-	"github.com/motixo/goth-api/internal/domain/usecase/permission"
-	"github.com/motixo/goth-api/internal/domain/usecase/session"
-	"github.com/motixo/goth-api/internal/domain/usecase/user"
+	"github.com/motixo/goat-api/internal/domain/repository"
+	"github.com/motixo/goat-api/internal/domain/service"
+	"github.com/motixo/goat-api/internal/domain/usecase/auth"
+	"github.com/motixo/goat-api/internal/domain/usecase/permission"
+	"github.com/motixo/goat-api/internal/domain/usecase/session"
+	"github.com/motixo/goat-api/internal/domain/usecase/user"
 
 	// Infrastructure layer
-	authInfra "github.com/motixo/goth-api/internal/infrastructure/auth"
-	permissionCache "github.com/motixo/goth-api/internal/infrastructure/cache/permission"
-	"github.com/motixo/goth-api/internal/infrastructure/database/postgres"
-	postgresPermission "github.com/motixo/goth-api/internal/infrastructure/database/postgres/permission"
-	postgresUser "github.com/motixo/goth-api/internal/infrastructure/database/postgres/user"
-	"github.com/motixo/goth-api/internal/infrastructure/logger"
-	redisSession "github.com/motixo/goth-api/internal/infrastructure/storage/redis/session"
+	authInfra "github.com/motixo/goat-api/internal/infrastructure/auth"
+	permissionCache "github.com/motixo/goat-api/internal/infrastructure/cache/permission"
+	"github.com/motixo/goat-api/internal/infrastructure/database/postgres"
+	postgresPermission "github.com/motixo/goat-api/internal/infrastructure/database/postgres/permission"
+	postgresUser "github.com/motixo/goat-api/internal/infrastructure/database/postgres/user"
+	"github.com/motixo/goat-api/internal/infrastructure/logger"
+	redisSession "github.com/motixo/goat-api/internal/infrastructure/storage/redis/session"
 )
 
 // Infrastructure providers
