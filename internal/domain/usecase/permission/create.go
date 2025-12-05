@@ -9,6 +9,6 @@ type CreateInput struct {
 	Action string
 }
 
-func (p *PermissionUseCase) Create(ctx context.Context, input CreateInput) error {
+func (us *PermissionUseCase) Create(ctx context.Context, input CreateInput) error {
 	return nil
 }
