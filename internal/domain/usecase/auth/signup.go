@@ -10,11 +10,11 @@ import (
 	"github.com/motixo/goth-api/internal/domain/valueobject"
 )
 
-func (a *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (RegisterOutput, error) {
-	a.logger.Info("signup attempt", "email", input.Email)
-	hashedPassword, err := a.passwordHasher.Hash(ctx, input.Password)
+func (us *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (RegisterOutput, error) {
+	us.logger.Info("signup attempt", "email", input.Email)
+	hashedPassword, err := us.passwordHasher.Hash(ctx, input.Password)
 	if err != nil {
-		a.logger.Error("failed to hash password", "email", input.Email, "error", err)
+		us.logger.Error("failed to hash password", "email", input.Email, "error", err)
 		return RegisterOutput{}, err
 	}
 
@@ -27,13 +27,13 @@ func (a *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (Register
 		CreatedAt: time.Now().UTC(),
 	}
 
-	err = a.userRepo.Create(ctx, rq)
+	err = us.userRepo.Create(ctx, rq)
 	if err != nil {
-		a.logger.Error("failed to create user", "email", input.Email, "error", err)
+		us.logger.Error("failed to create user", "email", input.Email, "error", err)
 		return RegisterOutput{}, err
 	}
 
-	a.logger.Info("user registered successfully", "userID", rq.ID, "email", rq.Email)
+	us.logger.Info("user registered successfully", "userID", rq.ID, "email", rq.Email)
 	return RegisterOutput{
 		User: user.UserResponse{
 			ID:        rq.ID,
