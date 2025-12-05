@@ -12,6 +12,7 @@ type SessionResponse struct {
 }
 
 type CreateInput struct {
+	ID         string
 	UserID     string
 	Device     string
 	IP         string

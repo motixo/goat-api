@@ -1,4 +1,3 @@
-// internal/domain/service/jwt_service.go
 package service
 
 import (

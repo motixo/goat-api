@@ -7,14 +7,14 @@ import (
 	"github.com/motixo/goth-api/internal/domain/entity"
 )
 
-func (us *SessionUseCase) CreateSession(ctx context.Context, input CreateInput) (string, error) {
+func (us *SessionUseCase) CreateSession(ctx context.Context, input CreateInput) error {
 	us.logger.Debug("creating session", "userID", input.UserID, "device", input.Device, "ip", input.IP, "currentJTI", input.CurrentJTI)
 
 	now := time.Now().UTC()
 	expiresAt := now.Add(input.SessionTTL)
 
 	session := &entity.Session{
-		ID:                us.ulidGen.New(),
+		ID:                input.ID,
 		UserID:            input.UserID,
 		CurrentJTI:        input.CurrentJTI,
 		IP:                input.IP,
@@ -25,13 +25,11 @@ func (us *SessionUseCase) CreateSession(ctx context.Context, input CreateInput) 
 		JTITTLSeconds:     int64(input.JTITTL.Seconds()),
 		SessionTTLSeconds: int64(input.SessionTTL.Seconds()),
 	}
-	err := us.sessionRepo.Create(ctx, session)
-	if err != nil {
+	if err := us.sessionRepo.Create(ctx, session); err != nil {
 		us.logger.Error("failed to create session", "userID", input.UserID, "currentJTI", input.CurrentJTI, "error", err)
-		return "", err
+		return err
 	}
-
 	us.logger.Info("session created successfully", "userID", input.UserID, "sessionID", session.ID, "currentJTI", input.CurrentJTI)
-	return session.ID, nil
+	return nil
 
 }

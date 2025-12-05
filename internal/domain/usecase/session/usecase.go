@@ -8,17 +8,15 @@ import (
 type SessionUseCase struct {
 	sessionRepo repository.SessionRepository
 	logger      service.Logger
-	ulidGen     *service.ULIDGenerator
 }
 
 func NewUsecase(
 	r repository.SessionRepository,
 	logger service.Logger,
-	ulidGen *service.ULIDGenerator,
+	ulidGen service.IDGenerator,
 ) UseCase {
 	return &SessionUseCase{
 		sessionRepo: r,
-		ulidGen:     ulidGen,
 		logger:      logger,
 	}
 }

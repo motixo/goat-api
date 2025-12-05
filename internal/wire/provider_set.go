@@ -1,10 +1,10 @@
-// internal/wire/provider_set.go
 package wire
 
 import (
 	"time"
 
 	"github.com/google/wire"
+	"github.com/jmoiron/sqlx"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/motixo/goth-api/internal/config"
@@ -26,8 +26,8 @@ import (
 	"github.com/motixo/goth-api/internal/infrastructure/database/postgres"
 	postgresPermission "github.com/motixo/goth-api/internal/infrastructure/database/postgres/permission"
 	postgresUser "github.com/motixo/goth-api/internal/infrastructure/database/postgres/user"
+	"github.com/motixo/goth-api/internal/infrastructure/logger"
 	redisSession "github.com/motixo/goth-api/internal/infrastructure/storage/redis/session"
-	"github.com/motixo/goth-api/internal/shared"
 )
 
 // Infrastructure providers
@@ -42,16 +42,17 @@ var RepositorySet = wire.NewSet(
 	postgresUser.NewRepository,
 	postgresPermission.NewRepository,
 	redisSession.NewRepository,
+	NewPermissionRepository,
 )
 
 // Service providers
 var ServiceSet = wire.NewSet(
 	service.NewULIDGenerator,
-	service.NewPasswordService,
+	authInfra.NewPasswordService,
 	NewJWTManager,
 	NewZapLogger,
 	wire.Bind(new(service.JWTService), new(*authInfra.JWTManager)),
-	wire.Bind(new(service.Logger), new(*shared.ZapLogger)),
+	wire.Bind(new(service.Logger), new(*logger.ZapLogger)),
 )
 
 // Configuration providers
@@ -59,8 +60,6 @@ var ConfigSet = wire.NewSet(
 	ProvideAccessTTL,
 	ProvideRefreshTTL,
 	ProvideSessionTTL,
-	ProvidePermissionCache,
-	ProvideCachedPermissionRepository,
 )
 
 // UseCase providers - Wire will automatically use your constructor!
@@ -118,18 +117,19 @@ func NewJWTManager(cfg *config.Config) *authInfra.JWTManager {
 	return authInfra.NewJWTManager(cfg.JWTSecret)
 }
 
-func NewZapLogger() *shared.ZapLogger {
-	return shared.NewZapLogger()
+func NewZapLogger() *logger.ZapLogger {
+	return logger.NewZapLogger()
 }
 
-func ProvidePermissionCache(rdb *redis.Client) *permissionCache.Cache {
-	return permissionCache.NewCache(rdb, 5*time.Minute)
-}
-
-func ProvideCachedPermissionRepository(
-	dbRepo *postgresPermission.Repository,
-	cache *permissionCache.Cache,
+// This function creates the complete cached repository
+func NewPermissionRepository(
+	db *sqlx.DB,
+	redisClient *redis.Client,
 	logger service.Logger,
 ) repository.PermissionRepository {
+
+	dbRepo := postgresPermission.NewRepository(db)
+	cache := permissionCache.NewCache(redisClient, 24*time.Hour)
+
 	return permissionCache.NewCachedRepository(dbRepo, cache, logger)
 }

@@ -6,17 +6,24 @@ import (
 	"github.com/motixo/goth-api/internal/domain/entity"
 	"github.com/motixo/goth-api/internal/domain/repository"
 	"github.com/motixo/goth-api/internal/domain/service"
-	"github.com/motixo/goth-api/internal/infrastructure/database/postgres/permission"
 )
 
 type CachedRepository struct {
-	dbRepo *permission.Repository
+	dbRepo repository.PermissionRepository
 	cache  *Cache
 	logger service.Logger
 }
 
-func NewCachedRepository(dbRepo *permission.Repository, cache *Cache, logger service.Logger) repository.PermissionRepository {
-	return &CachedRepository{dbRepo: dbRepo, cache: cache, logger: logger}
+func NewCachedRepository(
+	dbRepo repository.PermissionRepository,
+	cache *Cache,
+	logger service.Logger,
+) repository.PermissionRepository {
+	return &CachedRepository{
+		dbRepo: dbRepo,
+		cache:  cache,
+		logger: logger,
+	}
 }
 
 func (c *CachedRepository) GetByRoleID(ctx context.Context, roleID int8) (*[]entity.Permission, error) {

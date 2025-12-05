@@ -26,14 +26,16 @@ func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput
 		return LoginOutput{}, errors.ErrUnauthorized
 	}
 
-	refreshJTI := us.ulidGen.New()
+	refreshJTI := us.ulidGen.Generate()
 	refresh, refreshClaims, err := us.jwtService.GenerateRefreshToken(userEntity.ID, refreshJTI, us.refreshTTL)
 	if err != nil {
 		us.logger.Error("failed to create refresh token", "userID", userEntity.ID, "error", err)
 		return LoginOutput{}, err
 	}
 
+	sessionID := us.ulidGen.Generate()
 	sessionInput := session.CreateInput{
+		ID:         sessionID,
 		UserID:     userEntity.ID,
 		CurrentJTI: refreshJTI,
 		IP:         input.IP,
@@ -42,8 +44,7 @@ func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput
 		SessionTTL: us.sessionTTL,
 	}
 
-	sessionID, err := us.sessionUC.CreateSession(ctx, sessionInput)
-	if err != nil {
+	if err := us.sessionUC.CreateSession(ctx, sessionInput); err != nil {
 		return LoginOutput{}, err
 	}
 

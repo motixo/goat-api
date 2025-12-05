@@ -23,7 +23,7 @@ func (us *AuthUseCase) Refresh(ctx context.Context, input RefreshInput) (Refresh
 
 	us.logger.Debug("refresh token requested", "userID", claims.UserID, "ip", input.IP, "device", input.Device)
 
-	refreshJTI := us.ulidGen.New()
+	refreshJTI := us.ulidGen.Generate()
 	refresh, refreshClaims, err := us.jwtService.GenerateRefreshToken(claims.UserID, refreshJTI, us.refreshTTL)
 	if err != nil {
 		us.logger.Error("failed to create refresh token", "userID", claims.UserID, "error", err)
