@@ -20,8 +20,8 @@ func NewSessionHandler(usecase session.UseCase, logger service.Logger) *SessionH
 	}
 }
 
-func (s *SessionHandler) GetAllUserSessions(c *gin.Context) {
-	helper.LogRequest(s.logger, c)
+func (h *SessionHandler) GetAllUserSessions(c *gin.Context) {
+	helper.LogRequest(h.logger, c)
 	userID := c.GetString("user_id")
 	if userID == "" {
 		response.Internal(c)
@@ -34,7 +34,7 @@ func (s *SessionHandler) GetAllUserSessions(c *gin.Context) {
 		return
 	}
 
-	output, err := s.usecase.GetSessionsByUser(c, userID, sessionID)
+	output, err := h.usecase.GetSessionsByUser(c, userID, sessionID)
 	if err != nil {
 		response.Internal(c)
 		return
@@ -43,16 +43,16 @@ func (s *SessionHandler) GetAllUserSessions(c *gin.Context) {
 
 }
 
-func (s *SessionHandler) DeleteSessions(c *gin.Context) {
-	helper.LogRequest(s.logger, c)
+func (h *SessionHandler) DeleteSessions(c *gin.Context) {
+	helper.LogRequest(h.logger, c)
 	var input session.DeleteSessionsInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		s.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
+		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
 		response.BadRequest(c, "Invalid request payload")
 		return
 	}
 	if !input.RemoveOthers && len(input.TargetSessions) == 0 {
-		s.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
+		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
 		response.BadRequest(c, "Invalid request payload")
 		return
 	}
@@ -70,7 +70,7 @@ func (s *SessionHandler) DeleteSessions(c *gin.Context) {
 	input.UserID = userID
 	input.CurrentSession = sessionID
 
-	if err := s.usecase.DeleteSessions(c, input); err != nil {
+	if err := h.usecase.DeleteSessions(c, input); err != nil {
 		response.Internal(c)
 		return
 	}

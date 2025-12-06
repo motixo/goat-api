@@ -59,15 +59,19 @@ func (s *PasswordService) Hash(ctx context.Context, plaintext string) (valueobje
 
 func (s *PasswordService) Verify(ctx context.Context, plaintext string, hashed valueobject.Password) bool {
 
-	parts := strings.Split(hashed.Value(), "$")
+	val, err := hashed.Value()
+	if err != nil {
+		return false
+	}
+	parts := strings.Split(val.(string), "$")
 	if len(parts) != 6 {
 		return false
 	}
 
 	var mem uint32
 	var time, threads uint8
-	_, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &mem, &time, &threads)
-	if err != nil {
+	_, serr := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &mem, &time, &threads)
+	if serr != nil {
 		return false
 	}
 

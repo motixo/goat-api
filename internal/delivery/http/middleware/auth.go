@@ -58,6 +58,7 @@ func (m *AuthMiddleware) Required() gin.HandlerFunc {
 
 		c.Set("user_id", claims.UserID)
 		c.Set("session_id", claims.SessionID)
+		c.Set("user_role", claims.UserRole)
 		c.Next()
 	}
 }

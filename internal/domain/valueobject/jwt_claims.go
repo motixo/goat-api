@@ -16,8 +16,9 @@ const (
 
 type JWTClaims struct {
 	UserID    string
-	TokenType TokenType
 	SessionID string
+	UserRole  int8
+	TokenType TokenType
 	JTI       string
 	Issuer    string
 	Subject   string
@@ -27,7 +28,7 @@ type JWTClaims struct {
 	NotBefore time.Time
 }
 
-func NewJWTClaims(userID string, tokenType TokenType, sessionID, jti string, expiresAt time.Time) (*JWTClaims, error) {
+func NewJWTClaims(userID string, userRole int8, sessionID string, tokenType TokenType, jti string, expiresAt time.Time) (*JWTClaims, error) {
 	if userID == "" {
 		return nil, errors.ErrInvalidInput
 	}
@@ -40,8 +41,9 @@ func NewJWTClaims(userID string, tokenType TokenType, sessionID, jti string, exp
 
 	claims := &JWTClaims{
 		UserID:    userID,
-		TokenType: tokenType,
 		SessionID: sessionID,
+		UserRole:  userRole,
+		TokenType: tokenType,
 		JTI:       jti,
 		Issuer:    "goat-api",
 		Subject:   string(tokenType),

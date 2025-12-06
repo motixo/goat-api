@@ -18,9 +18,38 @@ func RegisterUserRoutes(
 	private := router.Group("/user")
 	private.Use(authMiddleware.Required())
 	{
-		private.GET("/profile",
+
+		private.GET("/", userHandler.GetUser)
+
+		private.GET("/:id",
 			permMiddleware.Require(valueobject.PermUserRead),
+			userHandler.GetUser,
 		)
+
+		private.GET("/list",
+			permMiddleware.Require(valueobject.PermUserRead),
+			userHandler.GetUserList,
+		)
+
+		private.DELETE("/delete", userHandler.DeleteUser)
+
+		private.DELETE("/delete/:id",
+			permMiddleware.Require(valueobject.PermUserDelete),
+			userHandler.DeleteUser,
+		)
+
+		private.PUT("/change-password", userHandler.UpdatePassword)
+
+		private.PUT("/change-role",
+			permMiddleware.Require(valueobject.PermUserChangeRole),
+			userHandler.UpdateRole,
+		)
+
+		private.PUT("/change-status",
+			permMiddleware.Require(valueobject.PermUserChangeStatus),
+			userHandler.UpdateStatus,
+		)
+
 		private.GET("/sessions",
 			permMiddleware.Require(valueobject.PermSessionRead),
 			sessionHandler.GetAllUserSessions,
