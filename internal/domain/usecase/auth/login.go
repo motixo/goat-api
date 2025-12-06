@@ -6,11 +6,11 @@ import (
 	"github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/usecase/session"
 	"github.com/motixo/goat-api/internal/domain/usecase/user"
-	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
 func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput, error) {
 	us.logger.Info("login attempt", "email", input.Email, "ip", input.IP, "device", input.Device)
+
 	userEntity, err := us.userRepo.FindByEmail(ctx, input.Email)
 	if err != nil {
 		us.logger.Error("login failed", "error", err)
@@ -21,7 +21,7 @@ func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput
 		return LoginOutput{}, errors.ErrNotFound
 	}
 
-	if !us.passwordHasher.Verify(ctx, input.Password, valueobject.PasswordFromHash(userEntity.Password)) {
+	if !us.passwordHasher.Verify(ctx, input.Password, userEntity.Password) {
 		us.logger.Warn("login failed: invalid password", "email", input.Email, "ip", input.IP, "device", input.Device)
 		return LoginOutput{}, errors.ErrUnauthorized
 	}
@@ -48,7 +48,7 @@ func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput
 		return LoginOutput{}, err
 	}
 
-	access, accessClaims, err := us.jwtService.GenerateAccessToken(userEntity.ID, sessionID, refreshJTI, us.accessTTL)
+	access, accessClaims, err := us.jwtService.GenerateAccessToken(int8(userEntity.Role), userEntity.ID, sessionID, refreshJTI, us.accessTTL)
 	if err != nil {
 		us.logger.Error("failed to create access token", "userID", userEntity.ID, "error", err)
 		us.sessionUC.DeleteSessions(ctx, session.DeleteSessionsInput{

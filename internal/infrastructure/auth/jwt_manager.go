@@ -18,16 +18,17 @@ func NewJWTManager(secret string) *JWTManager {
 	}
 }
 
-func (j *JWTManager) GenerateAccessToken(userID, sessionID, jti string, duration time.Duration) (string, *valueobject.JWTClaims, error) {
+func (j *JWTManager) GenerateAccessToken(userRole int8, userID, sessionID, jti string, duration time.Duration) (string, *valueobject.JWTClaims, error) {
 	expiresAt := time.Now().UTC().Add(duration)
 
-	claimsVO, err := valueobject.NewJWTClaims(userID, valueobject.TokenTypeAccess, sessionID, jti, expiresAt)
+	claimsVO, err := valueobject.NewJWTClaims(userID, userRole, sessionID, valueobject.TokenTypeAccess, jti, expiresAt)
 	if err != nil {
 		return "", nil, err
 	}
 
 	jwtClaims := jwt.MapClaims{
 		"user_id":    claimsVO.UserID,
+		"user_rolde": claimsVO.UserRole,
 		"token_type": string(claimsVO.TokenType),
 		"session_id": claimsVO.SessionID,
 		"jti":        claimsVO.JTI,
@@ -51,7 +52,7 @@ func (j *JWTManager) GenerateAccessToken(userID, sessionID, jti string, duration
 func (j *JWTManager) GenerateRefreshToken(userID, jti string, duration time.Duration) (string, *valueobject.JWTClaims, error) {
 	expiresAt := time.Now().UTC().Add(duration)
 
-	claimsVO, err := valueobject.NewJWTClaims(userID, valueobject.TokenTypeRefresh, "", jti, expiresAt)
+	claimsVO, err := valueobject.NewJWTClaims(userID, -1, "", valueobject.TokenTypeRefresh, jti, expiresAt)
 	if err != nil {
 		return "", nil, err
 	}

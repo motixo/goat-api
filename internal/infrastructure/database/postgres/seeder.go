@@ -18,9 +18,7 @@ func SeedPermissions(db *sqlx.DB) error {
 	adminPerm := valueobject.PermFullAccess
 
 	clientPerm := []valueobject.Permission{
-		valueobject.PermUserRead,
 		valueobject.PermUserUpdate,
-		valueobject.PermUserDelete,
 		valueobject.PermSessionRead,
 		valueobject.PermSessionDelete,
 	}
@@ -86,7 +84,7 @@ func SeedAdminUser(db *sqlx.DB, passwordHasher service.PasswordHasher, cfg *conf
 		INSERT INTO users (id, email, password, status, role, created_at)
 		VALUES (gen_random_uuid(), $1, $2, $3, $4, CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
 		ON CONFLICT (email) DO NOTHING
-	`, email, hashedPassword.Value(), int8(activeStatus), int8(adminRole))
+	`, email, hashedPassword, int8(activeStatus), int8(adminRole))
 
 	if err != nil {
 		return err

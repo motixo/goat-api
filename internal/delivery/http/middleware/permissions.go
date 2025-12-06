@@ -23,19 +23,14 @@ func NewPermMiddleware(userUC user.UseCase, permissionUS permission.UseCase) *Pe
 
 func (p *PermMiddleware) Require(permValue valueobject.Permission) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userID := c.GetString("user_id")
-		if userID == "" {
+		_, exists := c.Get("user_role")
+		if !exists {
 			response.Unauthorized(c, "Missing or invalid authentication token.")
 			return
 		}
 
-		user, err := p.userUC.GetUser(c.Request.Context(), userID)
-		if err != nil {
-			response.DomainError(c, err)
-			return
-		}
-
-		perms, err := p.permissionUS.GetPermissionsByRole(c.Request.Context(), user.Role)
+		userRole := valueobject.UserRole(c.GetInt8("user_role"))
+		perms, err := p.permissionUS.GetPermissionsByRole(c.Request.Context(), userRole)
 		if err != nil {
 			response.Internal(c)
 			return

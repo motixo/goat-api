@@ -21,7 +21,7 @@ func (us *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (Registe
 	rq := &entity.User{
 		ID:        uuid.New().String(),
 		Email:     input.Email,
-		Password:  hashedPassword.Value(),
+		Password:  hashedPassword,
 		Status:    valueobject.StatusActive,
 		Role:      valueobject.RoleClient,
 		CreatedAt: time.Now().UTC(),

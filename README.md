@@ -79,12 +79,17 @@ This project follows Clean Architecture principles:
 
 ### User Management
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/users/profile` | Get user profile |
-| `GET` | `/users/:id` | Get user by ID |
-| `PUT` | `/users/:id` | Update user |
-| `DELETE` | `/users/:id` | Delete user |
+| Method | Endpoint | Description | Permissions |
+|--------|----------|-------------|-------------|
+| `GET` | `/user/` | Get current user info | Authenticated |
+| `GET` | `/user/:id` | Get user by ID | `user:read` |
+| `GET` | `/user/list` | Get all users | `user:read` |
+| `PUT` | `/user/change-password` | Update own password | Authenticated |
+| `PUT` | `/user/change-role` | Update user role | `user:change_role` |
+| `PUT` | `/user/change-status` | Update user status | `user:change_status` |
+| `DELETE` | `/user/delete` | Delete own account | Authenticated |
+| `DELETE` | `/user/delete/:id` | Delete user by ID | `user:delete` |
+
 
 ### Session Management
 

@@ -8,6 +8,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+//go:embed scripts/*.lua
 var luaScripts embed.FS
 
 var (

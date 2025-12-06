@@ -2,11 +2,11 @@ package user
 
 import (
 	"context"
-
-	"github.com/motixo/goat-api/internal/domain/entity"
 )
 
 type UseCase interface {
-	GetProfile(ctx context.Context, userID string) (*entity.User, error)
-	GetUser(ctx context.Context, userID string) (*entity.User, error)
+	GetUser(ctx context.Context, userID string) (*UserResponse, error)
+	DeleteUser(ctx context.Context, userID string) error
+	UpdateUser(ctx context.Context, input UserUpdateInput) error
+	GetUserslist(ctx context.Context) ([]*UserResponse, error)
 }

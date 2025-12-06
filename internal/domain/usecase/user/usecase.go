@@ -6,13 +6,15 @@ import (
 )
 
 type UserUseCase struct {
-	userRepo repository.UserRepository
-	logger   service.Logger
+	userRepo       repository.UserRepository
+	passwordHasher service.PasswordHasher
+	logger         service.Logger
 }
 
-func NewUsecase(r repository.UserRepository, logger service.Logger) UseCase {
+func NewUsecase(r repository.UserRepository, passwordHasher service.PasswordHasher, logger service.Logger) UseCase {
 	return &UserUseCase{
-		userRepo: r,
-		logger:   logger,
+		userRepo:       r,
+		passwordHasher: passwordHasher,
+		logger:         logger,
 	}
 }
