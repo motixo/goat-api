@@ -9,4 +9,5 @@ type UseCase interface {
 	DeleteUser(ctx context.Context, userID string) error
 	UpdateUser(ctx context.Context, input UserUpdateInput) error
 	GetUserslist(ctx context.Context) ([]*UserResponse, error)
+	ChangePassword(ctx context.Context, input UpdatePassInput) error
 }

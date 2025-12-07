@@ -86,15 +86,19 @@ func (h *UserHandler) UpdatePassword(c *gin.Context) {
 		return
 	}
 
-	err := h.usecase.UpdateUser(c, user.UserUpdateInput{
+	err := h.usecase.ChangePassword(c, user.UpdatePassInput{
 		UserID:      userID,
-		Password:    &input.NewPassword,
-		OldPassword: &input.OldPassword,
+		NewPassword: input.NewPassword,
+		OldPassword: input.OldPassword,
 	})
 
 	if err != nil {
 		if err == errors.ErrInvalidPassword {
 			response.BadRequest(c, "current password is incorrect")
+			return
+		}
+		if err == errors.ErrPasswordSameAsCurrent {
+			response.DomainError(c, err)
 			return
 		}
 		response.Internal(c)

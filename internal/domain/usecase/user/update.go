@@ -10,26 +10,7 @@ import (
 func (us *UserUseCase) UpdateUser(ctx context.Context, input UserUpdateInput) error {
 	us.logger.Info("update user attempt", "UserID:", input.UserID)
 
-	user, err := us.userRepo.FindByID(ctx, input.UserID)
-	if err != nil {
-		us.logger.Error("user lookup failed", "UserID:", input.UserID)
-		return errors.ErrUserNotFound
-	}
-
 	updateDTO := dto.UserUpdate{}
-
-	if input.Password != nil && input.OldPassword != nil {
-		if !us.passwordHasher.Verify(ctx, *input.OldPassword, user.Password) {
-			return errors.ErrInvalidPassword
-		}
-		hashedPassword, err := us.passwordHasher.Hash(ctx, *input.Password)
-		if err != nil {
-			us.logger.Error("password hashing failed", "UserID:", input.UserID)
-			return err
-		}
-		updateDTO.Password = &hashedPassword
-		us.logger.Info("password updated", "UserID:", input.UserID)
-	}
 
 	if input.Email != nil {
 		updateDTO.Email = input.Email
@@ -53,4 +34,59 @@ func (us *UserUseCase) UpdateUser(ctx context.Context, input UserUpdateInput) er
 
 	us.logger.Info("user successfully updated", "UserID:", input.UserID)
 	return nil
+}
+
+func (us *UserUseCase) ChangePassword(ctx context.Context, input UpdatePassInput) error {
+
+	if input.OldPassword == input.NewPassword {
+		us.logger.Error("passwords are same", "UserID:", input.UserID)
+		return errors.ErrPasswordSameAsCurrent
+	}
+
+	updateDTO := dto.UserUpdate{}
+
+	user, err := us.userRepo.FindByID(ctx, input.UserID)
+	if err != nil {
+		us.logger.Error("user lookup failed", "UserID:", input.UserID, "Error:", err)
+		return errors.ErrUserNotFound
+	}
+
+	if !us.passwordHasher.Verify(ctx, input.OldPassword, user.Password) {
+		return errors.ErrInvalidPassword
+	}
+
+	hashedPassword, err := us.passwordHasher.Hash(ctx, input.NewPassword)
+	if err != nil {
+		us.logger.Error("password hashing failed", "UserID:", input.UserID, "Error:", err)
+		return err
+	}
+
+	updateDTO.Password = &hashedPassword
+	if err := us.userRepo.Update(ctx, input.UserID, updateDTO); err != nil {
+		us.logger.Error("user update failed", "UserID:", input.UserID, "Error:", err)
+		return err
+	}
+
+	sessions, err := us.sessionRepo.ListByUser(ctx, user.ID)
+	if err != nil {
+		us.logger.Error("field to fetch user sessions", "UserID:", input.UserID, "Error:", err)
+		return nil
+	}
+
+	if len(sessions) == 0 {
+		return nil
+	}
+
+	targets := make([]string, len(sessions))
+	for i := range sessions {
+		targets[i] = sessions[i].ID
+	}
+	if err := us.sessionRepo.Delete(ctx, targets); err != nil {
+		us.logger.Error("filed to delete user sessions", "userID:", input.UserID, "Error:", err)
+		return nil
+	}
+
+	us.logger.Info("password updated and sessions removed", "UserID:", input.UserID)
+	return nil
+
 }

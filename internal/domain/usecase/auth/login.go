@@ -23,7 +23,7 @@ func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput
 
 	if !us.passwordHasher.Verify(ctx, input.Password, userEntity.Password) {
 		us.logger.Warn("login failed: invalid password", "email", input.Email, "ip", input.IP, "device", input.Device)
-		return LoginOutput{}, errors.ErrUnauthorized
+		return LoginOutput{}, errors.ErrInvalidCredentials
 	}
 
 	refreshJTI := us.ulidGen.Generate()

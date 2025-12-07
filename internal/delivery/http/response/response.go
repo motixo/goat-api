@@ -74,6 +74,10 @@ func clientMessage(err error) string {
 		return "The requested resource was not found."
 	case errors.ErrConflict:
 		return "The request conflicts with current state."
+	case errors.ErrInvalidCredentials:
+		return "Invalid email or password."
+	case errors.ErrPasswordSameAsCurrent:
+		return "Passwords can't be same"
 	default:
 		return "An error occurred while processing your request."
 	}
