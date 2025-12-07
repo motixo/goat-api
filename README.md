@@ -96,7 +96,7 @@ This project follows Clean Architecture principles:
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/sessions` | List user sessions |
-| `DELETE` | `/sessions/:ids` | Revoke session |
+| `DELETE` | `/sessions` | Revoke session |
 
 ## Development
 
