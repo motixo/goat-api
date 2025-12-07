@@ -15,12 +15,10 @@ type UserResponse struct {
 }
 
 type UserUpdateInput struct {
-	UserID      string
-	Email       *string
-	Password    *string
-	OldPassword *string
-	Status      *valueobject.UserStatus
-	Role        *valueobject.UserRole
+	UserID string
+	Email  *string
+	Status *valueobject.UserStatus
+	Role   *valueobject.UserRole
 }
 
 type UpdatePassInput struct {

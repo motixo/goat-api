@@ -18,13 +18,13 @@ var (
 
 func HTTPStatus(err error) int {
 	switch err {
-	case ErrUnauthorized, ErrTokenExpired:
+	case ErrUnauthorized, ErrTokenExpired, ErrInvalidCredentials:
 		return http.StatusUnauthorized
 	case ErrForbidden:
 		return http.StatusForbidden
 	case ErrNotFound, ErrUserNotFound:
 		return http.StatusNotFound
-	case ErrConflict, ErrEmailAlreadyExists:
+	case ErrConflict, ErrEmailAlreadyExists, ErrPasswordSameAsCurrent:
 		return http.StatusConflict
 
 	case ErrBadRequest,

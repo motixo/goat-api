@@ -9,4 +9,5 @@ var (
 	ErrPasswordHashingFailed   = errors.New("failed to hash password")
 	ErrInvalidCredentials      = errors.New("invalid email or password")
 	ErrInvalidPassword         = errors.New("password not match")
+	ErrPasswordSameAsCurrent   = errors.New("new password cannot be the same as the current password")
 )

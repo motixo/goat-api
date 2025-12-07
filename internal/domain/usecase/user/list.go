@@ -15,7 +15,11 @@ func (us *UserUseCase) GetUserslist(ctx context.Context) ([]*UserResponse, error
 	response := make([]*UserResponse, 0, len(users))
 	for _, usr := range users {
 		r := &UserResponse{
-			ID: usr.ID,
+			ID:        usr.ID,
+			Email:     usr.Email,
+			Role:      usr.Role.String(),
+			Status:    usr.Status.String(),
+			CreatedAt: usr.CreatedAt,
 		}
 		response = append(response, r)
 	}
