@@ -16,7 +16,7 @@ func (us *PermissionUseCase) Create(ctx context.Context, input CreateInput) erro
 	return nil
 }
 
-func (us *PermissionUseCase) GetPermissionsByRole(ctx context.Context, roleID valueobject.UserRole) (*[]entity.Permission, error) {
+func (us *PermissionUseCase) GetPermissionsByRole(ctx context.Context, roleID valueobject.UserRole) ([]*entity.Permission, error) {
 	us.logger.Info("fetching permissions for role", "role_id", roleID)
 	perms, err := us.permissionRepo.GetByRoleID(ctx, int8(roleID))
 	if err != nil {

@@ -84,13 +84,13 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
 	userID := c.GetString("user_id")
 	if userID == "" {
-		response.Internal(c)
+		response.Unauthorized(c, "authentication context missing")
 		return
 	}
 
 	sessionID := c.GetString("session_id")
 	if sessionID == "" {
-		response.Internal(c)
+		response.Unauthorized(c, "authentication context missing")
 		return
 	}
 

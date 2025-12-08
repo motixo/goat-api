@@ -29,7 +29,7 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 	if targetUserID == "" {
 		targetUserID = c.GetString("user_id")
 		if targetUserID == "" {
-			response.Internal(c)
+			response.Unauthorized(c, "authentication context missing")
 			return
 		}
 	}
@@ -75,7 +75,7 @@ func (h *UserHandler) UpdatePassword(c *gin.Context) {
 
 	userID := c.GetString("user_id")
 	if userID == "" {
-		response.Internal(c)
+		response.Unauthorized(c, "authentication context missing")
 		return
 	}
 

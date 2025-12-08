@@ -1,10 +1,11 @@
 package service
 
 import (
+	"errors"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/motixo/goat-api/internal/domain/errors"
+	DomainError "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
@@ -43,7 +44,7 @@ func (j *JWTManager) GenerateAccessToken(userRole int8, userID, sessionID, jti s
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwtClaims)
 	signed, err := token.SignedString(j.secret)
 	if err != nil {
-		return "", nil, err
+		return "", nil, DomainError.ErrInternal
 	}
 
 	return signed, claimsVO, nil
@@ -72,7 +73,7 @@ func (j *JWTManager) GenerateRefreshToken(userID, jti string, duration time.Dura
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwtClaims)
 	signed, err := token.SignedString(j.secret)
 	if err != nil {
-		return "", nil, err
+		return "", nil, DomainError.ErrInternal
 	}
 
 	return signed, claimsVO, nil
@@ -87,53 +88,126 @@ func (j *JWTManager) ParseAndValidate(tokenStr string) (*valueobject.JWTClaims, 
 	}, jwt.WithLeeway(5*time.Second))
 
 	if err != nil {
-		return nil, err
+		switch {
+		case errors.Is(err, jwt.ErrTokenExpired):
+			return nil, DomainError.ErrTokenExpired
+		case errors.Is(err, jwt.ErrTokenMalformed),
+			errors.Is(err, jwt.ErrSignatureInvalid),
+			errors.Is(err, jwt.ErrTokenNotValidYet):
+			return nil, DomainError.ErrUnauthorized
+		default:
+			return nil, DomainError.ErrUnauthorized
+		}
 	}
+
 	if !token.Valid {
-		return nil, errors.ErrUnauthorized
+		return nil, DomainError.ErrUnauthorized
 	}
 
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		return nil, errors.ErrUnauthorized
+		return nil, DomainError.ErrUnauthorized
 	}
 
 	userID, ok := claims["user_id"].(string)
-	if !ok {
-		return nil, errors.ErrUnauthorized
-	}
-
-	sessionID, _ := claims["session_id"].(string)
-
-	tokenTypeStr, ok := claims["token_type"].(string)
-	if !ok {
-		return nil, errors.ErrUnauthorized
+	if !ok || userID == "" {
+		return nil, DomainError.ErrUnauthorized
 	}
 
 	jti, ok := claims["jti"].(string)
-	if !ok {
-		return nil, errors.ErrUnauthorized
+	if !ok || jti == "" {
+		return nil, DomainError.ErrUnauthorized
 	}
 
-	expiresAt := time.Unix(int64(claims["exp"].(float64)), 0)
-	issuedAt := time.Unix(int64(claims["iat"].(float64)), 0)
+	tokenTypeStr, ok := claims["token_type"].(string)
+	if !ok {
+		return nil, DomainError.ErrUnauthorized
+	}
+	tokenType := valueobject.TokenType(tokenTypeStr)
+
+	var audience []string
+	if aud, ok := claims["aud"].([]interface{}); ok {
+		for _, a := range aud {
+			if s, ok := a.(string); ok {
+				audience = append(audience, s)
+			}
+		}
+	} else if audStr, ok := claims["aud"].(string); ok {
+		audience = []string{audStr}
+	} else {
+		return nil, DomainError.ErrUnauthorized
+	}
+
+	issuer, _ := claims["iss"].(string)
+	if issuer != valueobject.TokenIssuer {
+		return nil, DomainError.ErrUnauthorized
+	}
+
+	hasValidAud := false
+	for _, aud := range audience {
+		if aud == valueobject.TokenAudience {
+			hasValidAud = true
+			break
+		}
+	}
+	if !hasValidAud {
+		return nil, DomainError.ErrUnauthorized
+	}
+
+	exp, ok := claims["exp"].(float64)
+	if !ok {
+		return nil, DomainError.ErrUnauthorized
+	}
+	iat, ok := claims["iat"].(float64)
+	if !ok {
+		return nil, DomainError.ErrUnauthorized
+	}
+	nbf, ok := claims["nbf"].(float64)
+	if !ok {
+		return nil, DomainError.ErrUnauthorized
+	}
+
+	sessionID, _ := claims["session_id"].(string)
+	userRole := int8(-1)
+	if role, ok := claims["user_role"].(float64); ok {
+		userRole = int8(role)
+	}
 
 	return &valueobject.JWTClaims{
 		UserID:    userID,
 		SessionID: sessionID,
-		TokenType: valueobject.TokenType(tokenTypeStr),
+		UserRole:  userRole,
+		TokenType: tokenType,
 		JTI:       jti,
-		ExpiresAt: expiresAt,
-		IssuedAt:  issuedAt,
+		Issuer:    issuer,
+		Subject:   tokenTypeStr,
+		Audience:  audience,
+		ExpiresAt: time.Unix(int64(exp), 0),
+		IssuedAt:  time.Unix(int64(iat), 0),
+		NotBefore: time.Unix(int64(nbf), 0),
 	}, nil
 }
 
 func (j *JWTManager) ValidateClaims(claims *valueobject.JWTClaims) error {
-	if claims.IsExpired() {
-		return errors.ErrTokenExpired
+	now := time.Now()
+
+	if now.Before(claims.NotBefore) {
+		return DomainError.ErrUnauthorized
 	}
-	if !claims.IsValid() {
-		return errors.ErrUnauthorized
+
+	if now.After(claims.ExpiresAt) {
+		return DomainError.ErrTokenExpired
 	}
+
+	if claims.UserID == "" || claims.JTI == "" {
+		return DomainError.ErrUnauthorized
+	}
+
+	if claims.IsAccess() {
+		if claims.SessionID == "" || claims.UserRole < 0 {
+			return DomainError.ErrUnauthorized
+		}
+	}
+
 	return nil
 }

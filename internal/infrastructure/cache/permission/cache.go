@@ -23,7 +23,7 @@ func (c *Cache) key(roleID int8) string {
 	return fmt.Sprintf("perm:%d", roleID)
 }
 
-func (c *Cache) Get(ctx context.Context, roleID int8) (*[]entity.Permission, error) {
+func (c *Cache) Get(ctx context.Context, roleID int8) ([]*entity.Permission, error) {
 	data, err := c.rdb.Get(ctx, c.key(roleID)).Bytes()
 	if err == redis.Nil {
 		return nil, nil // cache miss
@@ -32,14 +32,14 @@ func (c *Cache) Get(ctx context.Context, roleID int8) (*[]entity.Permission, err
 		return nil, err
 	}
 
-	var perms []entity.Permission
+	var perms []*entity.Permission
 	if err := json.Unmarshal(data, &perms); err != nil {
 		return nil, err
 	}
-	return &perms, nil
+	return perms, nil
 }
 
-func (c *Cache) Set(ctx context.Context, roleID int8, perms *[]entity.Permission) error {
+func (c *Cache) Set(ctx context.Context, roleID int8, perms []*entity.Permission) error {
 	b, err := json.Marshal(perms)
 	if err != nil {
 		return err

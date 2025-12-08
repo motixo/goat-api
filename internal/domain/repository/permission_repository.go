@@ -8,5 +8,5 @@ import (
 
 type PermissionRepository interface {
 	Create(ctx context.Context, p *entity.Permission) error
-	GetByRoleID(ctx context.Context, roleID int8) (*[]entity.Permission, error)
+	GetByRoleID(ctx context.Context, roleID int8) ([]*entity.Permission, error)
 }

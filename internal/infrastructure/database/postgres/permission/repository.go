@@ -17,23 +17,23 @@ func NewRepository(db *sqlx.DB) *Repository {
 
 func (p *Repository) Create(ctx context.Context, u *entity.Permission) error {
 	query := `
-        INSERT INTO permissions (id, role_id, action, created_at, updated_at)
-        VALUES (:id, :role_id, :action, :created_at, :updated_at)
+        INSERT INTO permissions (id, role_id, action, created_at)
+        VALUES (:id, :role_id, :action, :created_at)
     `
 	_, err := p.db.NamedExecContext(ctx, query, u)
 	return err
 }
 
-func (r *Repository) GetByRoleID(ctx context.Context, roleID int8) (*[]entity.Permission, error) {
-	var permission []entity.Permission
+func (r *Repository) GetByRoleID(ctx context.Context, roleID int8) ([]*entity.Permission, error) {
+	var permission []*entity.Permission
 	query := `
-        SELECT id, role_id, action, created_at, updated_at
+        SELECT id, role_id, action, created_at
         FROM permissions
         WHERE role_id = $1
     `
-	err := r.db.SelectContext(ctx, &permission, query, roleID)
+	err := r.db.SelectContext(ctx, permission, query, roleID)
 	if err != nil {
 		return nil, err
 	}
-	return &permission, nil
+	return permission, nil
 }
