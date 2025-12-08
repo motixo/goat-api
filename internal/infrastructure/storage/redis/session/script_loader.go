@@ -3,6 +3,7 @@ package session
 import (
 	"embed"
 	"io/fs"
+	"strings"
 	"sync"
 
 	"github.com/redis/go-redis/v9"
@@ -24,22 +25,28 @@ func getScripts() map[string]*redis.Script {
 			if err != nil {
 				return err
 			}
-
-			if !d.IsDir() {
-				scriptBytes, readErr := fs.ReadFile(luaScripts, path)
-				if readErr != nil {
-					return readErr
-				}
-
-				scriptName := path[len("scripts/") : len(path)-4]
-
-				scripts[scriptName] = redis.NewScript(string(scriptBytes))
+			if d.IsDir() {
+				return nil
 			}
+
+			// Only load .lua files
+			if !strings.HasSuffix(path, ".lua") {
+				return nil // skip non-Lua files
+			}
+
+			scriptBytes, err := fs.ReadFile(luaScripts, path)
+			if err != nil {
+				return err
+			}
+
+			// Extract name: scripts/create_session.lua → create_session
+			scriptName := strings.TrimSuffix(path[len("scripts/"):], ".lua")
+			scripts[scriptName] = redis.NewScript(string(scriptBytes))
 			return nil
 		})
 
 		if err != nil {
-			panic(err)
+			panic("failed to load Redis Lua scripts: " + err.Error())
 		}
 	})
 
@@ -48,9 +55,8 @@ func getScripts() map[string]*redis.Script {
 
 func getScript(name string) *redis.Script {
 	scripts := getScripts()
-	script, exists := scripts[name]
-	if !exists {
-		panic("script not found: " + name)
+	if script, exists := scripts[name]; exists {
+		return script
 	}
-	return script
+	panic("embedded Redis Lua script not found: " + name)
 }

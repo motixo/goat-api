@@ -5,6 +5,7 @@ import (
 	"github.com/motixo/goat-api/internal/delivery/http/handlers"
 	"github.com/motixo/goat-api/internal/delivery/http/middleware"
 	"github.com/motixo/goat-api/internal/delivery/http/routes"
+	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/domain/usecase/auth"
 	"github.com/motixo/goat-api/internal/domain/usecase/permission"
@@ -27,6 +28,7 @@ func NewServer(
 	authUC auth.UseCase,
 	permUC permission.UseCase,
 	sessionUC session.UseCase,
+	roleCache repository.RoleRepository,
 	logger logger.Logger,
 	jwtService service.JWTService,
 ) *Server {
@@ -34,7 +36,7 @@ func NewServer(
 
 	// Global middleware
 	authMiddleware := middleware.NewAuthMiddleware(jwtService, sessionUC)
-	permMiddleware := middleware.NewPermMiddleware(userUC, permUC)
+	permMiddleware := middleware.NewPermMiddleware(userUC, permUC, roleCache)
 	router.Use(middleware.Recovery(logger))
 
 	authHandler := handlers.NewAuthHandler(authUC, logger)

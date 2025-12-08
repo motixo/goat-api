@@ -31,7 +31,7 @@ func (r *Repository) GetByRoleID(ctx context.Context, roleID int8) ([]*entity.Pe
         FROM permissions
         WHERE role_id = $1
     `
-	err := r.db.SelectContext(ctx, permission, query, roleID)
+	err := r.db.SelectContext(ctx, &permission, query, roleID)
 	if err != nil {
 		return nil, err
 	}

@@ -86,7 +86,7 @@ func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput
 		return LoginOutput{}, err
 	}
 
-	access, accessClaims, err := us.jwtService.GenerateAccessToken(int8(userEntity.Role), userEntity.ID, sessionID, refreshJTI, us.accessTTL)
+	access, accessClaims, err := us.jwtService.GenerateAccessToken(userEntity.ID, sessionID, refreshJTI, us.accessTTL)
 	if err != nil {
 		us.logger.Error("failed to create access token", "userID", userEntity.ID, "error", err)
 		us.sessionUC.DeleteSessions(ctx, session.DeleteSessionsInput{
@@ -165,7 +165,7 @@ func (us *AuthUseCase) Refresh(ctx context.Context, input RefreshInput) (Refresh
 		return RefreshOutput{}, err
 	}
 
-	access, accessClaims, err := us.jwtService.GenerateAccessToken(claims.UserRole, claims.UserID, sessionID, refreshJTI, us.accessTTL)
+	access, accessClaims, err := us.jwtService.GenerateAccessToken(claims.UserID, sessionID, refreshJTI, us.accessTTL)
 	if err != nil {
 		us.logger.Error("failed to create access token", "userID", claims.UserID, "error", err)
 		return RefreshOutput{}, err

@@ -63,7 +63,6 @@ func (m *AuthMiddleware) Required() gin.HandlerFunc {
 
 		c.Set(string(UserIDKey), claims.UserID)
 		c.Set(string(SessionIDKey), claims.SessionID)
-		c.Set(string(UserRoleKey), claims.UserRole)
 		c.Next()
 	}
 }

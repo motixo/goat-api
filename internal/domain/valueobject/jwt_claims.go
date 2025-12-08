@@ -33,7 +33,7 @@ type JWTClaims struct {
 	NotBefore time.Time
 }
 
-func NewJWTClaims(userID string, userRole int8, sessionID string, tokenType TokenType, jti string, expiresAt time.Time) (*JWTClaims, error) {
+func NewJWTClaims(userID string, sessionID string, tokenType TokenType, jti string, expiresAt time.Time) (*JWTClaims, error) {
 	if userID == "" || jti == "" {
 		return nil, errors.ErrInvalidInput
 	}
@@ -44,7 +44,6 @@ func NewJWTClaims(userID string, userRole int8, sessionID string, tokenType Toke
 	claims := &JWTClaims{
 		UserID:    userID,
 		SessionID: sessionID,
-		UserRole:  userRole,
 		TokenType: tokenType,
 		JTI:       jti,
 		Issuer:    TokenIssuer,

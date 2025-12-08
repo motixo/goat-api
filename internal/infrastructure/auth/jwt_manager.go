@@ -19,17 +19,16 @@ func NewJWTManager(secret string) *JWTManager {
 	}
 }
 
-func (j *JWTManager) GenerateAccessToken(userRole int8, userID, sessionID, jti string, duration time.Duration) (string, *valueobject.JWTClaims, error) {
+func (j *JWTManager) GenerateAccessToken(userID, sessionID, jti string, duration time.Duration) (string, *valueobject.JWTClaims, error) {
 	expiresAt := time.Now().UTC().Add(duration)
 
-	claimsVO, err := valueobject.NewJWTClaims(userID, userRole, sessionID, valueobject.TokenTypeAccess, jti, expiresAt)
+	claimsVO, err := valueobject.NewJWTClaims(userID, sessionID, valueobject.TokenTypeAccess, jti, expiresAt)
 	if err != nil {
 		return "", nil, err
 	}
 
 	jwtClaims := jwt.MapClaims{
 		"user_id":    claimsVO.UserID,
-		"user_role":  claimsVO.UserRole,
 		"token_type": string(claimsVO.TokenType),
 		"session_id": claimsVO.SessionID,
 		"jti":        claimsVO.JTI,
@@ -53,7 +52,7 @@ func (j *JWTManager) GenerateAccessToken(userRole int8, userID, sessionID, jti s
 func (j *JWTManager) GenerateRefreshToken(userID, jti string, duration time.Duration) (string, *valueobject.JWTClaims, error) {
 	expiresAt := time.Now().UTC().Add(duration)
 
-	claimsVO, err := valueobject.NewJWTClaims(userID, -1, "", valueobject.TokenTypeRefresh, jti, expiresAt)
+	claimsVO, err := valueobject.NewJWTClaims(userID, "", valueobject.TokenTypeRefresh, jti, expiresAt)
 	if err != nil {
 		return "", nil, err
 	}
@@ -168,15 +167,10 @@ func (j *JWTManager) ParseAndValidate(tokenStr string) (*valueobject.JWTClaims, 
 	}
 
 	sessionID, _ := claims["session_id"].(string)
-	userRole := int8(-1)
-	if role, ok := claims["user_role"].(float64); ok {
-		userRole = int8(role)
-	}
 
 	return &valueobject.JWTClaims{
 		UserID:    userID,
 		SessionID: sessionID,
-		UserRole:  userRole,
 		TokenType: tokenType,
 		JTI:       jti,
 		Issuer:    issuer,
@@ -204,7 +198,7 @@ func (j *JWTManager) ValidateClaims(claims *valueobject.JWTClaims) error {
 	}
 
 	if claims.IsAccess() {
-		if claims.SessionID == "" || claims.UserRole < 0 {
+		if claims.SessionID == "" {
 			return DomainError.ErrUnauthorized
 		}
 	}

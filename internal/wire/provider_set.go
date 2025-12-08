@@ -23,6 +23,7 @@ import (
 	// Infrastructure layer
 	authInfra "github.com/motixo/goat-api/internal/infrastructure/auth"
 	permissionCache "github.com/motixo/goat-api/internal/infrastructure/cache/permission"
+	roleCache "github.com/motixo/goat-api/internal/infrastructure/cache/role"
 	"github.com/motixo/goat-api/internal/infrastructure/database/postgres"
 	postgresPermission "github.com/motixo/goat-api/internal/infrastructure/database/postgres/permission"
 	postgresUser "github.com/motixo/goat-api/internal/infrastructure/database/postgres/user"
@@ -43,6 +44,7 @@ var RepositorySet = wire.NewSet(
 	postgresPermission.NewRepository,
 	redisSession.NewRepository,
 	NewPermissionRepository,
+	NewRoleRepository,
 )
 
 // Service providers
@@ -132,4 +134,16 @@ func NewPermissionRepository(
 	cache := permissionCache.NewCache(redisClient, 24*time.Hour)
 
 	return permissionCache.NewCachedRepository(dbRepo, cache, logger)
+}
+
+func NewRoleRepository(
+	db *sqlx.DB,
+	redisClient *redis.Client,
+	logger logger.Logger,
+) repository.RoleRepository {
+
+	dbRepo := postgresUser.NewRepository(db)
+	cache := roleCache.NewCache(redisClient, 24*time.Hour)
+
+	return roleCache.NewCachedRepository(dbRepo, cache, logger)
 }
