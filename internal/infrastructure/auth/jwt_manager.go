@@ -28,7 +28,7 @@ func (j *JWTManager) GenerateAccessToken(userRole int8, userID, sessionID, jti s
 
 	jwtClaims := jwt.MapClaims{
 		"user_id":    claimsVO.UserID,
-		"user_rolde": claimsVO.UserRole,
+		"user_role":  claimsVO.UserRole,
 		"token_type": string(claimsVO.TokenType),
 		"session_id": claimsVO.SessionID,
 		"jti":        claimsVO.JTI,

@@ -7,6 +7,15 @@ import (
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
+type CreateInput struct {
+	RoleID string
+	Action string
+}
+
+func (us *PermissionUseCase) Create(ctx context.Context, input CreateInput) error {
+	return nil
+}
+
 func (us *PermissionUseCase) GetPermissionsByRole(ctx context.Context, roleID valueobject.UserRole) (*[]entity.Permission, error) {
 	us.logger.Info("fetching permissions for role", "role_id", roleID)
 	perms, err := us.permissionRepo.GetByRoleID(ctx, int8(roleID))

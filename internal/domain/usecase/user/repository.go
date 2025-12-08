@@ -7,6 +7,77 @@ import (
 	"github.com/motixo/goat-api/internal/domain/repository/dto"
 )
 
+func (us *UserUseCase) GetUser(ctx context.Context, userID string) (*UserResponse, error) {
+	us.logger.Info("Fetching user by ID", "userID:", userID)
+	user, err := us.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		us.logger.Error("Failed to fetch user", "userID", userID, "error", err)
+		return nil, err
+	}
+	response := &UserResponse{
+		ID:        user.ID,
+		Email:     user.Email,
+		Role:      user.Role.String(),
+		Status:    user.Status.String(),
+		CreatedAt: user.CreatedAt,
+	}
+	us.logger.Info("User fetched successfully", "userID:", userID)
+	return response, nil
+}
+
+func (us *UserUseCase) GetUserslist(ctx context.Context) ([]*UserResponse, error) {
+	us.logger.Info("Fetching users List")
+	users, err := us.userRepo.List(ctx)
+	if err != nil {
+		us.logger.Error("Failed to fetch users List", "error", err)
+		return nil, err
+	}
+
+	response := make([]*UserResponse, 0, len(users))
+	for _, usr := range users {
+		r := &UserResponse{
+			ID:        usr.ID,
+			Email:     usr.Email,
+			Role:      usr.Role.String(),
+			Status:    usr.Status.String(),
+			CreatedAt: usr.CreatedAt,
+		}
+		response = append(response, r)
+	}
+	us.logger.Info("Users list fetched successfully")
+	return response, nil
+}
+
+func (us *UserUseCase) DeleteUser(ctx context.Context, userID string) error {
+	us.logger.Info("Attempting to delete user", "TargetUserID:", userID)
+	if err := us.userRepo.Delete(ctx, userID); err != nil {
+		us.logger.Error("Failed to delete user", "Error:", err)
+		return err
+	}
+
+	sessions, err := us.sessionRepo.ListByUser(ctx, userID)
+	if err != nil {
+		us.logger.Error("field to fetch user sessions", "UserID:", userID)
+		return nil
+	}
+
+	if len(sessions) == 0 {
+		return nil
+	}
+
+	targets := make([]string, 0, len(sessions))
+	for i := range sessions {
+		targets[i] = sessions[i].ID
+	}
+	if err := us.sessionRepo.Delete(ctx, targets); err != nil {
+		us.logger.Error("filed to delete user sessions", "userID:", userID)
+		return nil
+	}
+
+	us.logger.Info("User deleted successfully", "TargetUserID:", userID)
+	return nil
+}
+
 func (us *UserUseCase) UpdateUser(ctx context.Context, input UserUpdateInput) error {
 	us.logger.Info("update user attempt", "UserID:", input.UserID)
 

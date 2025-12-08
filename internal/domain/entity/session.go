@@ -5,6 +5,7 @@ import "time"
 type Session struct {
 	ID                string    `json:"id"`
 	UserID            string    `json:"user_id"`
+	RoleID            int8      `json:"role_id"`
 	Device            string    `json:"device,omitempty"`
 	IP                string    `json:"ip,omitempty"`
 	CurrentJTI        string    `json:"current_jti,omitempty"`
