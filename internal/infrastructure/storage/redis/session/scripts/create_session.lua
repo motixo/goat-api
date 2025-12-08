@@ -5,8 +5,6 @@
 	local sessionTTL = tonumber(ARGV[#ARGV - 1])
 	local jtiTTL = tonumber(ARGV[#ARGV])
 
-	local roleID =  tonumber(ARGV[1])
-
 	if not sessionTTL or sessionTTL <= 0 then
 		return redis.error_reply("Session TTL must be positive integer")
 	end
@@ -15,7 +13,7 @@
 	end
 
 	local hsetArgs = {}
-	for i = 2, #ARGV - 2 do
+	for i = 1, #ARGV - 2 do
 		hsetArgs[i] = ARGV[i]
 	end
 
@@ -24,9 +22,6 @@
 
 	redis.call("SET", jtiKey, sessionKey, "EX", jtiTTL)
 	redis.call("SADD", userKey, sessionKey)
-	redis.call("EXPIRE", userKey, sessionTTL)
-
-	redis.call("SADD", userKey, roleID)
 	redis.call("EXPIRE", userKey, sessionTTL)
 
 	return 1

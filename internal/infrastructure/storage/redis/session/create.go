@@ -13,7 +13,6 @@ func (r *Repository) Create(ctx context.Context, s *entity.Session) error {
 
 	argv := []interface{}{
 		"id", s.ID,
-		"role_id", s.RoleID,
 		"user_id", s.UserID,
 		"device", s.Device,
 		"ip", s.IP,

@@ -2,10 +2,10 @@ package helper
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/motixo/goat-api/internal/domain/service"
+	"github.com/motixo/goat-api/internal/infrastructure/logger"
 )
 
-func LogRequest(logger service.Logger, c *gin.Context) {
+func LogRequest(logger logger.Logger, c *gin.Context) {
 	logger.Info("incoming request",
 		"endpoint", c.FullPath(),
 		"method", c.Request.Method,

@@ -6,6 +6,7 @@ import (
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/domain/usecase/session"
+	"github.com/motixo/goat-api/internal/infrastructure/logger"
 )
 
 type AuthUseCase struct {
@@ -14,7 +15,7 @@ type AuthUseCase struct {
 	ulidGen        service.IDGenerator
 	passwordHasher service.PasswordHasher
 	jwtService     service.JWTService
-	logger         service.Logger
+	logger         logger.Logger
 	accessTTL      time.Duration
 	refreshTTL     time.Duration
 	sessionTTL     time.Duration
@@ -26,7 +27,7 @@ func NewUsecase(
 	passwordHasher service.PasswordHasher,
 	jwtService service.JWTService,
 	ulidGen service.IDGenerator,
-	logger service.Logger,
+	logger logger.Logger,
 	accessTTL AccessTTL,
 	refreshTTL RefreshTTL,
 	sessionTTL SessionTTL,

@@ -10,6 +10,7 @@ import (
 	"github.com/motixo/goat-api/internal/domain/usecase/permission"
 	"github.com/motixo/goat-api/internal/domain/usecase/session"
 	"github.com/motixo/goat-api/internal/domain/usecase/user"
+	"github.com/motixo/goat-api/internal/infrastructure/logger"
 )
 
 type Server struct {
@@ -26,7 +27,7 @@ func NewServer(
 	authUC auth.UseCase,
 	permUC permission.UseCase,
 	sessionUC session.UseCase,
-	logger service.Logger,
+	logger logger.Logger,
 	jwtService service.JWTService,
 ) *Server {
 	router := gin.New()

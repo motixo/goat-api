@@ -52,7 +52,7 @@ var ServiceSet = wire.NewSet(
 	NewJWTManager,
 	NewZapLogger,
 	wire.Bind(new(service.JWTService), new(*authInfra.JWTManager)),
-	wire.Bind(new(service.Logger), new(*logger.ZapLogger)),
+	wire.Bind(new(logger.Logger), new(*logger.ZapLogger)),
 )
 
 // Configuration providers
@@ -117,7 +117,7 @@ func NewJWTManager(cfg *config.Config) *authInfra.JWTManager {
 	return authInfra.NewJWTManager(cfg.JWTSecret)
 }
 
-func NewZapLogger() *logger.ZapLogger {
+func NewZapLogger() (*logger.ZapLogger, error) {
 	return logger.NewZapLogger()
 }
 
@@ -125,7 +125,7 @@ func NewZapLogger() *logger.ZapLogger {
 func NewPermissionRepository(
 	db *sqlx.DB,
 	redisClient *redis.Client,
-	logger service.Logger,
+	logger logger.Logger,
 ) repository.PermissionRepository {
 
 	dbRepo := postgresPermission.NewRepository(db)

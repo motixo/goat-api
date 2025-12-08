@@ -3,19 +3,20 @@ package user
 import (
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/domain/service"
+	"github.com/motixo/goat-api/internal/infrastructure/logger"
 )
 
 type UserUseCase struct {
 	userRepo       repository.UserRepository
 	passwordHasher service.PasswordHasher
 	sessionRepo    repository.SessionRepository
-	logger         service.Logger
+	logger         logger.Logger
 }
 
 func NewUsecase(
 	r repository.UserRepository,
 	passwordHasher service.PasswordHasher,
-	logger service.Logger,
+	logger logger.Logger,
 	sessionRepo repository.SessionRepository,
 ) UseCase {
 	return &UserUseCase{

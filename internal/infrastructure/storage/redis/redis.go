@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/motixo/goat-api/internal/config"
-	"github.com/motixo/goat-api/internal/domain/service"
+	"github.com/motixo/goat-api/internal/infrastructure/logger"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -26,7 +26,7 @@ func (r *RedisClient) Ping(ctx context.Context) error {
 	return r.client.Ping(ctx).Err()
 }
 
-func NewClient(cfg *config.Config, logger service.Logger) (RedisClientInterface, error) {
+func NewClient(cfg *config.Config, logger logger.Logger) (RedisClientInterface, error) {
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     cfg.RedisAddr,
 		Password: cfg.RedisPassword,

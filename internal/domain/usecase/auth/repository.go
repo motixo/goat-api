@@ -72,6 +72,7 @@ func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput
 			ID:        userEntity.ID,
 			Email:     userEntity.Email,
 			Role:      userEntity.Role.String(),
+			Status:    userEntity.Status.String(),
 			CreatedAt: userEntity.CreatedAt,
 		},
 	}, nil

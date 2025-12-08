@@ -5,17 +5,17 @@ import (
 	"github.com/motixo/goat-api/internal/delivery/http/helper"
 	"github.com/motixo/goat-api/internal/delivery/http/response"
 	"github.com/motixo/goat-api/internal/domain/errors"
-	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/domain/usecase/user"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
+	"github.com/motixo/goat-api/internal/infrastructure/logger"
 )
 
 type UserHandler struct {
 	usecase user.UseCase
-	logger  service.Logger
+	logger  logger.Logger
 }
 
-func NewUserHandler(usecase user.UseCase, logger service.Logger) *UserHandler {
+func NewUserHandler(usecase user.UseCase, logger logger.Logger) *UserHandler {
 	return &UserHandler{
 		usecase: usecase,
 		logger:  logger,

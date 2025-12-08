@@ -5,19 +5,19 @@ import (
 
 	"github.com/motixo/goat-api/internal/domain/entity"
 	"github.com/motixo/goat-api/internal/domain/repository"
-	"github.com/motixo/goat-api/internal/domain/service"
+	"github.com/motixo/goat-api/internal/infrastructure/logger"
 )
 
 type CachedRepository struct {
 	dbRepo repository.PermissionRepository
 	cache  *Cache
-	logger service.Logger
+	logger logger.Logger
 }
 
 func NewCachedRepository(
 	dbRepo repository.PermissionRepository,
 	cache *Cache,
-	logger service.Logger,
+	logger logger.Logger,
 ) repository.PermissionRepository {
 	return &CachedRepository{
 		dbRepo: dbRepo,
