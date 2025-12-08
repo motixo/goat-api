@@ -21,23 +21,49 @@ func NewPermMiddleware(userUC user.UseCase, permissionUS permission.UseCase) *Pe
 	}
 }
 
-func (p *PermMiddleware) Require(permValue valueobject.Permission) gin.HandlerFunc {
+func (p *PermMiddleware) Require(requiredPerm valueobject.Permission) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		_, exists := c.Get("user_role")
+		// 1. Validate auth context (must come from AuthMiddleware)
+		userIDVal, exists := c.Get(string(UserIDKey))
 		if !exists {
-			response.Unauthorized(c, "Missing or invalid authentication token.")
+			response.Unauthorized(c, "authentication required")
+			c.Abort()
+			return
+		}
+		userID, ok := userIDVal.(string)
+		if !ok || userID == "" {
+			response.Unauthorized(c, "invalid user context")
+			c.Abort()
 			return
 		}
 
-		userRole := valueobject.UserRole(c.GetInt8("user_role"))
+		// 2. Safely extract user role (Gin stores numbers as float64!)
+		userRoleVal, exists := c.Get(string(UserRoleKey))
+		if !exists {
+			response.Unauthorized(c, "missing role in context")
+			c.Abort()
+			return
+		}
+		userRoleFloat, ok := userRoleVal.(float64)
+		if !ok {
+			response.Internal(c)
+			c.Abort()
+			return
+		}
+		userRole := valueobject.UserRole(int8(userRoleFloat))
+
+		// 3. Fetch permissions (with caching!)
 		perms, err := p.permissionUS.GetPermissionsByRole(c.Request.Context(), userRole)
 		if err != nil {
 			response.Internal(c)
+			c.Abort()
 			return
 		}
 
-		if !hasPermission(perms, permValue) {
-			response.Forbidden(c, "You do not have permission to perform this action.")
+		// 4. Check permission
+		if !hasPermission(perms, requiredPerm) {
+			response.Forbidden(c, "insufficient permissions")
+			c.Abort()
 			return
 		}
 
@@ -45,13 +71,12 @@ func (p *PermMiddleware) Require(permValue valueobject.Permission) gin.HandlerFu
 	}
 }
 
-func hasPermission(perms *[]entity.Permission, required valueobject.Permission) bool {
-	if perms == nil {
-		return false
-	}
+func hasPermission(perms []*entity.Permission, required valueobject.Permission) bool {
+	requiredStr := string(required)
+	fullAccessStr := string(valueobject.PermFullAccess)
 
-	for _, p := range *perms {
-		if p.Action == string(required) || p.Action == string(valueobject.PermFullAccess) {
+	for _, p := range perms {
+		if p.Action == requiredStr || p.Action == fullAccessStr {
 			return true
 		}
 	}

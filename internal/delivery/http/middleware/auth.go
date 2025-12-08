@@ -1,10 +1,12 @@
 package middleware
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/motixo/goat-api/internal/delivery/http/response"
+	DomainError "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/domain/usecase/session"
 )
@@ -25,7 +27,7 @@ func (m *AuthMiddleware) Required() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		auth := c.GetHeader("Authorization")
 		if auth == "" || !strings.HasPrefix(auth, "Bearer ") {
-			response.Unauthorized(c, "token required")
+			response.Unauthorized(c, "missing or invalid Authorization header")
 			c.Abort()
 			return
 		}
@@ -33,13 +35,16 @@ func (m *AuthMiddleware) Required() gin.HandlerFunc {
 		token := strings.TrimPrefix(auth, "Bearer ")
 		claims, err := m.jwtService.ParseAndValidate(token)
 		if err != nil {
-			response.Unauthorized(c, "invalid token")
-			c.Abort()
-			return
-		}
-
-		if err := m.jwtService.ValidateClaims(claims); err != nil {
-			response.Unauthorized(c, "token validation failed")
+			var msg string
+			switch {
+			case errors.Is(err, DomainError.ErrTokenExpired):
+				msg = "token has expired"
+			case errors.Is(err, DomainError.ErrUnauthorized):
+				msg = "invalid or malformed token"
+			default:
+				msg = "authentication failed"
+			}
+			response.Unauthorized(c, msg)
 			c.Abort()
 			return
 		}
@@ -51,14 +56,14 @@ func (m *AuthMiddleware) Required() gin.HandlerFunc {
 			return
 		}
 		if !isValid {
-			response.Unauthorized(c, "invalid token")
+			response.Unauthorized(c, "token has been revoked")
 			c.Abort()
 			return
 		}
 
-		c.Set("user_id", claims.UserID)
-		c.Set("session_id", claims.SessionID)
-		c.Set("user_role", claims.UserRole)
+		c.Set(string(UserIDKey), claims.UserID)
+		c.Set(string(SessionIDKey), claims.SessionID)
+		c.Set(string(UserRoleKey), claims.UserRole)
 		c.Next()
 	}
 }

@@ -12,6 +12,40 @@ import (
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
+func (us *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (RegisterOutput, error) {
+	us.logger.Info("signup attempt", "email", input.Email)
+	hashedPassword, err := us.passwordHasher.Hash(ctx, input.Password)
+	if err != nil {
+		us.logger.Error("failed to hash password", "email", input.Email, "error", err)
+		return RegisterOutput{}, err
+	}
+
+	rq := &entity.User{
+		ID:        uuid.New().String(),
+		Email:     input.Email,
+		Password:  hashedPassword,
+		Status:    valueobject.StatusActive,
+		Role:      valueobject.RoleClient,
+		CreatedAt: time.Now().UTC(),
+	}
+
+	err = us.userRepo.Create(ctx, rq)
+	if err != nil {
+		us.logger.Error("failed to create user", "email", input.Email, "error", err)
+		return RegisterOutput{}, err
+	}
+
+	us.logger.Info("user registered successfully", "userID", rq.ID, "email", rq.Email)
+	return RegisterOutput{
+		User: user.UserResponse{
+			ID:        rq.ID,
+			Email:     rq.Email,
+			Role:      rq.Role.String(),
+			CreatedAt: rq.CreatedAt,
+		},
+	}, nil
+}
+
 func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput, error) {
 	us.logger.Info("login attempt", "email", input.Email, "ip", input.IP, "device", input.Device)
 
@@ -144,39 +178,5 @@ func (us *AuthUseCase) Refresh(ctx context.Context, input RefreshInput) (Refresh
 		AccessTokenExpiresAt:  accessClaims.GetExpiresAt(),
 		RefreshToken:          refresh,
 		RefreshTokenExpiresAt: refreshClaims.GetExpiresAt(),
-	}, nil
-}
-
-func (us *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (RegisterOutput, error) {
-	us.logger.Info("signup attempt", "email", input.Email)
-	hashedPassword, err := us.passwordHasher.Hash(ctx, input.Password)
-	if err != nil {
-		us.logger.Error("failed to hash password", "email", input.Email, "error", err)
-		return RegisterOutput{}, err
-	}
-
-	rq := &entity.User{
-		ID:        uuid.New().String(),
-		Email:     input.Email,
-		Password:  hashedPassword,
-		Status:    valueobject.StatusActive,
-		Role:      valueobject.RoleClient,
-		CreatedAt: time.Now().UTC(),
-	}
-
-	err = us.userRepo.Create(ctx, rq)
-	if err != nil {
-		us.logger.Error("failed to create user", "email", input.Email, "error", err)
-		return RegisterOutput{}, err
-	}
-
-	us.logger.Info("user registered successfully", "userID", rq.ID, "email", rq.Email)
-	return RegisterOutput{
-		User: user.UserResponse{
-			ID:        rq.ID,
-			Email:     rq.Email,
-			Role:      rq.Role.String(),
-			CreatedAt: rq.CreatedAt,
-		},
 	}, nil
 }

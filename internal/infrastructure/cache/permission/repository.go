@@ -26,7 +26,7 @@ func NewCachedRepository(
 	}
 }
 
-func (c *CachedRepository) GetByRoleID(ctx context.Context, roleID int8) (*[]entity.Permission, error) {
+func (c *CachedRepository) GetByRoleID(ctx context.Context, roleID int8) ([]*entity.Permission, error) {
 	if perms, _ := c.cache.Get(ctx, roleID); perms != nil {
 		return perms, nil
 	}
