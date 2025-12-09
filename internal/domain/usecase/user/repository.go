@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/motixo/goat-api/internal/domain/errors"
+	"github.com/motixo/goat-api/internal/domain/pagination"
 	"github.com/motixo/goat-api/internal/domain/repository/dto"
 )
 
@@ -25,9 +26,9 @@ func (us *UserUseCase) GetUser(ctx context.Context, userID string) (*UserRespons
 	return response, nil
 }
 
-func (us *UserUseCase) GetUserslist(ctx context.Context) ([]*UserResponse, error) {
+func (us *UserUseCase) GetUserslist(ctx context.Context, p pagination.Input) (*UserListResponse, error) {
 	us.logger.Info("Fetching users List")
-	users, err := us.userRepo.List(ctx)
+	users, total, err := us.userRepo.List(ctx, p.Page, p.PageSize)
 	if err != nil {
 		us.logger.Error("Failed to fetch users List", "error", err)
 		return nil, err
@@ -45,7 +46,10 @@ func (us *UserUseCase) GetUserslist(ctx context.Context) ([]*UserResponse, error
 		response = append(response, r)
 	}
 	us.logger.Info("Users list fetched successfully")
-	return response, nil
+	return &UserListResponse{
+		Users: response,
+		Meta:  pagination.NewMeta(total, p),
+	}, nil
 }
 
 func (us *UserUseCase) DeleteUser(ctx context.Context, userID string) error {
@@ -55,7 +59,7 @@ func (us *UserUseCase) DeleteUser(ctx context.Context, userID string) error {
 		return err
 	}
 
-	sessions, err := us.sessionRepo.ListByUser(ctx, userID)
+	sessions, _, err := us.sessionRepo.ListByUser(ctx, userID, 0, 0)
 	if err != nil {
 		us.logger.Error("field to fetch user sessions", "UserID:", userID)
 		return nil
@@ -138,7 +142,7 @@ func (us *UserUseCase) ChangePassword(ctx context.Context, input UpdatePassInput
 		return err
 	}
 
-	sessions, err := us.sessionRepo.ListByUser(ctx, user.ID)
+	sessions, _, err := us.sessionRepo.ListByUser(ctx, user.ID, 0, 0)
 	if err != nil {
 		us.logger.Error("field to fetch user sessions", "UserID:", input.UserID, "Error:", err)
 		return nil

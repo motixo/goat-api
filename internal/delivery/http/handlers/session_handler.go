@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/motixo/goat-api/internal/delivery/http/helper"
 	"github.com/motixo/goat-api/internal/delivery/http/response"
+	"github.com/motixo/goat-api/internal/domain/pagination"
 	"github.com/motixo/goat-api/internal/domain/usecase/session"
 	"github.com/motixo/goat-api/internal/infra/logger"
 )
@@ -22,6 +23,11 @@ func NewSessionHandler(usecase session.UseCase, logger logger.Logger) *SessionHa
 
 func (h *SessionHandler) GetAllUserSessions(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
+	p := pagination.Input{
+		Page:     helper.ParseInt(c.Query("page"), 1),
+		PageSize: helper.ParseInt(c.Query("page_size"), 10),
+	}
+	p.Validate()
 	userID := c.GetString("user_id")
 	if userID == "" {
 		response.Unauthorized(c, "authentication context missing")
@@ -34,7 +40,7 @@ func (h *SessionHandler) GetAllUserSessions(c *gin.Context) {
 		return
 	}
 
-	output, err := h.usecase.GetSessionsByUser(c, userID, sessionID)
+	output, err := h.usecase.GetSessionsByUser(c, userID, sessionID, p)
 	if err != nil {
 		response.Internal(c)
 		return

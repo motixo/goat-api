@@ -21,7 +21,8 @@
 	redis.call("EXPIRE", sessionKey, sessionTTL)
 
 	redis.call("SET", jtiKey, sessionKey, "EX", jtiTTL)
-	redis.call("SADD", userKey, sessionKey)
+	local now = redis.call("TIME")[1]
+	redis.call("ZADD", userKey, now, sessionKey)
 	redis.call("EXPIRE", userKey, sessionTTL)
 
 	return 1
