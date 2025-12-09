@@ -40,6 +40,13 @@ func NewDatabase(cfg *config.Config, logger logger.Logger, passwordSrv service.P
 		logger.Error("failed to ensure users table", "error", err)
 		return nil, err
 	}
+	if _, err := db.Exec(`
+	CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_users_created_at_desc 
+	ON users (created_at DESC);
+	`); err != nil {
+		logger.Error("failed to index user table", "error", err)
+		return nil, err
+	}
 
 	if _, err := db.Exec(permissionSchema); err != nil {
 		logger.Error("failed to ensure permissions table", "error", err)

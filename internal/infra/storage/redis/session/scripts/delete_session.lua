@@ -3,7 +3,7 @@
 		local jti = redis.call("HGET", sessionKey, "current_jti")
 
 		if userId then
-			redis.call("SREM", "session:user:" .. userId, sessionKey)
+			redis.call("ZREM", "session:user:" .. userId, sessionKey)
 		end
 		if jti then
 			redis.call("DEL", "session:jti:" .. jti)

@@ -5,6 +5,7 @@ import (
 	"github.com/motixo/goat-api/internal/delivery/http/helper"
 	"github.com/motixo/goat-api/internal/delivery/http/response"
 	"github.com/motixo/goat-api/internal/domain/errors"
+	"github.com/motixo/goat-api/internal/domain/pagination"
 	"github.com/motixo/goat-api/internal/domain/usecase/user"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 	"github.com/motixo/goat-api/internal/infra/logger"
@@ -43,7 +44,12 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 
 func (h *UserHandler) GetUserList(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
-	output, err := h.usecase.GetUserslist(c)
+	p := pagination.Input{
+		Page:     helper.ParseInt(c.Query("page"), 1),
+		PageSize: helper.ParseInt(c.Query("page_size"), 10),
+	}
+	p.Validate()
+	output, err := h.usecase.GetUserslist(c, p)
 	if err != nil {
 		response.Internal(c)
 		return

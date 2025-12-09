@@ -2,11 +2,11 @@ package session
 
 import (
 	"context"
-	"sort"
 	"time"
 
 	"github.com/motixo/goat-api/internal/domain/entity"
 	"github.com/motixo/goat-api/internal/domain/errors"
+	"github.com/motixo/goat-api/internal/domain/pagination"
 )
 
 func (us *SessionUseCase) CreateSession(ctx context.Context, input CreateInput) error {
@@ -36,12 +36,12 @@ func (us *SessionUseCase) CreateSession(ctx context.Context, input CreateInput) 
 
 }
 
-func (us *SessionUseCase) GetSessionsByUser(ctx context.Context, userID, sessionID string) ([]*SessionResponse, error) {
+func (us *SessionUseCase) GetSessionsByUser(ctx context.Context, userID, sessionID string, p pagination.Input) (*SessionListResponse, error) {
 	us.logger.Debug("retrieving user sessions", "userID", userID, "currentSessionID", sessionID)
-	sessions, err := us.sessionRepo.ListByUser(ctx, userID)
+	sessions, total, err := us.sessionRepo.ListByUser(ctx, userID, p.Page, p.PageSize)
 	if err != nil {
 		us.logger.Error("failed to list sessions by user", "userID", userID, "error", err)
-		return []*SessionResponse{}, err
+		return nil, err
 	}
 
 	response := make([]*SessionResponse, 0, len(sessions))
@@ -58,12 +58,15 @@ func (us *SessionUseCase) GetSessionsByUser(ctx context.Context, userID, session
 		response = append(response, r)
 	}
 
-	sort.Slice(response, func(i, j int) bool {
-		return response[i].UpdatedAt.After(response[j].UpdatedAt)
-	})
+	// sort.Slice(response, func(i, j int) bool {
+	// 	return response[i].UpdatedAt.After(response[j].UpdatedAt)
+	// })
 
 	us.logger.Info("user sessions retrieved", "userID", userID, "sessionCount", len(sessions))
-	return response, nil
+	return &SessionListResponse{
+		Sessions: response,
+		Meta:     pagination.NewMeta(total, p),
+	}, nil
 }
 
 func (us *SessionUseCase) RotateSessionJTI(ctx context.Context, input RotateInput) (string, error) {
@@ -113,13 +116,13 @@ func (us *SessionUseCase) DeleteSessions(ctx context.Context, input DeleteSessio
 	us.logger.Info("delete sessions requested", "userID", input.UserID, "removeOthers", input.RemoveOthers, "targetCount", len(input.TargetSessions))
 	var target []string
 	if input.RemoveOthers {
-		sessions, err := us.GetSessionsByUser(ctx, input.UserID, input.CurrentSession)
+		sessions, err := us.GetSessionsByUser(ctx, input.UserID, input.CurrentSession, pagination.Input{Page: 0, PageSize: 0})
 		if err != nil {
 			us.logger.Error("failed to get user sessions for deletion", "userID", input.UserID, "error", err)
 			return err
 		}
 
-		for _, s := range sessions {
+		for _, s := range sessions.Sessions {
 			if !s.Current {
 				target = append(target, s.ID)
 			}

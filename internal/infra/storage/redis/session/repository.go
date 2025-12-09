@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/motixo/goat-api/internal/domain/entity"
+	"github.com/motixo/goat-api/internal/domain/pagination"
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/infra/helper"
 	"github.com/redis/go-redis/v9"
@@ -25,7 +26,6 @@ func (r *Repository) Create(ctx context.Context, s *entity.Session) error {
 	if s.SessionTTLSeconds <= 0 || s.JTITTLSeconds <= 0 {
 		return fmt.Errorf("TTL values must be positive")
 	}
-
 	sessionkey := helper.Key("session", "id", s.ID)
 	jtiKey := helper.Key("session", "jti", s.CurrentJTI)
 	userkey := helper.Key("session", "user", s.UserID)
@@ -48,12 +48,26 @@ func (r *Repository) Create(ctx context.Context, s *entity.Session) error {
 	return err
 }
 
-func (r *Repository) ListByUser(ctx context.Context, userID string) ([]*entity.Session, error) {
+func (r *Repository) ListByUser(ctx context.Context, userID string, page, pageSize int) ([]*entity.Session, int64, error) {
 	userKey := helper.Key("session", "user", userID)
+	var offset int64
+	var end int64
+	if page == 0 && pageSize == 0 {
+		offset = 0
+		end = -1
+	} else {
+		offset = int64(pagination.CalculateOffset(page, pageSize))
+		end = int64(offset) + int64(pageSize) - 1
+	}
 
-	sessionKeys, err := r.client.SMembers(ctx, userKey).Result()
+	sessionKeys, err := r.client.ZRevRange(ctx, userKey, offset, end).Result()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+
+	total, err := r.client.ZCard(ctx, userKey).Result()
+	if err != nil {
+		return nil, 0, err
 	}
 
 	sessions := make([]*entity.Session, 0, len(sessionKeys))
@@ -61,7 +75,7 @@ func (r *Repository) ListByUser(ctx context.Context, userID string) ([]*entity.S
 	for _, sessionKey := range sessionKeys {
 		fields, err := r.client.HGetAll(ctx, sessionKey).Result()
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 
 		if len(fields) == 0 {
@@ -89,7 +103,7 @@ func (r *Repository) ListByUser(ctx context.Context, userID string) ([]*entity.S
 		sessions = append(sessions, s)
 	}
 
-	return sessions, nil
+	return sessions, total, nil
 }
 
 func (r *Repository) ExistsJTI(ctx context.Context, jti string) (bool, error) {

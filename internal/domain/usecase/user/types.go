@@ -3,6 +3,7 @@ package user
 import (
 	"time"
 
+	"github.com/motixo/goat-api/internal/domain/pagination"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
@@ -12,6 +13,11 @@ type UserResponse struct {
 	Role      string    `json:"Role"`
 	Status    string    `json:"Status"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+type UserListResponse struct {
+	Users []*UserResponse
+	Meta  pagination.Meta
 }
 
 type UserUpdateInput struct {
