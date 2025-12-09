@@ -116,11 +116,12 @@ func (r *Repository) Delete(ctx context.Context, userID string) error {
 
 func (r *Repository) List(ctx context.Context, offset, limit int) ([]*entity.User, int64, error) {
 	var users []*entity.User
-	var countErr, dataErr error
 
 	var total int64
 
-	countErr = r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM users").Scan(&total)
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM users").Scan(&total); err != nil {
+		return nil, 0, err
+	}
 
 	query := `
 		SELECT id, email, role, status, created_at
@@ -128,12 +129,8 @@ func (r *Repository) List(ctx context.Context, offset, limit int) ([]*entity.Use
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
 	`
-	dataErr = r.db.SelectContext(ctx, &users, query, limit, offset)
-	if countErr != nil {
-		return nil, 0, countErr
-	}
-	if dataErr != nil {
-		return nil, 0, dataErr
+	if err := r.db.SelectContext(ctx, &users, query, limit, offset); err != nil {
+		return nil, 0, err
 	}
 
 	return users, total, nil
