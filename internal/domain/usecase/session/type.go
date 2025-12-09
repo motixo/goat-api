@@ -2,8 +2,6 @@ package session
 
 import (
 	"time"
-
-	"github.com/motixo/goat-api/internal/domain/pagination"
 )
 
 type SessionResponse struct {
@@ -13,11 +11,6 @@ type SessionResponse struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Current   bool      `json:"current"`
-}
-
-type SessionListResponse struct {
-	Sessions []*SessionResponse
-	Meta     pagination.Meta
 }
 
 type CreateInput struct {

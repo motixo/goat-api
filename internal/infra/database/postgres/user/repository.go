@@ -11,7 +11,6 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/motixo/goat-api/internal/domain/entity"
 	domanErrors "github.com/motixo/goat-api/internal/domain/errors"
-	"github.com/motixo/goat-api/internal/domain/pagination"
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/domain/repository/dto"
 )
@@ -115,15 +114,13 @@ func (r *Repository) Delete(ctx context.Context, userID string) error {
 	return err
 }
 
-func (r *Repository) List(ctx context.Context, page, pageSize int) ([]*entity.User, int64, error) {
-	offset := pagination.CalculateOffset(page, pageSize)
+func (r *Repository) List(ctx context.Context, offset, limit int) ([]*entity.User, int64, error) {
 	var users []*entity.User
 	var countErr, dataErr error
 
 	var total int64
-	go func() {
-		countErr = r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM users").Scan(&total)
-	}()
+
+	countErr = r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM users").Scan(&total)
 
 	query := `
 		SELECT id, email, role, status, created_at
@@ -131,7 +128,7 @@ func (r *Repository) List(ctx context.Context, page, pageSize int) ([]*entity.Us
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
 	`
-	dataErr = r.db.SelectContext(ctx, &users, query, pageSize, offset)
+	dataErr = r.db.SelectContext(ctx, &users, query, limit, offset)
 	if countErr != nil {
 		return nil, 0, countErr
 	}

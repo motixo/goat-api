@@ -5,7 +5,6 @@ import (
 	"github.com/motixo/goat-api/internal/delivery/http/helper"
 	"github.com/motixo/goat-api/internal/delivery/http/response"
 	"github.com/motixo/goat-api/internal/domain/errors"
-	"github.com/motixo/goat-api/internal/domain/pagination"
 	"github.com/motixo/goat-api/internal/domain/usecase/user"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 	"github.com/motixo/goat-api/internal/infra/logger"
@@ -44,17 +43,19 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 
 func (h *UserHandler) GetUserList(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
-	p := pagination.Input{
-		Page:     helper.ParseInt(c.Query("page"), 1),
-		PageSize: helper.ParseInt(c.Query("page_size"), 10),
+	var input helper.PaginationInput
+	if err := c.ShouldBindQuery(&input); err != nil {
+		response.BadRequest(c, "invalid pagination params")
+		return
 	}
-	p.Validate()
-	output, err := h.usecase.GetUserslist(c, p)
+	input.Validate()
+	output, total, err := h.usecase.GetUserslist(c, input.Offset(), input.Limit)
 	if err != nil {
 		response.Internal(c)
 		return
 	}
-	response.OK(c, output)
+	meta := helper.NewPaginationMeta(total, input)
+	response.OK(c, gin.H{"data": output, "meta": meta})
 }
 
 func (h *UserHandler) DeleteUser(c *gin.Context) {

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/motixo/goat-api/internal/domain/entity"
-	"github.com/motixo/goat-api/internal/domain/pagination"
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/infra/helper"
 	"github.com/redis/go-redis/v9"
@@ -48,19 +47,11 @@ func (r *Repository) Create(ctx context.Context, s *entity.Session) error {
 	return err
 }
 
-func (r *Repository) ListByUser(ctx context.Context, userID string, page, pageSize int) ([]*entity.Session, int64, error) {
+func (r *Repository) ListByUser(ctx context.Context, userID string, offset, limit int) ([]*entity.Session, int64, error) {
 	userKey := helper.Key("session", "user", userID)
-	var offset int64
-	var end int64
-	if page == 0 && pageSize == 0 {
-		offset = 0
-		end = -1
-	} else {
-		offset = int64(pagination.CalculateOffset(page, pageSize))
-		end = int64(offset) + int64(pageSize) - 1
-	}
+	end := int64(offset) + int64(limit) - 1
 
-	sessionKeys, err := r.client.ZRevRange(ctx, userKey, offset, end).Result()
+	sessionKeys, err := r.client.ZRevRange(ctx, userKey, int64(offset), end).Result()
 	if err != nil {
 		return nil, 0, err
 	}
