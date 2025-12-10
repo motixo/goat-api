@@ -7,7 +7,6 @@ import (
 	"github.com/motixo/goat-api/internal/domain/entity"
 	"github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
-	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/infra/logger"
 )
 
@@ -19,7 +18,6 @@ type SessionUseCase struct {
 func NewUsecase(
 	r repository.SessionRepository,
 	logger logger.Logger,
-	ulidGen service.IDGenerator,
 ) UseCase {
 	return &SessionUseCase{
 		sessionRepo: r,

@@ -15,12 +15,13 @@ import (
 )
 
 type Server struct {
-	engine         *gin.Engine
-	authHandler    *handlers.AuthHandler
-	userHandler    *handlers.UserHandler
-	sessionHandler *handlers.SessionHandler
-	authMiddleware *middleware.AuthMiddleware
-	permMiddleware *middleware.PermMiddleware
+	engine            *gin.Engine
+	authHandler       *handlers.AuthHandler
+	userHandler       *handlers.UserHandler
+	sessionHandler    *handlers.SessionHandler
+	permissionHandler *handlers.PermissionHandler
+	authMiddleware    *middleware.AuthMiddleware
+	permMiddleware    *middleware.PermMiddleware
 }
 
 func NewServer(
@@ -42,14 +43,16 @@ func NewServer(
 	authHandler := handlers.NewAuthHandler(authUC, logger)
 	sessionHandler := handlers.NewSessionHandler(sessionUC, logger)
 	userHandler := handlers.NewUserHandler(userUC, logger)
+	permissionHandler := handlers.NewPermissionHandler(permUC, logger)
 
 	server := &Server{
-		engine:         router,
-		authHandler:    authHandler,
-		userHandler:    userHandler,
-		authMiddleware: authMiddleware,
-		permMiddleware: permMiddleware,
-		sessionHandler: sessionHandler,
+		engine:            router,
+		authHandler:       authHandler,
+		userHandler:       userHandler,
+		sessionHandler:    sessionHandler,
+		permissionHandler: permissionHandler,
+		authMiddleware:    authMiddleware,
+		permMiddleware:    permMiddleware,
 	}
 
 	server.setupRoutes()
@@ -62,6 +65,7 @@ func (s *Server) setupRoutes() {
 
 	routes.RegisterUserRoutes(v1, s.userHandler, s.sessionHandler, s.authMiddleware, s.permMiddleware)
 	routes.RegisterAuthRoutes(v1, s.authHandler, s.authMiddleware, s.permMiddleware)
+	routes.RegisterPermissionRoutes(v1, s.permissionHandler, s.authMiddleware, s.permMiddleware)
 
 	// Health check
 	s.engine.GET("/health", func(c *gin.Context) {

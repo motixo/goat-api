@@ -47,7 +47,26 @@ func (c *CachedRepository) Create(ctx context.Context, p *entity.Permission) err
 		return err
 	}
 
-	_ = c.cache.Delete(ctx, int8(p.RoleID))
+	_ = c.cache.Delete(ctx, &p.RoleID)
 
 	return nil
+}
+
+func (c *CachedRepository) GetAll(ctx context.Context, offset, limit int) ([]*entity.Permission, int64, error) {
+	perms, total, err := c.dbRepo.GetAll(ctx, offset, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	return perms, total, nil
+}
+
+func (c *CachedRepository) Delete(ctx context.Context, permissionID string) (*int8, error) {
+	roleID, err := c.dbRepo.Delete(ctx, permissionID)
+	if err != nil {
+		//fallback
+		_ = c.cache.DeleteAll(ctx)
+		return nil, err
+	}
+	_ = c.cache.Delete(ctx, roleID)
+	return roleID, nil
 }
