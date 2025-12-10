@@ -98,6 +98,15 @@ This project follows Clean Architecture principles:
 | `GET` | `/sessions` | List user sessions |
 | `DELETE` | `/sessions` | Revoke session |
 
+### Permission Management
+
+| Method | Endpoint | Description | Permissions |
+|--------|----------|-------------|-------------|
+| `GET` | `/permission` | List permissions |
+| `GET` | `/permission/:role` | List permissions by role name | `full_access` |
+| `POST` | `/permission` | Create permissions | `full_access` |
+| `DELETE` | `/permission/:id` | Delete Permission | `full_access` |
+
 ## Development
 
 ### Project Structure

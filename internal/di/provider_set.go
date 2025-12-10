@@ -77,6 +77,7 @@ var HTTPSet = wire.NewSet(
 	handlers.NewAuthHandler,
 	handlers.NewUserHandler,
 	handlers.NewSessionHandler,
+	handlers.NewPermissionHandler,
 	middleware.NewAuthMiddleware,
 	middleware.NewPermMiddleware,
 	http.NewServer,

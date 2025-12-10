@@ -37,3 +37,11 @@ func ParseUserRole(s string) (UserRole, error) {
 	}
 	return r, nil
 }
+
+func AllRoles() []UserRole {
+	return []UserRole{
+		RoleClient,
+		RoleOperator,
+		RoleAdmin,
+	}
+}

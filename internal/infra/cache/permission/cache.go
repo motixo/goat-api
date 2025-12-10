@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/motixo/goat-api/internal/domain/entity"
+	"github.com/motixo/goat-api/internal/domain/valueobject"
 	"github.com/motixo/goat-api/internal/infra/helper"
 	"github.com/redis/go-redis/v9"
 )
@@ -43,6 +44,17 @@ func (c *Cache) Set(ctx context.Context, roleID int8, perms []*entity.Permission
 	return c.rdb.Set(ctx, helper.Key("perm", "role", roleID), b, c.ttl).Err()
 }
 
-func (c *Cache) Delete(ctx context.Context, roleID int8) error {
+func (c *Cache) Delete(ctx context.Context, roleID *int8) error {
 	return c.rdb.Del(ctx, helper.Key("perm", "role", roleID)).Err()
+}
+
+// fallback
+func (c *Cache) DeleteAll(ctx context.Context) error {
+	userRoles := valueobject.AllRoles()
+	for _, role := range userRoles {
+		if err := c.rdb.Del(ctx, helper.Key("perm", "role", int8(role))).Err(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
