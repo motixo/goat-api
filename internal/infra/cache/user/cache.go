@@ -18,7 +18,7 @@ func NewCache(rdb *redis.Client, ttl time.Duration) *Cache {
 	return &Cache{rdb: rdb, ttl: ttl}
 }
 
-func (c *Cache) Get(ctx context.Context, userID string) (*UserCacheDTO, error) {
+func (c *Cache) Get(ctx context.Context, userID string) (*UserCache, error) {
 	key := helper.Key("user", "id", userID)
 	val, err := c.rdb.Get(ctx, key).Result()
 	if err == redis.Nil {
@@ -28,7 +28,7 @@ func (c *Cache) Get(ctx context.Context, userID string) (*UserCacheDTO, error) {
 		return nil, err
 	}
 
-	var data UserCacheDTO
+	var data UserCache
 	if err := json.Unmarshal([]byte(val), &data); err != nil {
 		return nil, err
 	}
@@ -38,7 +38,7 @@ func (c *Cache) Get(ctx context.Context, userID string) (*UserCacheDTO, error) {
 
 func (c *Cache) Set(ctx context.Context, userID string, role, status int8) error {
 	key := helper.Key("user", "id", userID)
-	data := UserCacheDTO{
+	data := UserCache{
 		Role:   role,
 		Status: status,
 	}
