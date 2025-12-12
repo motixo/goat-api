@@ -65,3 +65,19 @@ func (r *UserRole) UnmarshalJSON(data []byte) error {
 	*r = parsedRole
 	return nil
 }
+
+func (r UserRole) CanModifyTargetRole(target UserRole) bool {
+	switch r {
+	case RoleAdmin:
+		// Admin can modify anyone
+		return true
+	case RoleOperator:
+		// Operator can only modify clients
+		return target == RoleClient
+	case RoleClient:
+		// Clients can't modify anyone
+		return false
+	default:
+		return false
+	}
+}

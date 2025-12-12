@@ -96,16 +96,20 @@ func (us *UserUseCase) DeleteUser(ctx context.Context, userID string) error {
 		targets[i] = sessions[i].ID
 	}
 	if err := us.sessionRepo.Delete(ctx, targets); err != nil {
-		us.logger.Error("filed to delete user sessions", "userID:", userID)
+		us.logger.Error("filed to delete user sessions", "user_id:", userID, "error", err)
 		return nil
 	}
 
-	us.logger.Info("User deleted successfully", "TargetUserID:", userID)
+	if err := us.userCache.ClearCache(ctx, userID); err != nil {
+		us.logger.Error("clear user cache faild", "user_id", userID, "error", err)
+	}
+
+	us.logger.Info("User deleted successfully", "target_user_id:", userID)
 	return nil
 }
 
 func (us *UserUseCase) ChangeEmail(ctx context.Context, input UpdateEmailInput) error {
-	us.logger.Info("update user attempt", "UserID:", input.UserID)
+	us.logger.Info("update user attempt", "user_id", input.UserID)
 
 	usr := &entity.User{
 		ID:    input.UserID,
@@ -113,24 +117,24 @@ func (us *UserUseCase) ChangeEmail(ctx context.Context, input UpdateEmailInput) 
 	}
 
 	if err := us.userRepo.Update(ctx, usr); err != nil {
-		us.logger.Error("user update failed", "UserID:", input.UserID)
+		us.logger.Error("user update failed", "user_id", input.UserID, "error", err)
 		return err
 	}
 
-	us.logger.Info("user successfully updated", "UserID:", input.UserID)
+	us.logger.Info("user successfully updated", "user_id", input.UserID)
 	return nil
 }
 
 func (us *UserUseCase) ChangePassword(ctx context.Context, input UpdatePassInput) error {
-	us.logger.Info("change password attempt", "UserID:", input.UserID)
+	us.logger.Info("change password attempt", "user_id", input.UserID)
 	if input.OldPassword == input.NewPassword {
-		us.logger.Error("passwords are same", "UserID:", input.UserID)
+		us.logger.Error("passwords are same", "user_id", input.UserID)
 		return errors.ErrPasswordSameAsCurrent
 	}
 
 	user, err := us.userRepo.FindByID(ctx, input.UserID)
 	if err != nil {
-		us.logger.Error("user lookup failed", "UserID:", input.UserID, "Error:", err)
+		us.logger.Error("user lookup failed", "user_id", input.UserID, "error", err)
 		return errors.ErrUserNotFound
 	}
 
@@ -140,7 +144,7 @@ func (us *UserUseCase) ChangePassword(ctx context.Context, input UpdatePassInput
 
 	hashedPassword, err := us.passwordHasher.Hash(ctx, input.NewPassword)
 	if err != nil {
-		us.logger.Error("password hashing failed", "UserID:", input.UserID, "Error:", err)
+		us.logger.Error("password hashing failed", "user_id", input.UserID, "error", err)
 		return err
 	}
 
@@ -149,13 +153,13 @@ func (us *UserUseCase) ChangePassword(ctx context.Context, input UpdatePassInput
 		Password: hashedPassword,
 	}
 	if err := us.userRepo.Update(ctx, usr); err != nil {
-		us.logger.Error("user update failed", "UserID:", input.UserID, "Error:", err)
+		us.logger.Error("user update failed", "user_id", input.UserID, "error", err)
 		return err
 	}
 
 	sessions, _, err := us.sessionRepo.ListByUser(ctx, user.ID, 0, 0)
 	if err != nil {
-		us.logger.Error("field to fetch user sessions", "UserID:", input.UserID, "Error:", err)
+		us.logger.Error("field to fetch user sessions", "user_id", input.UserID, "error", err)
 		return nil
 	}
 
@@ -168,11 +172,11 @@ func (us *UserUseCase) ChangePassword(ctx context.Context, input UpdatePassInput
 		targets[i] = sessions[i].ID
 	}
 	if err := us.sessionRepo.Delete(ctx, targets); err != nil {
-		us.logger.Error("filed to delete user sessions", "userID:", input.UserID, "Error:", err)
+		us.logger.Error("filed to delete user sessions", "user_id", input.UserID, "error", err)
 		return nil
 	}
 
-	us.logger.Info("password updated and sessions removed", "UserID:", input.UserID)
+	us.logger.Info("password updated and sessions removed", "user_id", input.UserID)
 	return nil
 
 }
@@ -184,29 +188,47 @@ func (us *UserUseCase) ChangeRole(ctx context.Context, input UpdateRoleInput) er
 		Role: input.Role,
 	}
 	if err := us.userRepo.Update(ctx, usr); err != nil {
-		us.logger.Error("change user role faild", "user_id", input.UserID)
+		us.logger.Error("change user role faild", "user_id", input.UserID, "error", err)
 		return err
 	}
 	if err := us.userCache.ClearCache(ctx, input.UserID); err != nil {
-		us.logger.Error("clear user cache faild", "user_id", input.UserID)
+		us.logger.Error("clear user cache faild", "user_id", input.UserID, "error", err)
 	}
 	us.logger.Info("user role changed successfully", "UserID:", input.UserID)
 	return nil
 }
 
 func (us *UserUseCase) ChangeStatus(ctx context.Context, input UpdateStatusInput) error {
-	us.logger.Info("change status attempt", "UserID:", input.UserID)
+	us.logger.Info("change status attempt", "user_id", input.UserID, "target_id", input.ActorID)
+
+	actorRole, err := us.userCache.GetUserRole(ctx, input.ActorID)
+	if err != nil {
+		us.logger.Error("change user status faild", "user_id", input.UserID, "target_id", input.ActorID, "error", err)
+		return err
+	}
+
+	userRole, err := us.userCache.GetUserRole(ctx, input.UserID)
+	if err != nil {
+		us.logger.Error("change user status faild", "user_id", input.UserID, "target_id", input.ActorID, "error", err)
+		return err
+	}
+
+	if !actorRole.CanModifyTargetRole(userRole) {
+		us.logger.Error("user not permission to perform this action", "user_id", input.UserID, "target_id", input.ActorID)
+		return errors.ErrForbidden
+	}
+
 	usr := &entity.User{
 		ID:     input.UserID,
 		Status: input.Status,
 	}
 	if err := us.userRepo.Update(ctx, usr); err != nil {
-		us.logger.Error("change user status faild", "user_id", input.UserID)
+		us.logger.Error("change user status faild", "user_id", input.UserID, "error", err)
 		return err
 	}
 	if err := us.userCache.ClearCache(ctx, input.UserID); err != nil {
-		us.logger.Error("clear user cache faild", "user_id", input.UserID)
+		us.logger.Error("clear user cache faild", "user_id", input.UserID, "error", err)
 	}
-	us.logger.Info("user status changed successfully", "UserID:", input.UserID)
+	us.logger.Info("user status changed successfully", "user_id", input.UserID)
 	return nil
 }

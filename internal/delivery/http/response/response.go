@@ -78,6 +78,8 @@ func clientMessage(err error) string {
 		return "Invalid email or password."
 	case errors.ErrPasswordSameAsCurrent:
 		return "Passwords can't be same"
+	case errors.ErrAccountSuspended:
+		return "Your account has been suspended. Please contact support."
 	default:
 		return "An error occurred while processing your request."
 	}

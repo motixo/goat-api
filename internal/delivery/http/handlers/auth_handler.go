@@ -73,7 +73,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	output, err := h.usecase.Refresh(c.Request.Context(), input)
 	if err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
-		response.Unauthorized(c, "Invalid request payload")
+		response.DomainError(c, err)
 		return
 	}
 

@@ -175,13 +175,20 @@ func (h *UserHandler) ChangeStatus(c *gin.Context) {
 		return
 	}
 
+	actorID := c.GetString("user_id")
+	if actorID == "" {
+		response.Unauthorized(c, "authentication context missing")
+		return
+	}
+
 	err := h.usecase.ChangeStatus(c, user.UpdateStatusInput{
-		UserID: input.UserID,
-		Status: input.Status,
+		UserID:  input.UserID,
+		ActorID: actorID,
+		Status:  input.Status,
 	})
 
 	if err != nil {
-		response.Internal(c)
+		response.DomainError(c, err)
 		return
 	}
 
