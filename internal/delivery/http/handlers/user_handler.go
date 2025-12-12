@@ -7,7 +7,6 @@ import (
 	"github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/domain/usecase/user"
-	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
 type UserHandler struct {
@@ -88,8 +87,14 @@ func (h *UserHandler) ChangeEmail(c *gin.Context) {
 		return
 	}
 
+	userID := c.GetString("user_id")
+	if userID == "" {
+		response.Unauthorized(c, "authentication context missing")
+		return
+	}
+
 	err := h.usecase.ChangeEmail(c, user.UpdateEmailInput{
-		UserID: input.UserID,
+		UserID: userID,
 		Email:  input.Email,
 	})
 
@@ -98,7 +103,7 @@ func (h *UserHandler) ChangeEmail(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, "user updated successfully")
+	response.OK(c, "user email updated successfully")
 }
 
 func (h *UserHandler) ChangePassword(c *gin.Context) {
@@ -146,7 +151,10 @@ func (h *UserHandler) ChangeRole(c *gin.Context) {
 		return
 	}
 
-	err := h.usecase.ChangeRole(c, input)
+	err := h.usecase.ChangeRole(c, user.UpdateRoleInput{
+		UserID: input.UserID,
+		Role:   input.Role,
+	})
 
 	if err != nil {
 		response.Internal(c)
@@ -167,10 +175,9 @@ func (h *UserHandler) ChangeStatus(c *gin.Context) {
 		return
 	}
 
-	status := valueobject.UserStatus(input.Status)
 	err := h.usecase.ChangeStatus(c, user.UpdateStatusInput{
 		UserID: input.UserID,
-		Status: status,
+		Status: input.Status,
 	})
 
 	if err != nil {

@@ -80,6 +80,7 @@ func (us *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (Registe
 			ID:        usr.ID,
 			Email:     usr.Email,
 			Role:      usr.Role.String(),
+			Status:    usr.Status.String(),
 			CreatedAt: usr.CreatedAt,
 		},
 	}, nil
