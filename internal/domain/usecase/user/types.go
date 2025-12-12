@@ -31,6 +31,7 @@ type UpdateRoleInput struct {
 }
 
 type UpdateStatusInput struct {
-	UserID string                 `json:"user_id" binding:"required"`
-	Status valueobject.UserStatus `json:"status" binding:"required"`
+	UserID  string `json:"user_id" binding:"required"`
+	ActorID string
+	Status  valueobject.UserStatus `json:"status" binding:"required"`
 }

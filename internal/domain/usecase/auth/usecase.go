@@ -20,6 +20,7 @@ type AuthUseCase struct {
 	ulidGen        service.IDGenerator
 	passwordHasher service.PasswordHasher
 	jwtService     service.JWTService
+	userCache      service.UserCacheService
 	logger         service.Logger
 	accessTTL      time.Duration
 	refreshTTL     time.Duration
@@ -32,6 +33,7 @@ func NewUsecase(
 	passwordHasher service.PasswordHasher,
 	jwtService service.JWTService,
 	ulidGen service.IDGenerator,
+	userCache service.UserCacheService,
 	logger service.Logger,
 	accessTTL AccessTTL,
 	refreshTTL RefreshTTL,
@@ -43,6 +45,7 @@ func NewUsecase(
 		sessionUC:      sessionUC,
 		passwordHasher: passwordHasher,
 		jwtService:     jwtService,
+		userCache:      userCache,
 		logger:         logger,
 		ulidGen:        ulidGen,
 		accessTTL:      time.Duration(accessTTL),
@@ -97,6 +100,11 @@ func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput
 	if userEntity == nil {
 		us.logger.Warn("login failed: user not found", "email", input.Email)
 		return LoginOutput{}, errors.ErrNotFound
+	}
+
+	if userEntity.Status != valueobject.StatusActive {
+		us.logger.Warn("login failed: user account suspended", "email", input.Email)
+		return LoginOutput{}, errors.ErrAccountSuspended
 	}
 
 	if !us.passwordHasher.Verify(ctx, input.Password, userEntity.Password) {
@@ -173,15 +181,23 @@ func (us *AuthUseCase) Refresh(ctx context.Context, input RefreshInput) (Refresh
 
 	claims, err := us.jwtService.ParseAndValidate(input.RefreshToken)
 	if err != nil {
-		us.logger.Warn("invalid refresh token", "error", err)
+		us.logger.Error("invalid refresh token", "error", err)
 		return RefreshOutput{}, errors.ErrUnauthorized
 	}
 
 	if claims.TokenType != valueobject.TokenTypeRefresh {
-		us.logger.Warn("refresh token with wrong type", "userID", claims.UserID, "tokenType", claims.TokenType)
+		us.logger.Error("refresh token with wrong type", "userID", claims.UserID, "tokenType", claims.TokenType)
 		return RefreshOutput{}, errors.ErrUnauthorized
 	}
 
+	role, err := us.userCache.GetUserStatus(ctx, claims.UserID)
+	if err != nil {
+		us.logger.Error("failed to fetch user status", "userID", claims.UserID)
+		return RefreshOutput{}, err
+	}
+	if role == valueobject.StatusSuspended {
+		return RefreshOutput{}, errors.ErrAccountSuspended
+	}
 	us.logger.Debug("refresh token requested", "userID", claims.UserID, "ip", input.IP, "device", input.Device)
 
 	refreshJTI := us.ulidGen.Generate()
