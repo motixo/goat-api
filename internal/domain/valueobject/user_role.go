@@ -1,6 +1,9 @@
 package valueobject
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 type UserRole uint8
 
@@ -45,4 +48,20 @@ func AllRoles() []UserRole {
 		RoleOperator,
 		RoleAdmin,
 	}
+}
+
+// UnmarshalJSON allows parsing string roles from JSON
+func (r *UserRole) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return fmt.Errorf("user role must be a string")
+	}
+
+	parsedRole, err := ParseUserRole(s)
+	if err != nil {
+		return err
+	}
+
+	*r = parsedRole
+	return nil
 }

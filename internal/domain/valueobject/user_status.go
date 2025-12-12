@@ -1,6 +1,9 @@
 package valueobject
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 type UserStatus uint8
 
@@ -37,4 +40,20 @@ func ParseUserStatus(s string) (UserStatus, error) {
 		return 0, fmt.Errorf("invalid user role: %s", s)
 	}
 	return r, nil
+}
+
+// UnmarshalJSON allows parsing string status from JSON
+func (r *UserStatus) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return fmt.Errorf("user role must be a string")
+	}
+
+	parsedStatus, err := ParseUserStatus(s)
+	if err != nil {
+		return err
+	}
+
+	*r = parsedStatus
+	return nil
 }

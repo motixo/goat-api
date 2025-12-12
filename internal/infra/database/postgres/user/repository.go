@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/motixo/goat-api/internal/domain/entity"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
+	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
 type Repository struct {
@@ -64,20 +66,47 @@ func (r *Repository) FindByEmail(ctx context.Context, email string) (*entity.Use
 }
 
 func (r *Repository) Update(ctx context.Context, user *entity.User) error {
-	query := `
-        UPDATE users 
-        SET email = $1, password = $2, status = $3, role = $4, updated_at = $5 
-        WHERE id = $6`
+	setClauses := []string{}
+	args := []interface{}{}
+	argIndex := 1
 
-	result, err := r.db.ExecContext(ctx, query,
-		user.Email,
-		user.Password,
-		user.Status,
-		user.Role,
-		time.Now(),
-		user.ID,
-	)
+	if user.Email != "" {
+		setClauses = append(setClauses, fmt.Sprintf("email = $%d", argIndex))
+		args = append(args, user.Email)
+		argIndex++
+	}
 
+	if !user.Password.IsZero() {
+		setClauses = append(setClauses, fmt.Sprintf("password = $%d", argIndex))
+		args = append(args, user.Password)
+		argIndex++
+	}
+
+	if user.Role != valueobject.RoleUnknown {
+		setClauses = append(setClauses, fmt.Sprintf("role = $%d", argIndex))
+		args = append(args, user.Role)
+		argIndex++
+	}
+
+	if user.Status != valueobject.StatusUnknown {
+		setClauses = append(setClauses, fmt.Sprintf("status = $%d", argIndex))
+		args = append(args, user.Status)
+		argIndex++
+	}
+
+	if len(setClauses) == 0 {
+		return domainErrors.ErrBadRequest
+	}
+
+	setClauses = append(setClauses, fmt.Sprintf("updated_at = $%d", argIndex))
+	args = append(args, time.Now())
+	argIndex++
+
+	setClausesStr := strings.Join(setClauses, ", ")
+	query := fmt.Sprintf("UPDATE users SET %s WHERE id = $%d", setClausesStr, argIndex)
+	args = append(args, user.ID)
+
+	result, err := r.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}
