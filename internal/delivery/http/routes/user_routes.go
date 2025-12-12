@@ -38,7 +38,7 @@ func RegisterUserRoutes(
 			userHandler.DeleteUser,
 		)
 
-		private.PUT("/", userHandler.ChangeEmail)
+		private.PUT("/change-email", userHandler.ChangeEmail)
 
 		private.PUT("/change-password", userHandler.ChangePassword)
 

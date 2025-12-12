@@ -1,6 +1,8 @@
 package di
 
 import (
+	"time"
+
 	"github.com/google/wire"
 	"github.com/redis/go-redis/v9"
 
@@ -19,6 +21,8 @@ import (
 
 	// infra layer
 	authInfra "github.com/motixo/goat-api/internal/infra/auth"
+	permcache "github.com/motixo/goat-api/internal/infra/cache/permission"
+	usercache "github.com/motixo/goat-api/internal/infra/cache/user"
 	"github.com/motixo/goat-api/internal/infra/database/postgres"
 	postgresPermission "github.com/motixo/goat-api/internal/infra/database/postgres/permission"
 	postgresUser "github.com/motixo/goat-api/internal/infra/database/postgres/user"
@@ -47,6 +51,10 @@ var RepositorySet = wire.NewSet(
 var ServiceSet = wire.NewSet(
 	service.NewULIDGenerator,
 	NewJWTManager,
+	NewUserCache,
+	NewPermissionCache,
+	usercache.NewCachedRepository,
+	permcache.NewCachedRepository,
 	wire.Bind(new(service.JWTService), new(*authInfra.JWTManager)),
 )
 
@@ -115,4 +123,12 @@ func NewJWTManager(cfg *config.Config) *authInfra.JWTManager {
 
 func NewZapLogger() (*logger.ZapLogger, error) {
 	return logger.NewZapLogger()
+}
+
+func NewUserCache(redisClient *redis.Client) *usercache.Cache {
+	return usercache.NewCache(redisClient, 24*time.Hour)
+}
+
+func NewPermissionCache(redisClient *redis.Client) *permcache.Cache {
+	return permcache.NewCache(redisClient, 24*time.Hour)
 }
