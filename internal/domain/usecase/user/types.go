@@ -42,12 +42,12 @@ type UpdatePassInput struct {
 }
 
 type UpdateRoleInput struct {
-	UserID string               `json:"user_id" binding:"required"`
+	UserID string
 	Role   valueobject.UserRole `json:"role" binding:"required"`
 }
 
 type UpdateStatusInput struct {
-	UserID  string `json:"user_id" binding:"required"`
+	UserID  string
 	ActorID string
 	Status  valueobject.UserStatus `json:"status" binding:"required"`
 }
