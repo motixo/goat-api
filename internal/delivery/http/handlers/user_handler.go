@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/motixo/goat-api/internal/delivery/http/helper"
 	"github.com/motixo/goat-api/internal/delivery/http/response"
 	"github.com/motixo/goat-api/internal/domain/entity"
@@ -126,8 +127,9 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
 	targetUserID := c.Param("id")
 	var input user.UpdateInput
-
-	if err := c.ShouldBindJSON(&input); err != nil {
+	_, errId := uuid.Parse(targetUserID)
+	err := c.ShouldBindJSON(&input)
+	if err != nil || errId != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
 		response.BadRequest(c, "Invalid request payload")
 		return
@@ -203,15 +205,18 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 
 func (h *UserHandler) ChangeRole(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
-
+	targetUserID := c.Param("id")
 	var input user.UpdateRoleInput
 
-	if err := c.ShouldBindJSON(&input); err != nil {
+	_, errId := uuid.Parse(targetUserID)
+	err := c.ShouldBindJSON(&input)
+	if err != nil || errId != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
 		response.BadRequest(c, "Invalid request payload")
 		return
 	}
 
+	input.UserID = targetUserID
 	if err := h.usecase.ChangeRole(c, input); err != nil {
 		response.Internal(c)
 		return
@@ -222,10 +227,12 @@ func (h *UserHandler) ChangeRole(c *gin.Context) {
 
 func (h *UserHandler) ChangeStatus(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
-
+	targetUserID := c.Param("id")
 	var input user.UpdateStatusInput
 
-	if err := c.ShouldBindJSON(&input); err != nil {
+	_, errId := uuid.Parse(targetUserID)
+	err := c.ShouldBindJSON(&input)
+	if err != nil || errId != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
 		response.BadRequest(c, "Invalid request payload")
 		return
@@ -238,6 +245,7 @@ func (h *UserHandler) ChangeStatus(c *gin.Context) {
 	}
 
 	input.ActorID = actorID
+	input.UserID = targetUserID
 	if err := h.usecase.ChangeStatus(c, input); err != nil {
 		response.DomainError(c, err)
 		return

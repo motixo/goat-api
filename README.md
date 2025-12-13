@@ -81,14 +81,17 @@ This project follows Clean Architecture principles:
 
 | Method | Endpoint | Description | Permissions |
 |--------|----------|-------------|-------------|
-| `GET` | `/user/` | Get current user info | Authenticated |
+| `POST` | `/user` | Create user | `full_access` |
+| `GET` | `/user` | Get current user info | Authenticated |
 | `GET` | `/user/:id` | Get user by ID | `user:read` |
 | `GET` | `/user/list` | Get all users | `user:read` |
-| `PUT` | `/user/change-password` | Update own password | Authenticated |
-| `PUT` | `/user/change-role` | Update user role | `user:change_role` |
-| `PUT` | `/user/change-status` | Update user status | `user:change_status` |
-| `DELETE` | `/user/delete` | Delete own account | Authenticated |
-| `DELETE` | `/user/delete/:id` | Delete user by ID | `user:delete` |
+| `PUT` | `/user/:id` | Update user | `full_access` |
+| `PATCH` | `/user/change-password` | Update own password | Authenticated |
+| `PATCH` | `/user/change-email` | Update own email | Authenticated |
+| `PATCH` | `/user/change-role/:id` | Update user role | `user:change_role` |
+| `PATCH` | `/user/change-status/:id` | Update user status | `user:change_status` |
+| `DELETE` | `/user` | Delete own account | Authenticated |
+| `DELETE` | `/user/:id` | Delete user by ID | `user:delete` |
 
 
 ### Session Management
@@ -102,9 +105,9 @@ This project follows Clean Architecture principles:
 
 | Method | Endpoint | Description | Permissions |
 |--------|----------|-------------|-------------|
+| `POST` | `/permission` | Create permissions | `full_access` |
 | `GET` | `/permission` | List permissions | `full_access` |
 | `GET` | `/permission/:role` | List permissions by role name | `full_access` |
-| `POST` | `/permission` | Create permissions | `full_access` |
 | `DELETE` | `/permission/:id` | Delete Permission | `full_access` |
 
 ## Development
