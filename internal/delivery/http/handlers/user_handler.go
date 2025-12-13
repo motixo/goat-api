@@ -65,7 +65,7 @@ func (h *UserHandler) GetUserList(c *gin.Context) {
 		filter.Roles = append(filter.Roles, vr)
 	}
 
-	for _, s := range input.Filter.Statues {
+	for _, s := range input.Filter.Statuses {
 		vs, _ := valueobject.ParseUserStatus(s)
 		filter.Statuses = append(filter.Statuses, vs)
 	}

@@ -11,9 +11,9 @@ type UserListInput struct {
 }
 
 type UserFilter struct {
-	Roles   []string `form:"role"`
-	Statues []string `form:"status"`
-	Search  string   `form:"search"`
+	Roles    []string `form:"role"`
+	Statuses []string `form:"status"`
+	Search   string   `form:"search"`
 }
 
 func (p *PaginationInput) Validate() {
