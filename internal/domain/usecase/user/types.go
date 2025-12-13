@@ -3,6 +3,7 @@ package user
 import (
 	"time"
 
+	"github.com/motixo/goat-api/internal/domain/entity"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
@@ -34,4 +35,11 @@ type UpdateStatusInput struct {
 	UserID  string `json:"user_id" binding:"required"`
 	ActorID string
 	Status  valueobject.UserStatus `json:"status" binding:"required"`
+}
+
+type GetListInput struct {
+	ActorID string
+	Filter  entity.UserFilter
+	Offset  int
+	Limit   int
 }

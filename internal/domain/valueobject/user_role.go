@@ -69,15 +69,21 @@ func (r *UserRole) UnmarshalJSON(data []byte) error {
 func (r UserRole) CanModifyTargetRole(target UserRole) bool {
 	switch r {
 	case RoleAdmin:
-		// Admin can modify anyone
 		return true
 	case RoleOperator:
-		// Operator can only modify clients
 		return target == RoleClient
-	case RoleClient:
-		// Clients can't modify anyone
-		return false
 	default:
 		return false
+	}
+}
+
+func VisibleRoles(actor UserRole) []UserRole {
+	switch actor {
+	case RoleAdmin:
+		return []UserRole{RoleAdmin, RoleOperator, RoleClient}
+	case RoleOperator:
+		return []UserRole{RoleClient}
+	default:
+		return []UserRole{}
 	}
 }

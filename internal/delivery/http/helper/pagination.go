@@ -5,6 +5,17 @@ type PaginationInput struct {
 	Limit int `form:"limit"`
 }
 
+type UserListInput struct {
+	PaginationInput
+	Filter UserFilter
+}
+
+type UserFilter struct {
+	Roles   []string `form:"role"`
+	Statues []string `form:"status"`
+	Search  string   `form:"search"`
+}
+
 func (p *PaginationInput) Validate() {
 	if p.Page < 1 {
 		p.Page = 1

@@ -4,9 +4,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/motixo/goat-api/internal/delivery/http/helper"
 	"github.com/motixo/goat-api/internal/delivery/http/response"
+	"github.com/motixo/goat-api/internal/domain/entity"
 	"github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/domain/usecase/user"
+	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
 type UserHandler struct {
@@ -42,18 +44,44 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 
 func (h *UserHandler) GetUserList(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
-	var input helper.PaginationInput
+	var input helper.UserListInput
 	if err := c.ShouldBindQuery(&input); err != nil {
 		response.BadRequest(c, "invalid pagination params")
 		return
 	}
-	input.Validate()
-	output, total, err := h.usecase.GetUserslist(c, input.Offset(), input.Limit)
+	input.PaginationInput.Validate()
+
+	actorID := c.GetString("user_id")
+	if actorID == "" {
+		response.Unauthorized(c, "authentication context missing")
+		return
+	}
+
+	filter := entity.UserFilter{
+		Search: input.Filter.Search,
+	}
+	for _, r := range input.Filter.Roles {
+		vr, _ := valueobject.ParseUserRole(r)
+		filter.Roles = append(filter.Roles, vr)
+	}
+
+	for _, s := range input.Filter.Statues {
+		vs, _ := valueobject.ParseUserStatus(s)
+		filter.Statuses = append(filter.Statuses, vs)
+	}
+
+	output, total, err := h.usecase.GetUserslist(c, actorID, user.GetListInput{
+		ActorID: actorID,
+		Filter:  filter,
+		Offset:  input.Offset(),
+		Limit:   input.Limit,
+	})
 	if err != nil {
 		response.Internal(c)
 		return
 	}
-	meta := helper.NewPaginationMeta(total, input)
+
+	meta := helper.NewPaginationMeta(total, input.PaginationInput)
 	response.OK(c, gin.H{"data": output, "meta": meta})
 }
 

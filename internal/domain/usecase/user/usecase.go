@@ -7,6 +7,7 @@ import (
 	"github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/domain/service"
+	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
 type UserUseCase struct {
@@ -51,9 +52,40 @@ func (us *UserUseCase) GetUser(ctx context.Context, userID string) (*UserRespons
 	return response, nil
 }
 
-func (us *UserUseCase) GetUserslist(ctx context.Context, offset, limit int) ([]*UserResponse, int64, error) {
+func (us *UserUseCase) GetUserslist(ctx context.Context, actorID string, input GetListInput) ([]*UserResponse, int64, error) {
 	us.logger.Info("Fetching users List")
-	users, total, err := us.userRepo.List(ctx, offset, limit)
+
+	actorRole, err := us.userCache.GetUserRole(ctx, input.ActorID)
+	allowedRoles := valueobject.VisibleRoles(actorRole)
+	if err != nil {
+		us.logger.Error("change user status faild", "target_id", input.ActorID, "error", err)
+		return nil, 0, err
+	}
+
+	//INTERSECT allowed and requested roles
+
+	if len(input.Filter.Roles) != 0 {
+		var effectiveRoles []valueobject.UserRole
+		allowedMap := make(map[valueobject.UserRole]bool)
+		for _, role := range allowedRoles {
+			allowedMap[role] = true
+		}
+
+		for _, requestedRole := range input.Filter.Roles {
+			if allowedMap[requestedRole] {
+				effectiveRoles = append(effectiveRoles, requestedRole)
+			}
+		}
+
+		if len(effectiveRoles) == 0 {
+			return []*UserResponse{}, 0, nil
+		}
+		input.Filter.Roles = effectiveRoles
+	} else {
+		input.Filter.Roles = allowedRoles
+	}
+
+	users, total, err := us.userRepo.List(ctx, input.Offset, input.Limit, input.Filter)
 	if err != nil {
 		us.logger.Error("Failed to fetch users List", "error", err)
 		return nil, 0, err

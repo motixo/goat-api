@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"github.com/motixo/goat-api/internal/domain/entity"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
@@ -128,22 +129,54 @@ func (r *Repository) Delete(ctx context.Context, userID string) error {
 	return err
 }
 
-func (r *Repository) List(ctx context.Context, offset, limit int) ([]*entity.User, int64, error) {
-	var users []*entity.User
+func (r *Repository) List(ctx context.Context, offset, limit int, filters entity.UserFilter) ([]*entity.User, int64, error) {
+	selectFields := `SELECT id, email, role, status, created_at, updated_at FROM users`
+	countFields := `SELECT COUNT(*) FROM users`
+	whereClauses := []string{}
+	args := []interface{}{}
+	argIndex := 1
 
+	if len(filters.Roles) > 0 {
+		whereClauses = append(whereClauses, fmt.Sprintf("role = ANY($%d)", argIndex))
+		args = append(args, pq.Array(filters.Roles))
+		argIndex++
+	}
+
+	// Status filter
+	if len(filters.Statuses) > 0 {
+		whereClauses = append(whereClauses, fmt.Sprintf("status = ANY($%d)", argIndex))
+		args = append(args, pq.Array(filters.Statuses))
+		argIndex++
+	}
+
+	// Search filter (email)
+	if filters.Search != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("email ILIKE $%d", argIndex))
+		args = append(args, "%"+filters.Search+"%")
+		argIndex++
+	}
+
+	var whereClause string
+	if len(whereClauses) > 0 {
+		whereClause = " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	countQuery := countFields + whereClause
 	var total int64
-
-	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM users").Scan(&total); err != nil {
+	if err := r.db.GetContext(ctx, &total, countQuery, args...); err != nil {
 		return nil, 0, err
 	}
 
-	query := `
-		SELECT id, email, role, status, created_at
-		FROM users
-		ORDER BY created_at DESC
-		LIMIT $1 OFFSET $2
-	`
-	if err := r.db.SelectContext(ctx, &users, query, limit, offset); err != nil {
+	if total == 0 {
+		return []*entity.User{}, 0, nil
+	}
+
+	selectQuery := selectFields + whereClause + " ORDER BY created_at DESC"
+	selectQuery += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argIndex, argIndex+1)
+	args = append(args, limit, offset)
+
+	var users []*entity.User
+	if err := r.db.SelectContext(ctx, &users, selectQuery, args...); err != nil {
 		return nil, 0, err
 	}
 
