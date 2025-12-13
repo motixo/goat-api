@@ -74,7 +74,7 @@ func (h *PermissionHandler) CreatePermissin(c *gin.Context) {
 		response.Internal(c)
 		return
 	}
-	response.OK(c, output)
+	response.Created(c, output)
 }
 
 func (h *PermissionHandler) DeletePermissin(c *gin.Context) {

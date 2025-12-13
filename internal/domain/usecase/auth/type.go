@@ -39,10 +39,6 @@ type RegisterInput struct {
 	Password string `json:"password" validate:"required"`
 }
 
-type RegisterOutput struct {
-	User user.UserResponse `json:"user"`
-}
-
 type AccessTTL time.Duration
 type RefreshTTL time.Duration
 type SessionTTL time.Duration

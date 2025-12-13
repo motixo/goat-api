@@ -54,12 +54,12 @@ func NewUsecase(
 	}
 }
 
-func (us *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (RegisterOutput, error) {
+func (us *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (user.UserResponse, error) {
 	us.logger.Info("signup attempt", "email", input.Email)
 	hashedPassword, err := us.passwordHasher.Hash(ctx, input.Password)
 	if err != nil {
 		us.logger.Error("failed to hash password", "email", input.Email, "error", err)
-		return RegisterOutput{}, err
+		return user.UserResponse{}, err
 	}
 
 	usr := &entity.User{
@@ -74,18 +74,16 @@ func (us *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (Registe
 	err = us.userRepo.Create(ctx, usr)
 	if err != nil {
 		us.logger.Error("failed to create user", "email", input.Email, "error", err)
-		return RegisterOutput{}, err
+		return user.UserResponse{}, err
 	}
 
 	us.logger.Info("user registered successfully", "userID", usr.ID, "email", usr.Email)
-	return RegisterOutput{
-		User: user.UserResponse{
-			ID:        usr.ID,
-			Email:     usr.Email,
-			Role:      usr.Role.String(),
-			Status:    usr.Status.String(),
-			CreatedAt: usr.CreatedAt,
-		},
+	return user.UserResponse{
+		ID:        usr.ID,
+		Email:     usr.Email,
+		Role:      usr.Role.String(),
+		Status:    usr.Status.String(),
+		CreatedAt: usr.CreatedAt,
 	}, nil
 }
 

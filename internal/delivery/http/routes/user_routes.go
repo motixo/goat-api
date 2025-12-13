@@ -19,6 +19,11 @@ func RegisterUserRoutes(
 	private.Use(authMiddleware.Required())
 	{
 
+		private.POST("/",
+			permMiddleware.Require(valueobject.PermFullAccess),
+			userHandler.CreateUser,
+		)
+
 		private.GET("/", userHandler.GetUser)
 
 		private.GET("/:id",

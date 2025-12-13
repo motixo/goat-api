@@ -23,6 +23,25 @@ func NewUserHandler(usecase user.UseCase, logger service.Logger) *UserHandler {
 	}
 }
 
+func (h *UserHandler) CreateUser(c *gin.Context) {
+	helper.LogRequest(h.logger, c)
+	var input user.CreateInput
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
+		response.BadRequest(c, "Invalid request payload")
+		return
+	}
+
+	output, err := h.usecase.CreateUser(c, input)
+	if err != nil {
+		response.DomainError(c, err)
+		return
+	}
+
+	response.Created(c, output)
+}
+
 func (h *UserHandler) GetUser(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
 	targetUserID := c.Param("id")

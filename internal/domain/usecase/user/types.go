@@ -15,9 +15,16 @@ type UserResponse struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+type CreateInput struct {
+	Email    string                 `json:"email" validate:"required,email"`
+	Password string                 `json:"password" binding:"required"`
+	Status   valueobject.UserStatus `json:"status" binding:"required"`
+	Role     valueobject.UserRole   `json:"role" binding:"required"`
+}
+
 type UpdateEmailInput struct {
 	UserID string
-	Email  string
+	Email  string `json:"email" binding:"required"`
 }
 
 type UpdatePassInput struct {
