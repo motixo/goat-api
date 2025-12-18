@@ -41,7 +41,7 @@ func (c *CachedRepository) GetUserStatus(ctx context.Context, userID string) (va
 	}
 
 	_ = c.cache.Set(ctx, userID, int8(user.Role), int8(user.Status))
-
+	c.logger.Info("user cached successfully", "role", userID)
 	return user.Status, nil
 }
 
@@ -59,13 +59,15 @@ func (c *CachedRepository) GetUserRole(ctx context.Context, userID string) (valu
 	}
 
 	_ = c.cache.Set(ctx, userID, int8(user.Role), int8(user.Status))
-
+	c.logger.Info("user cached successfully", "role", userID)
 	return user.Role, nil
 }
 
 func (c *CachedRepository) ClearCache(ctx context.Context, userID string) error {
 	if err := c.cache.Delete(ctx, userID); err != nil {
+		c.logger.Info("clear user cache failed", "role", userID, "error", err)
 		return err
 	}
+	c.logger.Info("user cache cleared successfully", "role", userID)
 	return nil
 }
