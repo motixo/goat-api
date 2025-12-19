@@ -30,6 +30,7 @@ import (
 	postgresUser "github.com/motixo/goat-api/internal/infra/database/postgres/user"
 	"github.com/motixo/goat-api/internal/infra/event"
 	"github.com/motixo/goat-api/internal/infra/logger"
+	"github.com/motixo/goat-api/internal/infra/metrics"
 	redisSession "github.com/motixo/goat-api/internal/infra/storage/redis/session"
 )
 
@@ -62,6 +63,8 @@ var ServiceSet = wire.NewSet(
 	service.NewULIDGenerator,
 	NewJWTManager,
 	wire.Bind(new(service.JWTService), new(*authInfra.JWTManager)),
+	metrics.NewPrometheusMetrics,
+	wire.Bind(new(service.MetricsService), new(*metrics.PrometheusMetrics)),
 )
 
 // Configuration providers
@@ -87,6 +90,7 @@ var HTTPSet = wire.NewSet(
 	handlers.NewPermissionHandler,
 	middleware.NewAuthMiddleware,
 	middleware.NewPermMiddleware,
+	middleware.NewMetricsMiddleware,
 	http.NewServer,
 )
 
