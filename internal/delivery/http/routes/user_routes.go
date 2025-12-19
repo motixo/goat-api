@@ -51,12 +51,12 @@ func RegisterUserRoutes(
 
 		private.PATCH("/change-password", userHandler.ChangePassword)
 
-		private.PATCH("/change-role/:id",
+		private.PATCH("/:id/change-role",
 			permMiddleware.Require(valueobject.PermUserChangeRole),
 			userHandler.ChangeRole,
 		)
 
-		private.PATCH("/change-status/:id",
+		private.PATCH("/:id/change-status",
 			permMiddleware.Require(valueobject.PermUserChangeStatus),
 			userHandler.ChangeStatus,
 		)

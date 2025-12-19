@@ -89,7 +89,7 @@ func (s *Server) setupRoutes() {
 	routes.RegisterPermissionRoutes(v1, s.permissionHandler, s.authMiddleware, s.permMiddleware)
 
 	// Health check
-	s.engine.GET("/health", func(c *gin.Context) {
+	api.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 }
