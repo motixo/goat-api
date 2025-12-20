@@ -13,4 +13,5 @@ type SessionRepository interface {
 	Delete(ctx context.Context, sessionIDs []string) error
 	RotateJTI(ctx context.Context, oldJTI, newJTI, ip, device string, expiresAt time.Time, jtiTTL, sessionTTL int64) (string, error)
 	ExistsJTI(ctx context.Context, jti string) (bool, error)
+	CleanOrphanSessions(ctx context.Context) error
 }

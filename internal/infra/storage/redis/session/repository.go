@@ -9,16 +9,21 @@ import (
 
 	"github.com/motixo/goat-api/internal/domain/entity"
 	"github.com/motixo/goat-api/internal/domain/repository"
+	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/infra/helper"
 	"github.com/redis/go-redis/v9"
 )
 
 type Repository struct {
 	client *redis.Client
+	logger service.Logger
 }
 
-func NewRepository(client *redis.Client) repository.SessionRepository {
-	return &Repository{client: client}
+func NewRepository(client *redis.Client, logger service.Logger) repository.SessionRepository {
+	return &Repository{
+		client: client,
+		logger: logger,
+	}
 }
 
 func (r *Repository) Create(ctx context.Context, s *entity.Session) error {
@@ -153,6 +158,29 @@ func (r *Repository) Delete(ctx context.Context, sessionIDs []string) error {
 	script := getScript("delete_session")
 	_, err := script.Run(ctx, r.client, sessionKeys).Result()
 	return err
+}
+
+func (r *Repository) CleanOrphanSessions(ctx context.Context) error {
+	script := getScript("clean_orphans")
+
+	iter := r.client.Scan(ctx, 0, "session:user:*", 0).Iterator()
+
+	for iter.Next(ctx) {
+		userKey := iter.Val()
+		res, err := script.Run(ctx, r.client, []string{userKey}).Result()
+		if err != nil {
+			r.logger.Error("remove orphan sessionkey feild", "error", err)
+		}
+		if removed, ok := res.(int64); ok && removed > 0 {
+			r.logger.Info("orphan sessionkeys are removed", "count", removed)
+		}
+	}
+
+	if err := iter.Err(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func extractSessionIDFromKey(key string) string {

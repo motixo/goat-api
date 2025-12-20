@@ -6,7 +6,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -23,31 +22,32 @@ func main() {
 
 	app, err := InitializeApp()
 	if err != nil {
-		log.Fatalf("failed to initialize app: %v", err)
+		panic("failed to initialize app: " + err.Error())
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	go func() {
 		if err := app.Server.Run(cfg.ServerPort); err != nil {
 			if err.Error() != "http: Server closed" {
-				log.Fatalf("Server failed to run: %v", err)
+				panic("Server failed to run: " + err.Error())
 			}
 		}
 	}()
+
+	app.Cleaner.Start(ctx)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer shutdownCancel()
 
-	// a) Shut down HTTP server (stop accepting new requests)
-	log.Println("Shutting down HTTP server...")
-	if err := app.Server.Shutdown(shutdownCtx); err != nil { // NOTE: Your http.Server needs a Shutdown method
-		log.Printf("HTTP Server forced to shutdown: %v", err)
-	}
+	// Shut down HTTP server (stop accepting new requests)
+	app.Server.Shutdown(shutdownCtx)
 
-	// b) Wait for background Event Handlers to complete
-	log.Println("Waiting for background event handlers to finish...")
+	// Wait for background Event Handlers to complete
 	app.EventBus.Wait()
 }

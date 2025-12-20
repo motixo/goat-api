@@ -9,6 +9,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/motixo/goat-api/internal/config"
+	"github.com/motixo/goat-api/internal/cron"
 	"github.com/motixo/goat-api/internal/delivery/http"
 	"github.com/motixo/goat-api/internal/delivery/http/handlers"
 	"github.com/motixo/goat-api/internal/delivery/http/middleware"
@@ -94,6 +95,10 @@ var HTTPSet = wire.NewSet(
 	http.NewServer,
 )
 
+var CronSet = wire.NewSet(
+	cron.NewSessionCleaner,
+)
+
 // ProviderSet bundles everything
 var ProviderSet = wire.NewSet(
 	infraSet,
@@ -102,6 +107,7 @@ var ProviderSet = wire.NewSet(
 	ConfigSet,
 	UseCaseSet,
 	HTTPSet,
+	CronSet,
 )
 
 // infra providers
