@@ -88,8 +88,8 @@ The project follows the **Dependency Rule**: source code dependencies only point
 | `GET` | `/api/v1/user` | Get current user profile | Authenticated |
 | `GET` | `/api/v1/user/:id` | Get user by ID | `user:read` |
 | `GET` | `/api/v1/user/list` | List users with filtering | `user:read` |
-| `POST` | `/api/v1/user` | Create new user | `user_write` |
-| `PUT` | `/api/v1/user/:id` | Update user | `user_update` |
+| `POST` | `/api/v1/user` | Create new user | `user:write` |
+| `PUT` | `/api/v1/user/:id` | Update user | `user:update` |
 | `PATCH` | `/api/v1/user/change-email` | Update own email | Authenticated |
 | `PATCH` | `/api/v1/user/change-password` | Update own password | Authenticated |
 | `PATCH` | `/api/v1/user/:id/change-role` | Update user role | `user:change_role` |
