@@ -30,7 +30,7 @@ GOAT API is a **production-ready**, **secure**, and **scalable** backend applica
 - **Dependency Injection**: Compile-time DI with Google Wire
 
 ### Rate Limiting
-- **Redis Sliding Window strategy**: to prevent brute-force attacks and resource abuse.
+- **Redis Sliding Window Strategy**: Prevent brute-force attacks and resource abuse.
 - **Auth Limits**: Tight constraints on login/signup endpoints
 - **Global Limits**: Configurable per-IP or per-User throttling via middleware
 
@@ -165,13 +165,11 @@ make help           # Show all commands
 ```
 ### Docker Deployment
 
-Build Image
 ```bash
+# Build Image
 docker build -t goat-api .
-```
 
-Run Container
-```bash
+# Run Container
 docker run -p 8080:8080 \
   --env-file .env \
   --name goat-api \
@@ -187,9 +185,7 @@ docker run -p 8080:8080 \
 
 ## Support
 
-If you encounter any issues or have questions:
-
-- **File an issue**: [GitHub Issues](https://github.com/motixo/goat-api/issues)
+If you encounter any issues or have questions file an issue [GitHub Issues](https://github.com/motixo/goat-api/issues)
 
 
 Released under the MIT License.
