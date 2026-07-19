@@ -11,7 +11,6 @@
   packages = with pkgs; [
     gnumake
     gcc
-    wire
     golangci-lint
     postgresql_16
     redis
@@ -38,8 +37,6 @@
     enable = true;
     port = 6379;
   };
-
-  scripts.gen-wire.exec = "wire ./cmd/app";
 
   processes.goat-api.exec = "make run";
 

@@ -3,27 +3,17 @@ APP := $(BIN_DIR)/app
 MAIN_PKG := ./cmd/app
 ENV_FILE := .env
 
-WIRE := $(shell go env GOPATH)/bin/wire
 GOLANGCI_LINT := $(shell go env GOPATH)/bin/golangci-lint
 
-.PHONY: all build clean run test lint wire help
+.PHONY: all build clean run test lint help
 
 all: clean test build
-
-$(WIRE):
-	@echo "Installing Wire..."
-	go install github.com/google/wire/cmd/wire@latest
 
 $(GOLANGCI_LINT):
 	@echo "Installing golangci-lint..."
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
-wire: $(WIRE)
-	@echo "Generating Wire bindings..."
-	$(WIRE) $(MAIN_PKG)
-	@echo "Wire generation completed!"
-
-build: wire
+build:
 	@echo "Creating build directory..."
 	mkdir -p $(BIN_DIR)
 	@echo "Building $(APP)..."
@@ -66,11 +56,10 @@ docker-run: docker-build
 help:
 	@echo "$(GREEN)Available targets:"
 	@echo "  all          - Clean, test, and build"
-	@echo "  build        - Build the application (includes Wire generation)"
+	@echo "  build        - Build the application"
 	@echo "  clean        - Clean build artifacts"
 	@echo "  run          - Build and run the application"
 	@echo "  test         - Run tests"
-	@echo "  wire         - Generate Wire bindings only"
 	@echo "  lint         - Run linter (optional)"
 	@echo "  docker-build - Build Docker image"
 	@echo "  docker-run   - Build and run Docker container"
@@ -81,9 +70,3 @@ verify:
 	go version
 	@echo "Verifying Go modules..."
 	go mod verify
-	@echo "Verifying Wire installation..."
-	@if [ -f "$(WIRE)" ]; then \
-		echo "Wire installed at: $(WIRE)"; \
-	else \
-		echo "Wire not installed - will be installed during build"; \
-	fi

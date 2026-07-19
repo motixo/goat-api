@@ -157,7 +157,6 @@ make docker-build
 make build          # Build the application
 make run            # Build and run with .env
 make test           # Run all tests
-make wire           # Generate Wire bindings
 make clean          # Clean build artifacts
 make docker-build   # Build Docker image
 make help           # Show all commands

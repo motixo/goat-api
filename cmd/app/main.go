@@ -20,7 +20,7 @@ func main() {
 		panic("failed to load config: " + err.Error())
 	}
 
-	app, err := InitializeApp()
+	app, err := InitializeApp(cfg)
 	if err != nil {
 		panic("failed to initialize app: " + err.Error())
 	}

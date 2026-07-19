@@ -7,9 +7,6 @@ go.sum
 # Environment config file
 .env
 
-# Wire generated DI container
-cmd/app/wire_gen.go
-
 # Build file
 build
 

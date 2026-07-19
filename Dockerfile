@@ -13,9 +13,6 @@ RUN go mod download
 
 COPY . .
 
-RUN go install github.com/google/wire/cmd/wire@latest
-RUN wire ./cmd/app
-
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o build/bin/app ./cmd/app
 
 
