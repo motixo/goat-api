@@ -1,0 +1,35 @@
+# Version-control and repository metadata
+.git
+.gitignore
+.github
+.agents
+.codex
+AGENTS.md
+graphify-out
+
+# Local development environments and editor state
+.devenv
+.devenv.flake.nix
+.vscode
+.idea
+.DS_Store
+devenv.lock
+devenv.nix
+devenv.yaml
+
+# Secrets and local configuration
+.env
+.env.*
+
+# Build, test, and runtime artifacts
+build
+coverage.out
+*.log
+*.tmp
+
+# Files not required to compile the service image
+Dockerfile
+.dockerignore
+README.md
+LICENSE
+assets
