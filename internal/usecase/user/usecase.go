@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -148,36 +149,53 @@ func (us *UserUseCase) GetUserslist(ctx context.Context, input GetListInput) ([]
 }
 
 func (us *UserUseCase) DeleteUser(ctx context.Context, userID string) error {
-	us.logger.Info("Attempting to delete user", "TargetUserID:", userID)
-	if err := us.userRepo.Delete(ctx, userID); err != nil {
-		us.logger.Error("Failed to delete user", "Error:", err)
-		return err
+	us.logger.Info("attempting to delete user", "user_id", userID)
+
+	exists, err := us.userRepo.ExistsByID(ctx, userID)
+	if err != nil {
+		us.logger.Error("failed to verify user before deletion", "user_id", userID, "error", err)
+		return fmt.Errorf("verify user before deletion: %w", err)
+	}
+	if !exists {
+		return errors.ErrUserNotFound
 	}
 
 	sessions, _, err := us.sessionRepo.ListByUser(ctx, userID, 0, 0)
 	if err != nil {
-		us.logger.Error("field to fetch user sessions", "UserID:", userID)
-		return nil
+		us.logger.Error("failed to fetch user sessions before deletion", "user_id", userID, "error", err)
+		return fmt.Errorf("list sessions before user deletion: %w", err)
 	}
 
-	if len(sessions) == 0 {
-		return nil
+	if len(sessions) > 0 {
+		targets := make([]string, 0, len(sessions))
+		for index, session := range sessions {
+			if session == nil || session.ID == "" {
+				return fmt.Errorf("list sessions before user deletion: session %d has no ID", index)
+			}
+			targets = append(targets, session.ID)
+		}
+
+		if err := us.sessionRepo.Delete(ctx, targets); err != nil {
+			us.logger.Error("failed to revoke user sessions", "user_id", userID, "error", err)
+			return fmt.Errorf("revoke sessions before user deletion: %w", err)
+		}
 	}
 
-	targets := make([]string, 0, len(sessions))
-	for i := range sessions {
-		targets[i] = sessions[i].ID
-	}
-	if err := us.sessionRepo.Delete(ctx, targets); err != nil {
-		us.logger.Error("filed to delete user sessions", "user_id:", userID, "error", err)
-		return nil
+	if err := us.userCache.ClearCache(ctx, userID); err != nil {
+		us.logger.Error("failed to invalidate user cache before deletion", "user_id", userID, "error", err)
+		return fmt.Errorf("invalidate cache before user deletion: %w", err)
 	}
 
-	us.publisher.Publish(ctx, event.UserUpdatedEvent{
-		UserID: userID,
-	})
+	// PostgreSQL and Redis do not share a transaction. Delete durable user state
+	// only after session revocation and cache invalidation are known to succeed.
+	// A database failure can therefore leave an existing user logged out, but a
+	// known revocation failure is never reported as a successful user deletion.
+	if err := us.userRepo.Delete(ctx, userID); err != nil {
+		us.logger.Error("failed to delete user", "user_id", userID, "error", err)
+		return err
+	}
 
-	us.logger.Info("User deleted successfully", "target_user_id:", userID)
+	us.logger.Info("user deleted successfully", "user_id", userID)
 	return nil
 }
 

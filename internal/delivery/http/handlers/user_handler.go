@@ -117,7 +117,7 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 	}
 
 	if err := h.usecase.DeleteUser(c, targetUserID); err != nil {
-		response.Internal(c)
+		response.DomainError(c, err)
 		return
 	}
 	response.OK(c, "Deleted")

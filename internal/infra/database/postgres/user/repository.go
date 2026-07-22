@@ -33,6 +33,14 @@ func (r *Repository) Create(ctx context.Context, u *entity.User) error {
 	return err
 }
 
+func (r *Repository) ExistsByID(ctx context.Context, id string) (bool, error) {
+	var exists bool
+	if err := r.db.GetContext(ctx, &exists, "SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)", id); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 func (r *Repository) FindByID(ctx context.Context, id string) (*entity.User, error) {
 	var user entity.User
 	query := `
@@ -125,8 +133,19 @@ func (r *Repository) Update(ctx context.Context, user *entity.User) error {
 }
 
 func (r *Repository) Delete(ctx context.Context, userID string) error {
-	_, err := r.db.ExecContext(ctx, "DELETE FROM users WHERE id = $1", userID)
-	return err
+	result, err := r.db.ExecContext(ctx, "DELETE FROM users WHERE id = $1", userID)
+	if err != nil {
+		return err
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return domainErrors.ErrUserNotFound
+	}
+	return nil
 }
 
 func (r *Repository) List(ctx context.Context, offset, limit int, filters entity.UserFilter) ([]*entity.User, int64, error) {
