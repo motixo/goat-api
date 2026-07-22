@@ -13,7 +13,7 @@ GOAT API is a **production-ready**, **secure**, and **scalable** backend applica
 
 <br clear="right" />
 <p>
-  <a href="#features"><img src="https://img.shields.io/badge/Go-1.25-blue?logo=go" alt="Go Version"></a>
+  <a href="#features"><img src="https://img.shields.io/badge/Go-1.26.5-blue?logo=go" alt="Go Version"></a>
   <a href="#security"><img src="https://img.shields.io/badge/security-JWT%20%2B%20Redis-green" alt="Security"></a>
   <a href="#architecture"><img src="https://img.shields.io/badge/architecture-Clean%20Architecture-orange" alt="Architecture"></a>
   <a href="#observability"><img src="https://img.shields.io/badge/observability-Prometheus%20%2B%20Grafana-blue" alt="Observability"></a>
@@ -66,7 +66,7 @@ The project follows the **Dependency Rule**: source code dependencies only point
 
 ## 📋 Prerequisites
 
-- **Go 1.25+**
+- **Go 1.26.5+**
 - **PostgreSQL 12+**
 - **Redis 6+**
 - **Docker**
