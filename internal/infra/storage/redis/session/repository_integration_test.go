@@ -12,6 +12,53 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+func TestListByUserFiltersBeforePagination(t *testing.T) {
+	address := os.Getenv("GOAT_REDIS_ADDR")
+	if address == "" {
+		t.Skip("set GOAT_REDIS_ADDR to run Redis integration tests")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	client := redis.NewClient(&redis.Options{Addr: address})
+	t.Cleanup(func() { _ = client.Close() })
+	if err := client.Ping(ctx).Err(); err != nil {
+		t.Fatalf("ping Redis: %v", err)
+	}
+
+	userID := "integration-user-" + pkg.ULIDGenerator()
+	newest := newIntegrationSession(userID, time.Hour)
+	oldest := newIntegrationSession(userID, time.Hour)
+	registerRedisSessionCleanup(t, client, newest, oldest)
+	repository := &Repository{client: client}
+	createRedisSessions(t, ctx, repository, newest, oldest)
+
+	userKey := pkg.RedisKey("session", "user", userID)
+	staleSessionKey := pkg.RedisKey("session", "id", pkg.ULIDGenerator())
+	if err := client.ZAdd(ctx, userKey,
+		redis.Z{Score: 30, Member: staleSessionKey},
+		redis.Z{Score: 20, Member: pkg.RedisKey("session", "id", newest.ID)},
+		redis.Z{Score: 10, Member: pkg.RedisKey("session", "id", oldest.ID)},
+	).Err(); err != nil {
+		t.Fatalf("arrange session index: %v", err)
+	}
+
+	sessions, total, err := repository.ListByUser(ctx, userID, 0, 2)
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("total = %d, want 2 valid sessions", total)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("page length = %d, want 2; sessions = %#v", len(sessions), sessions)
+	}
+	if sessions[0].ID != newest.ID || sessions[1].ID != oldest.ID {
+		t.Fatalf("session order = [%s, %s], want [%s, %s]", sessions[0].ID, sessions[1].ID, newest.ID, oldest.ID)
+	}
+}
+
 func TestDeleteByUserIsAtomicInRedis(t *testing.T) {
 	address := os.Getenv("GOAT_REDIS_ADDR")
 	if address == "" {

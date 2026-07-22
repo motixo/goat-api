@@ -9,11 +9,69 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/usecase/session"
 )
+
+func TestSessionHandlerListUsesAuthenticatedPrincipalAndPreservesPaginationContract(t *testing.T) {
+	createdAt := time.Date(2026, time.July, 22, 8, 30, 0, 0, time.UTC)
+	updatedAt := createdAt.Add(time.Minute)
+	var gotUserID, gotCurrentSession string
+	var gotOffset, gotLimit int
+	usecase := &stubSessionListUseCase{
+		getSessionsByUser: func(_ context.Context, userID, currentSession string, offset, limit int) ([]session.SessionResponse, int64, error) {
+			gotUserID = userID
+			gotCurrentSession = currentSession
+			gotOffset = offset
+			gotLimit = limit
+			return []session.SessionResponse{{
+				ID:        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+				Device:    "browser",
+				IP:        "127.0.0.1",
+				CreatedAt: createdAt,
+				UpdatedAt: updatedAt,
+				Current:   true,
+			}}, 101, nil
+		},
+	}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/user/sessions", func(c *gin.Context) {
+		c.Set("user_id", "authenticated-user")
+		c.Set("session_id", "01ARZ3NDEKTSV4RRFFQ69G5FAV")
+		c.Next()
+	}, NewSessionHandler(usecase, discardSessionHandlerLogger{}).GetAllUserSessions)
+	request := httptest.NewRequest(http.MethodGet, "/user/sessions?page=2&limit=101&user_id=client-user&session_id=client-session", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if gotUserID != "authenticated-user" || gotCurrentSession != "01ARZ3NDEKTSV4RRFFQ69G5FAV" {
+		t.Fatalf("principal = user %q, session %q; want authenticated context", gotUserID, gotCurrentSession)
+	}
+	if gotOffset != 100 || gotLimit != 100 {
+		t.Fatalf("pagination = offset %d, limit %d; want offset 100, limit 100", gotOffset, gotLimit)
+	}
+	assertSessionHandlerJSONEqual(t, recorder.Body.Bytes(), `{
+		"data": {
+			"data": [{
+				"id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+				"device": "browser",
+				"ip": "127.0.0.1",
+				"created_at": "2026-07-22T08:30:00Z",
+				"updated_at": "2026-07-22T08:31:00Z",
+				"current": true
+			}],
+			"meta": {"page": 2, "limit": 100, "total": 101, "total_pages": 2}
+		}
+	}`)
+}
 
 func TestSessionHandlerDeleteUsesAuthenticatedPrincipal(t *testing.T) {
 	var gotInput session.DeleteSessionsInput
@@ -161,6 +219,19 @@ func assertSessionHandlerJSONEqual(t *testing.T, got []byte, want string) {
 type stubSessionDeletionUseCase struct {
 	session.UseCase
 	deleteSessions func(context.Context, session.DeleteSessionsInput) error
+}
+
+type stubSessionListUseCase struct {
+	session.UseCase
+	getSessionsByUser func(context.Context, string, string, int, int) ([]session.SessionResponse, int64, error)
+}
+
+func (s *stubSessionListUseCase) GetSessionsByUser(
+	ctx context.Context,
+	userID, currentSession string,
+	offset, limit int,
+) ([]session.SessionResponse, int64, error) {
+	return s.getSessionsByUser(ctx, userID, currentSession, offset, limit)
 }
 
 func (s *stubSessionDeletionUseCase) DeleteSessions(ctx context.Context, input session.DeleteSessionsInput) error {

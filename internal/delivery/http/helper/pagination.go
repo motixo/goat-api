@@ -29,7 +29,16 @@ func (p *PaginationInput) Validate() {
 }
 
 func (p *PaginationInput) Offset() int {
-	return (p.Page - 1) * p.Limit
+	if p.Page <= 1 || p.Limit <= 0 {
+		return 0
+	}
+
+	pageOffset := p.Page - 1
+	maxInt := int(^uint(0) >> 1)
+	if pageOffset > maxInt/p.Limit {
+		return maxInt
+	}
+	return pageOffset * p.Limit
 }
 
 type PaginationMeta struct {

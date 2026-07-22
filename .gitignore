@@ -1,6 +1,3 @@
-# Go packages
-go.sum
-
 # vscode configurations
 .vscode
 
@@ -13,3 +10,8 @@ build
 # Nix
 .devenv
 .devenv.flake.nix
+
+.agents
+.codex
+graphify-out
+AGENTS.md

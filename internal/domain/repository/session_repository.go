@@ -9,7 +9,8 @@ import (
 
 type SessionRepository interface {
 	Create(ctx context.Context, s *entity.Session) error
-	ListByUser(ctx context.Context, userID string, page, pageSize int) ([]*entity.Session, int64, error)
+	// ListByUser treats a zero limit as unbounded for internal security workflows.
+	ListByUser(ctx context.Context, userID string, offset, limit int) ([]*entity.Session, int64, error)
 	Delete(ctx context.Context, sessionIDs []string) error
 	DeleteByUser(ctx context.Context, userID string, sessionIDs []string) (bool, error)
 	// DeleteOthersByUser returns false without mutation when currentSessionID is not owned by userID.

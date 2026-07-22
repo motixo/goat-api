@@ -53,49 +53,70 @@ func (r *Repository) Create(ctx context.Context, s *entity.Session) error {
 }
 
 func (r *Repository) ListByUser(ctx context.Context, userID string, offset, limit int) ([]*entity.Session, int64, error) {
+	if userID == "" {
+		return nil, 0, fmt.Errorf("user ID is required")
+	}
+	if offset < 0 || limit < 0 {
+		return nil, 0, fmt.Errorf("session pagination values must not be negative")
+	}
+
 	userKey := pkg.RedisKey("session", "user", userID)
-	end := int64(offset) + int64(limit) - 1
-
-	sessionKeys, err := r.client.ZRevRange(ctx, userKey, int64(offset), end).Result()
+	script := redisClinet.GetScript("list_sessions")
+	result, err := script.Run(ctx, r.client, []string{userKey}, userID, offset, limit).Slice()
 	if err != nil {
 		return nil, 0, err
 	}
+	return decodeSessionList(result)
+}
 
-	total, err := r.client.ZCard(ctx, userKey).Result()
-	if err != nil {
-		return nil, 0, err
+const sessionListFieldCount = 8
+
+func decodeSessionList(result []any) ([]*entity.Session, int64, error) {
+	if len(result) == 0 {
+		return nil, 0, fmt.Errorf("redis session list returned no total")
+	}
+	total, ok := result[0].(int64)
+	if !ok || total < 0 {
+		return nil, 0, fmt.Errorf("unexpected redis session total: %T", result[0])
+	}
+	if (len(result)-1)%sessionListFieldCount != 0 {
+		return nil, 0, fmt.Errorf("unexpected redis session list field count: %d", len(result)-1)
 	}
 
-	sessions := make([]*entity.Session, 0, len(sessionKeys))
-
-	for _, sessionKey := range sessionKeys {
-		fields, err := r.client.HGetAll(ctx, sessionKey).Result()
-		if err != nil {
-			return nil, 0, err
+	sessions := make([]*entity.Session, 0, (len(result)-1)/sessionListFieldCount)
+	for i := 1; i < len(result); i += sessionListFieldCount {
+		fields := make([]string, sessionListFieldCount)
+		for fieldIndex := range fields {
+			value, ok := result[i+fieldIndex].(string)
+			if !ok {
+				return nil, 0, fmt.Errorf("unexpected redis session field type at index %d: %T", i+fieldIndex, result[i+fieldIndex])
+			}
+			fields[fieldIndex] = value
 		}
 
-		if len(fields) == 0 {
-			continue
+		createdAt, err := strconv.ParseInt(fields[5], 10, 64)
+		if err != nil {
+			return nil, 0, fmt.Errorf("parse session created_at: %w", err)
+		}
+		updatedAt, err := strconv.ParseInt(fields[6], 10, 64)
+		if err != nil {
+			return nil, 0, fmt.Errorf("parse session updated_at: %w", err)
+		}
+		expiresAt, err := strconv.ParseInt(fields[7], 10, 64)
+		if err != nil {
+			return nil, 0, fmt.Errorf("parse session expires_at: %w", err)
 		}
 
 		s := &entity.Session{
-			ID:         fields["id"],
-			UserID:     fields["user_id"],
-			Device:     fields["device"],
-			IP:         fields["ip"],
-			CurrentJTI: fields["current_jti"],
+			ID:         fields[0],
+			UserID:     fields[1],
+			Device:     fields[2],
+			IP:         fields[3],
+			CurrentJTI: fields[4],
+			CreatedAt:  time.Unix(createdAt, 0).UTC(),
+			UpdatedAt:  time.Unix(updatedAt, 0).UTC(),
+			ExpiresAt:  time.Unix(expiresAt, 0).UTC(),
 		}
-
-		if createdAt, err := strconv.ParseInt(fields["created_at"], 10, 64); err == nil {
-			s.CreatedAt = time.Unix(createdAt, 0).UTC()
-		}
-		if updatedAt, err := strconv.ParseInt(fields["updated_at"], 10, 64); err == nil {
-			s.UpdatedAt = time.Unix(updatedAt, 0).UTC()
-		}
-		if expiresAt, err := strconv.ParseInt(fields["expires_at"], 10, 64); err == nil {
-			s.ExpiresAt = time.Unix(expiresAt, 0).UTC()
-		}
-
 		sessions = append(sessions, s)
 	}
 

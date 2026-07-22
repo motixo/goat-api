@@ -22,7 +22,11 @@
 
 	redis.call("SET", jtiKey, sessionKey, "EX", jtiTTL)
 	local now = redis.call("TIME")[1]
+	-- The shared index must live at least as long as its longest session.
+	local currentUserTTL = redis.call("TTL", userKey)
 	redis.call("ZADD", userKey, now, sessionKey)
-	redis.call("EXPIRE", userKey, sessionTTL)
+	if currentUserTTL == -2 or (currentUserTTL >= 0 and currentUserTTL < sessionTTL) then
+		redis.call("EXPIRE", userKey, sessionTTL)
+	end
 
 	return 1
