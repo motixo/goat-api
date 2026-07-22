@@ -133,9 +133,12 @@ func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput
 	access, accessClaims, err := us.jwtService.GenerateAccessToken(userEntity.ID, sessionID, refreshJTI, us.accessTTL)
 	if err != nil {
 		us.logger.Error("failed to create access token", "userID", userEntity.ID, "error", err)
-		us.sessionUC.DeleteSessions(ctx, session.DeleteSessionsInput{
+		if cleanupErr := us.sessionUC.DeleteSessions(ctx, session.DeleteSessionsInput{
+			UserID:         userEntity.ID,
 			TargetSessions: []string{sessionID},
-		})
+		}); cleanupErr != nil {
+			us.logger.Error("failed to clean up session after access token generation failure", "userID", userEntity.ID, "error", cleanupErr)
+		}
 		return LoginOutput{}, err
 	}
 

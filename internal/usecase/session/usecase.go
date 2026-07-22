@@ -8,6 +8,7 @@ import (
 	"github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/pkg"
+	"github.com/oklog/ulid/v2"
 )
 
 type SessionUseCase struct {
@@ -123,33 +124,52 @@ func (us *SessionUseCase) IsJTIValid(ctx context.Context, jti string) (bool, err
 
 func (us *SessionUseCase) DeleteSessions(ctx context.Context, input DeleteSessionsInput) error {
 	us.logger.Info("delete sessions requested", "userID", input.UserID, "removeOthers", input.RemoveOthers, "targetCount", len(input.TargetSessions))
-	var target []string
-	if input.RemoveOthers {
-		response, _, err := us.sessionRepo.ListByUser(ctx, input.UserID, 0, 0)
-		if err != nil {
-			us.logger.Error("failed to get user sessions for deletion", "userID", input.UserID, "error", err)
-			return err
-		}
-
-		for _, s := range response {
-			if s.ID != input.CurrentSession {
-				target = append(target, s.ID)
-			}
-		}
-	} else {
-		target = input.TargetSessions
+	if input.UserID == "" {
+		return errors.ErrUnauthorized
 	}
 
-	if len(target) == 0 {
-		us.logger.Debug("no sessions to delete", "userID", input.UserID)
+	if input.RemoveOthers {
+		if !isValidSessionID(input.CurrentSession) {
+			return errors.ErrInvalidInput
+		}
+
+		currentOwned, err := us.sessionRepo.DeleteOthersByUser(ctx, input.UserID, input.CurrentSession)
+		if err != nil {
+			us.logger.Error("failed to delete other user sessions", "userID", input.UserID, "error", err)
+			return err
+		}
+		if !currentOwned {
+			us.logger.Warn("current session was missing or not owned by user", "userID", input.UserID)
+			return errors.ErrNotFound
+		}
+		us.logger.Info("other sessions deleted successfully", "userID", input.UserID)
 		return nil
 	}
 
-	err := us.sessionRepo.Delete(ctx, target)
+	if len(input.TargetSessions) == 0 {
+		return errors.ErrInvalidInput
+	}
+
+	for _, sessionID := range input.TargetSessions {
+		if !isValidSessionID(sessionID) {
+			return errors.ErrInvalidInput
+		}
+	}
+
+	deleted, err := us.sessionRepo.DeleteByUser(ctx, input.UserID, input.TargetSessions)
 	if err != nil {
-		us.logger.Error("failed to delete sessions", "userID", input.UserID, "targetCount", len(target), "error", err)
+		us.logger.Error("failed to delete sessions", "userID", input.UserID, "targetCount", len(input.TargetSessions), "error", err)
 		return err
+	}
+	if !deleted {
+		us.logger.Warn("session deletion target was missing or not owned by user", "userID", input.UserID, "targetCount", len(input.TargetSessions))
+		return errors.ErrNotFound
 	}
 	us.logger.Info("sessions deleted successfully", "userID", input.UserID, "removeOthers", input.RemoveOthers, "targetCount", len(input.TargetSessions))
 	return nil
+}
+
+func isValidSessionID(sessionID string) bool {
+	_, err := ulid.ParseStrict(sessionID)
+	return err == nil
 }

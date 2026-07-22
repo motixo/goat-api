@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	stdErrors "errors"
+
 	"github.com/gin-gonic/gin"
 	"github.com/motixo/goat-api/internal/delivery/http/helper"
 	"github.com/motixo/goat-api/internal/delivery/http/response"
+	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/pkg"
 	"github.com/motixo/goat-api/internal/usecase/session"
 )
@@ -77,7 +80,14 @@ func (h *SessionHandler) DeleteSessions(c *gin.Context) {
 	input.CurrentSession = sessionID
 
 	if err := h.usecase.DeleteSessions(c, input); err != nil {
-		response.Internal(c)
+		switch {
+		case stdErrors.Is(err, domainErrors.ErrInvalidInput):
+			response.BadRequest(c, "Invalid request payload")
+		case stdErrors.Is(err, domainErrors.ErrNotFound):
+			response.NotFound(c)
+		default:
+			response.Internal(c)
+		}
 		return
 	}
 	response.OK(c, "Revoked")

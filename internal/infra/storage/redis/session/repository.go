@@ -160,6 +160,36 @@ func (r *Repository) Delete(ctx context.Context, sessionIDs []string) error {
 	return err
 }
 
+func (r *Repository) DeleteByUser(ctx context.Context, userID string, sessionIDs []string) (bool, error) {
+	if len(sessionIDs) == 0 {
+		return true, nil
+	}
+
+	sessionKeys := make([]string, 0, len(sessionIDs))
+	for _, sessionID := range sessionIDs {
+		sessionKeys = append(sessionKeys, pkg.RedisKey("session", "id", sessionID))
+	}
+
+	script := redisClinet.GetScript("delete_owned_sessions")
+	deleted, err := script.Run(ctx, r.client, sessionKeys, userID).Int64()
+	if err != nil {
+		return false, err
+	}
+	return deleted == 1, nil
+}
+
+func (r *Repository) DeleteOthersByUser(ctx context.Context, userID, currentSessionID string) (bool, error) {
+	userKey := pkg.RedisKey("session", "user", userID)
+	currentSessionKey := pkg.RedisKey("session", "id", currentSessionID)
+
+	script := redisClinet.GetScript("delete_other_sessions")
+	deleted, err := script.Run(ctx, r.client, []string{userKey, currentSessionKey}, userID).Int64()
+	if err != nil {
+		return false, err
+	}
+	return deleted >= 0, nil
+}
+
 func (r *Repository) CleanOrphanSessions(ctx context.Context) error {
 	script := redisClinet.GetScript("clean_orphans")
 
