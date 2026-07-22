@@ -22,15 +22,19 @@ func NewAuthHandler(usecase auth.UseCase, logger pkg.Logger) *AuthHandler {
 
 func (h *AuthHandler) Login(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
-	var input auth.LoginInput
-	if err := c.ShouldBindJSON(&input); err != nil {
+	var request loginRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
 		response.BadRequest(c, "Invalid request payload")
 		return
 	}
 
-	input.IP = c.ClientIP()
-	input.Device = c.GetHeader("User-Agent")
+	input := auth.LoginInput{
+		Email:    request.Email,
+		Password: request.Password,
+		IP:       c.ClientIP(),
+		Device:   c.GetHeader("User-Agent"),
+	}
 
 	output, err := h.usecase.Login(c.Request.Context(), input)
 	if err != nil {
@@ -38,38 +42,44 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, output)
+	response.OK(c, newLoginResponse(output))
 }
 
 func (h *AuthHandler) Register(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
-	var input auth.RegisterInput
-	if err := c.ShouldBindJSON(&input); err != nil {
+	var request registerRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
 		response.BadRequest(c, "Invalid request payload")
 		return
 	}
 
-	output, err := h.usecase.Signup(c.Request.Context(), input)
+	output, err := h.usecase.Signup(c.Request.Context(), auth.RegisterInput{
+		Email:    request.Email,
+		Password: request.Password,
+	})
 	if err != nil {
 		response.DomainError(c, err)
 		return
 	}
 
-	response.Created(c, output)
+	response.Created(c, newAuthUserResponse(output))
 }
 
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
-	var input auth.RefreshInput
-	if err := c.ShouldBindJSON(&input); err != nil {
+	var request refreshRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
 		response.BadRequest(c, "Invalid request payload")
 		return
 	}
 
-	input.IP = c.ClientIP()
-	input.Device = c.GetHeader("User-Agent")
+	input := auth.RefreshInput{
+		RefreshToken: request.RefreshToken,
+		IP:           c.ClientIP(),
+		Device:       c.GetHeader("User-Agent"),
+	}
 	output, err := h.usecase.Refresh(c.Request.Context(), input)
 	if err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
@@ -77,7 +87,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, output)
+	response.OK(c, newRefreshResponse(output))
 }
 
 func (h *AuthHandler) Logout(c *gin.Context) {

@@ -22,12 +22,12 @@ func TestSessionHandlerListUsesAuthenticatedPrincipalAndPreservesPaginationContr
 	var gotUserID, gotCurrentSession string
 	var gotOffset, gotLimit int
 	usecase := &stubSessionListUseCase{
-		getSessionsByUser: func(_ context.Context, userID, currentSession string, offset, limit int) ([]session.SessionResponse, int64, error) {
+		getSessionsByUser: func(_ context.Context, userID, currentSession string, offset, limit int) ([]session.SessionOutput, int64, error) {
 			gotUserID = userID
 			gotCurrentSession = currentSession
 			gotOffset = offset
 			gotLimit = limit
-			return []session.SessionResponse{{
+			return []session.SessionOutput{{
 				ID:        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
 				Device:    "browser",
 				IP:        "127.0.0.1",
@@ -73,6 +73,45 @@ func TestSessionHandlerListUsesAuthenticatedPrincipalAndPreservesPaginationContr
 	}`)
 }
 
+func TestSessionHandlerListPreservesOptionalFieldOmission(t *testing.T) {
+	createdAt := time.Date(2026, time.July, 22, 8, 30, 0, 0, time.UTC)
+	usecase := &stubSessionListUseCase{
+		getSessionsByUser: func(context.Context, string, string, int, int) ([]session.SessionOutput, int64, error) {
+			return []session.SessionOutput{{
+				ID:        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+				CreatedAt: createdAt,
+				UpdatedAt: createdAt,
+			}}, 1, nil
+		},
+	}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/user/sessions", func(c *gin.Context) {
+		c.Set("user_id", "authenticated-user")
+		c.Set("session_id", "01ARZ3NDEKTSV4RRFFQ69G5FAX")
+		c.Next()
+	}, NewSessionHandler(usecase, discardSessionHandlerLogger{}).GetAllUserSessions)
+	request := httptest.NewRequest(http.MethodGet, "/user/sessions", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	assertSessionHandlerJSONEqual(t, recorder.Body.Bytes(), `{
+		"data": {
+			"data": [{
+				"id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+				"created_at": "2026-07-22T08:30:00Z",
+				"updated_at": "2026-07-22T08:30:00Z",
+				"current": false
+			}],
+			"meta": {"page": 1, "limit": 10, "total": 1, "total_pages": 1}
+		}
+	}`)
+}
+
 func TestSessionHandlerDeleteUsesAuthenticatedPrincipal(t *testing.T) {
 	var gotInput session.DeleteSessionsInput
 	usecase := &stubSessionDeletionUseCase{
@@ -96,6 +135,9 @@ func TestSessionHandlerDeleteUsesAuthenticatedPrincipal(t *testing.T) {
 	}
 	if gotInput.CurrentSession != "01ARZ3NDEKTSV4RRFFQ69G5FAV" {
 		t.Fatalf("current session = %q, want authenticated session", gotInput.CurrentSession)
+	}
+	if want := []string{"01ARZ3NDEKTSV4RRFFQ69G5FAW"}; !reflect.DeepEqual(gotInput.TargetSessions, want) {
+		t.Fatalf("target sessions = %v, want %v", gotInput.TargetSessions, want)
 	}
 	assertSessionHandlerJSONEqual(t, recorder.Body.Bytes(), `{"data":"Revoked"}`)
 }
@@ -168,6 +210,32 @@ func TestSessionHandlerDeleteMapsMalformedSessionIDToBadRequest(t *testing.T) {
 	}`)
 }
 
+func TestSessionHandlerDeleteRejectsEmptySelectionBeforeUseCase(t *testing.T) {
+	called := false
+	usecase := &stubSessionDeletionUseCase{
+		deleteSessions: func(context.Context, session.DeleteSessionsInput) error {
+			called = true
+			return nil
+		},
+	}
+
+	recorder := performSessionDeletionRequest(t, `{}`, usecase)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	if called {
+		t.Fatal("use case was called for an empty deletion selection")
+	}
+	assertSessionHandlerJSONEqual(t, recorder.Body.Bytes(), `{
+		"type":"/errors/validation",
+		"title":"Bad Request",
+		"status":400,
+		"detail":"Invalid request payload",
+		"instance":"/user/sessions"
+	}`)
+}
+
 func TestSessionHandlerDeleteKeepsInfrastructureFailuresInternal(t *testing.T) {
 	usecase := &stubSessionDeletionUseCase{
 		deleteSessions: func(context.Context, session.DeleteSessionsInput) error {
@@ -223,14 +291,14 @@ type stubSessionDeletionUseCase struct {
 
 type stubSessionListUseCase struct {
 	session.UseCase
-	getSessionsByUser func(context.Context, string, string, int, int) ([]session.SessionResponse, int64, error)
+	getSessionsByUser func(context.Context, string, string, int, int) ([]session.SessionOutput, int64, error)
 }
 
 func (s *stubSessionListUseCase) GetSessionsByUser(
 	ctx context.Context,
 	userID, currentSession string,
 	offset, limit int,
-) ([]session.SessionResponse, int64, error) {
+) ([]session.SessionOutput, int64, error) {
 	return s.getSessionsByUser(ctx, userID, currentSession, offset, limit)
 }
 

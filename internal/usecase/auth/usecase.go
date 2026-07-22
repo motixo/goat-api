@@ -12,7 +12,6 @@ import (
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 	"github.com/motixo/goat-api/internal/pkg"
 	"github.com/motixo/goat-api/internal/usecase/session"
-	"github.com/motixo/goat-api/internal/usecase/user"
 )
 
 type AuthUseCase struct {
@@ -52,12 +51,12 @@ func NewUsecase(
 	}
 }
 
-func (us *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (user.UserResponse, error) {
+func (us *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (UserOutput, error) {
 	us.logger.Info("signup attempt", "email", input.Email)
 	hashedPassword, err := us.passwordHasher.Hash(ctx, input.Password)
 	if err != nil {
 		us.logger.Error("failed to hash password", "email", input.Email, "error", err)
-		return user.UserResponse{}, err
+		return UserOutput{}, err
 	}
 
 	usr := &entity.User{
@@ -72,11 +71,11 @@ func (us *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (user.Us
 	err = us.userRepo.Create(ctx, usr)
 	if err != nil {
 		us.logger.Error("failed to create user", "email", input.Email, "error", err)
-		return user.UserResponse{}, err
+		return UserOutput{}, err
 	}
 
 	us.logger.Info("user registered successfully", "userID", usr.ID, "email", usr.Email)
-	return user.UserResponse{
+	return UserOutput{
 		ID:        usr.ID,
 		Email:     usr.Email,
 		Role:      usr.Role.String(),
@@ -149,7 +148,7 @@ func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput
 		AccessTokenExpiresAt:  accessClaims.GetExpiresAt(),
 		RefreshToken:          refresh,
 		RefreshTokenExpiresAt: refreshClaims.GetExpiresAt(),
-		User: user.UserResponse{
+		User: UserOutput{
 			ID:        userEntity.ID,
 			Email:     userEntity.Email,
 			Role:      userEntity.Role.String(),

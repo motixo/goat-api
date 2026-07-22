@@ -53,7 +53,7 @@ func (us *SessionUseCase) CreateSession(ctx context.Context, input CreateInput) 
 
 }
 
-func (us *SessionUseCase) GetSessionsByUser(ctx context.Context, userID, sessionID string, offset, limit int) ([]SessionResponse, int64, error) {
+func (us *SessionUseCase) GetSessionsByUser(ctx context.Context, userID, sessionID string, offset, limit int) ([]SessionOutput, int64, error) {
 	us.logger.Debug("retrieving user sessions", "userID", userID, "currentSessionID", sessionID)
 	sessions, total, err := us.sessionRepo.ListByUser(ctx, userID, offset, limit)
 	if err != nil {
@@ -61,9 +61,9 @@ func (us *SessionUseCase) GetSessionsByUser(ctx context.Context, userID, session
 		return nil, 0, err
 	}
 
-	response := make([]SessionResponse, 0, len(sessions))
+	output := make([]SessionOutput, 0, len(sessions))
 	for _, se := range sessions {
-		r := SessionResponse{
+		sessionOutput := SessionOutput{
 			ID:        se.ID,
 			Device:    se.Device,
 			IP:        se.IP,
@@ -72,11 +72,11 @@ func (us *SessionUseCase) GetSessionsByUser(ctx context.Context, userID, session
 			UpdatedAt: se.UpdatedAt,
 		}
 
-		response = append(response, r)
+		output = append(output, sessionOutput)
 	}
 
 	us.logger.Info("user sessions retrieved", "userID", userID, "sessionCount", total)
-	return response, total, nil
+	return output, total, nil
 }
 
 func (us *SessionUseCase) RotateSessionJTI(ctx context.Context, input RotateInput) (string, error) {

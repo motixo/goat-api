@@ -4,13 +4,13 @@ import (
 	"time"
 )
 
-type SessionResponse struct {
-	ID        string    `json:"id"`
-	Device    string    `json:"device,omitempty"`
-	IP        string    `json:"ip,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Current   bool      `json:"current"`
+type SessionOutput struct {
+	ID        string
+	Device    string
+	IP        string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	Current   bool
 }
 
 type CreateInput struct {
@@ -26,8 +26,8 @@ type CreateInput struct {
 type DeleteSessionsInput struct {
 	UserID         string
 	CurrentSession string
-	TargetSessions []string `json:"session_ids"`
-	RemoveOthers   bool     `json:"others"`
+	TargetSessions []string
+	RemoveOthers   bool
 }
 
 type RotateInput struct {

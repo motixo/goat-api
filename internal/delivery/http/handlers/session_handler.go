@@ -49,18 +49,18 @@ func (h *SessionHandler) GetAllUserSessions(c *gin.Context) {
 		return
 	}
 	meta := helper.NewPaginationMeta(total, input)
-	response.OK(c, gin.H{"data": output, "meta": meta})
+	response.OK(c, gin.H{"data": newSessionResponses(output), "meta": meta})
 }
 
 func (h *SessionHandler) DeleteSessions(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
-	var input session.DeleteSessionsInput
-	if err := c.ShouldBindJSON(&input); err != nil {
+	var request deleteSessionsRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
 		response.BadRequest(c, "Invalid request payload")
 		return
 	}
-	if !input.RemoveOthers && len(input.TargetSessions) == 0 {
+	if !request.Others && len(request.SessionIDs) == 0 {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
 		response.BadRequest(c, "Invalid request payload")
 		return
@@ -76,8 +76,12 @@ func (h *SessionHandler) DeleteSessions(c *gin.Context) {
 		response.Unauthorized(c, "authentication context missing")
 		return
 	}
-	input.UserID = userID
-	input.CurrentSession = sessionID
+	input := session.DeleteSessionsInput{
+		UserID:         userID,
+		CurrentSession: sessionID,
+		TargetSessions: request.SessionIDs,
+		RemoveOthers:   request.Others,
+	}
 
 	if err := h.usecase.DeleteSessions(c, input); err != nil {
 		switch {

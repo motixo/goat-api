@@ -2,41 +2,47 @@ package auth
 
 import (
 	"time"
-
-	"github.com/motixo/goat-api/internal/usecase/user"
 )
 
 type LoginInput struct {
-	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required"`
-	IP       string `json:"-"`
-	Device   string `json:"-"`
+	Email    string
+	Password string
+	IP       string
+	Device   string
+}
+
+type UserOutput struct {
+	ID        string
+	Email     string
+	Role      string
+	Status    string
+	CreatedAt time.Time
 }
 
 type LoginOutput struct {
-	AccessToken           string            `json:"access_token"`
-	AccessTokenExpiresAt  time.Time         `json:"access_token_expires_at"`
-	RefreshToken          string            `json:"refresh_token"`
-	RefreshTokenExpiresAt time.Time         `json:"refresh_token_expires_at"`
-	User                  user.UserResponse `json:"user"`
+	AccessToken           string
+	AccessTokenExpiresAt  time.Time
+	RefreshToken          string
+	RefreshTokenExpiresAt time.Time
+	User                  UserOutput
 }
 
 type RefreshInput struct {
-	RefreshToken string `json:"refresh_token"`
-	IP           string `json:"-"`
-	Device       string `json:"-"`
+	RefreshToken string
+	IP           string
+	Device       string
 }
 
 type RefreshOutput struct {
-	AccessToken           string    `json:"access_token"`
-	AccessTokenExpiresAt  time.Time `json:"access_token_expires_at"`
-	RefreshToken          string    `json:"refresh_token"`
-	RefreshTokenExpiresAt time.Time `json:"refresh_token_expires_at"`
+	AccessToken           string
+	AccessTokenExpiresAt  time.Time
+	RefreshToken          string
+	RefreshTokenExpiresAt time.Time
 }
 
 type RegisterInput struct {
-	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required"`
+	Email    string
+	Password string
 }
 
 type AccessTTL time.Duration
