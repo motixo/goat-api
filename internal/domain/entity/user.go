@@ -7,11 +7,11 @@ import (
 )
 
 type User struct {
-	ID        string                 `db:"id"`
-	Email     string                 `db:"email"`
-	Password  valueobject.Password   `db:"password"`
-	Status    valueobject.UserStatus `db:"status"`
-	Role      valueobject.UserRole   `db:"role"`
-	CreatedAt time.Time              `db:"created_at"`
-	UpdatedAt *time.Time             `db:"updated_at"`
+	ID        string
+	Email     string
+	Password  valueobject.Password
+	Status    valueobject.UserStatus
+	Role      valueobject.UserRole
+	CreatedAt time.Time
+	UpdatedAt *time.Time
 }

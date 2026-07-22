@@ -31,7 +31,7 @@ func (r *Repository) Create(ctx context.Context, u *entity.User) error {
         INSERT INTO users (id, email, password, status, role, created_at, updated_at)
         VALUES (:id, :email, :password, :status, :role, :created_at, :updated_at)
     `
-	_, err := r.db.NamedExecContext(ctx, query, u)
+	_, err := r.db.NamedExecContext(ctx, query, userRowFromDomain(u))
 	return err
 }
 
@@ -44,64 +44,65 @@ func (r *Repository) ExistsByID(ctx context.Context, id string) (bool, error) {
 }
 
 func (r *Repository) FindByID(ctx context.Context, id string) (*entity.User, error) {
-	var user entity.User
+	var row userRow
 	query := `
         SELECT id, email, password, status, role, created_at, updated_at
         FROM users
         WHERE id = $1
 		LIMIT 1
     `
-	err := r.db.GetContext(ctx, &user, query, id)
+	err := r.db.GetContext(ctx, &row, query, id)
 	if err != nil {
 		return nil, err
 	}
-	return &user, nil
+	return row.toDomain(), nil
 }
 
 func (r *Repository) FindByEmail(ctx context.Context, email string) (*entity.User, error) {
-	var user entity.User
+	var row userRow
 	query := `
         SELECT id, email, password, status, role, created_at, updated_at
         FROM users
         WHERE email = $1
 		LIMIT 1
     `
-	err := r.db.GetContext(ctx, &user, query, email)
+	err := r.db.GetContext(ctx, &row, query, email)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get user by email: %w", err)
 	}
-	return &user, nil
+	return row.toDomain(), nil
 }
 
 func (r *Repository) Update(ctx context.Context, user *entity.User) error {
+	row := userRowFromDomain(user)
 	setClauses := []string{}
 	args := []interface{}{}
 	argIndex := 1
 
-	if user.Email != "" {
+	if row.Email != "" {
 		setClauses = append(setClauses, fmt.Sprintf("email = $%d", argIndex))
-		args = append(args, user.Email)
+		args = append(args, row.Email)
 		argIndex++
 	}
 
-	if !user.Password.IsZero() {
+	if row.PasswordHash != "" {
 		setClauses = append(setClauses, fmt.Sprintf("password = $%d", argIndex))
-		args = append(args, user.Password)
+		args = append(args, row.PasswordHash)
 		argIndex++
 	}
 
-	if user.Role != valueobject.RoleUnknown {
+	if row.Role != int16(valueobject.RoleUnknown) {
 		setClauses = append(setClauses, fmt.Sprintf("role = $%d", argIndex))
-		args = append(args, user.Role)
+		args = append(args, row.Role)
 		argIndex++
 	}
 
-	if user.Status != valueobject.StatusUnknown {
+	if row.Status != int16(valueobject.StatusUnknown) {
 		setClauses = append(setClauses, fmt.Sprintf("status = $%d", argIndex))
-		args = append(args, user.Status)
+		args = append(args, row.Status)
 		argIndex++
 	}
 
@@ -115,7 +116,7 @@ func (r *Repository) Update(ctx context.Context, user *entity.User) error {
 
 	setClausesStr := strings.Join(setClauses, ", ")
 	query := fmt.Sprintf("UPDATE users SET %s WHERE id = $%d", setClausesStr, argIndex)
-	args = append(args, user.ID)
+	args = append(args, row.ID)
 
 	result, err := r.db.ExecContext(ctx, query, args...)
 	if err != nil {
@@ -194,12 +195,12 @@ func (r *Repository) List(ctx context.Context, offset, limit int, filters reposi
 	selectQuery := buildUserListSelectQuery(whereClause, argIndex)
 	args = append(args, limit, offset)
 
-	var users []*entity.User
-	if err := r.db.SelectContext(ctx, &users, selectQuery, args...); err != nil {
+	var rows []userRow
+	if err := r.db.SelectContext(ctx, &rows, selectQuery, args...); err != nil {
 		return nil, 0, err
 	}
 
-	return users, total, nil
+	return userRowsToDomain(rows), total, nil
 }
 
 func buildUserListSelectQuery(whereClause string, argIndex int) string {

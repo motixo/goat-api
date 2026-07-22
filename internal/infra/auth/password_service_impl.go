@@ -58,12 +58,7 @@ func (s *PasswordService) Hash(ctx context.Context, plaintext string) (valueobje
 }
 
 func (s *PasswordService) Verify(ctx context.Context, plaintext string, hashed valueobject.Password) bool {
-
-	val, err := hashed.Value()
-	if err != nil {
-		return false
-	}
-	parts := strings.Split(val.(string), "$")
+	parts := strings.Split(hashed.Encoded(), "$")
 	if len(parts) != 6 {
 		return false
 	}

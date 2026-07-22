@@ -2,9 +2,6 @@
 package valueobject
 
 import (
-	"database/sql/driver"
-	"fmt"
-
 	"github.com/motixo/goat-api/internal/domain/validation"
 )
 
@@ -23,8 +20,8 @@ func PasswordFromHash(hash string) Password {
 	return Password{value: hash}
 }
 
-func (p Password) Value() (driver.Value, error) {
-	return p.value, nil
+func (p Password) Encoded() string {
+	return p.value
 }
 
 func (p Password) IsZero() bool {
@@ -41,17 +38,4 @@ func (p Password) Validate() error {
 		return nil // Already hashed, assume valid
 	}
 	return validation.ValidatePasswordPolicy(p.value)
-}
-
-func (p *Password) Scan(value any) error {
-	if value == nil {
-		p.value = ""
-		return nil
-	}
-	str, ok := value.(string)
-	if !ok {
-		return fmt.Errorf("cannot scan %T into Password", value)
-	}
-	p.value = str
-	return nil
 }
