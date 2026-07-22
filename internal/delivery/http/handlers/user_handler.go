@@ -5,7 +5,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/motixo/goat-api/internal/delivery/http/helper"
 	"github.com/motixo/goat-api/internal/delivery/http/response"
-	"github.com/motixo/goat-api/internal/domain/entity"
 	"github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 	"github.com/motixo/goat-api/internal/pkg"
@@ -26,21 +25,26 @@ func NewUserHandler(usecase user.UseCase, logger pkg.Logger) *UserHandler {
 
 func (h *UserHandler) CreateUser(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
-	var input user.CreateInput
+	var request createUserRequest
 
-	if err := c.ShouldBindJSON(&input); err != nil {
+	if err := c.ShouldBindJSON(&request); err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
 		response.BadRequest(c, "Invalid request payload")
 		return
 	}
 
-	output, err := h.usecase.CreateUser(c, input)
+	output, err := h.usecase.CreateUser(c, user.CreateInput{
+		Email:    request.Email,
+		Password: request.Password,
+		Status:   request.Status,
+		Role:     request.Role,
+	})
 	if err != nil {
 		response.DomainError(c, err)
 		return
 	}
 
-	response.Created(c, output)
+	response.Created(c, newUserResponse(output))
 }
 
 func (h *UserHandler) GetUser(c *gin.Context) {
@@ -59,12 +63,12 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 		response.Internal(c)
 		return
 	}
-	response.OK(c, output)
+	response.OK(c, newUserResponse(output))
 }
 
 func (h *UserHandler) GetUserList(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
-	var input helper.UserListInput
+	var input listUsersQuery
 	if err := c.ShouldBindQuery(&input); err != nil {
 		response.BadRequest(c, "invalid pagination params")
 		return
@@ -77,7 +81,7 @@ func (h *UserHandler) GetUserList(c *gin.Context) {
 		return
 	}
 
-	filter := entity.UserFilter{
+	filter := user.ListFilter{
 		Search: input.Filter.Search,
 	}
 	for _, r := range input.Filter.Roles {
@@ -101,7 +105,7 @@ func (h *UserHandler) GetUserList(c *gin.Context) {
 	}
 
 	meta := helper.NewPaginationMeta(total, input.PaginationInput)
-	response.OK(c, gin.H{"data": output, "meta": meta})
+	response.OK(c, gin.H{"data": newUserResponses(output), "meta": meta})
 }
 
 func (h *UserHandler) DeleteUser(c *gin.Context) {
@@ -126,17 +130,22 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 func (h *UserHandler) UpdateUser(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
 	targetUserID := c.Param("id")
-	var input user.UpdateInput
+	var request updateUserRequest
 	_, errId := uuid.Parse(targetUserID)
-	err := c.ShouldBindJSON(&input)
+	err := c.ShouldBindJSON(&request)
 	if err != nil || errId != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
 		response.BadRequest(c, "Invalid request payload")
 		return
 	}
 
-	input.UserID = targetUserID
-	if err := h.usecase.UpdateUser(c, input); err != nil {
+	if err := h.usecase.UpdateUser(c, user.UpdateInput{
+		UserID:   targetUserID,
+		Email:    request.Email,
+		Password: request.Password,
+		Status:   request.Status,
+		Role:     request.Role,
+	}); err != nil {
 		response.Internal(c)
 		return
 	}
@@ -147,9 +156,9 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 func (h *UserHandler) ChangeEmail(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
 
-	var input user.UpdateEmailInput
+	var request updateUserEmailRequest
 
-	if err := c.ShouldBindJSON(&input); err != nil {
+	if err := c.ShouldBindJSON(&request); err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
 		response.BadRequest(c, "Invalid request payload")
 		return
@@ -161,8 +170,10 @@ func (h *UserHandler) ChangeEmail(c *gin.Context) {
 		return
 	}
 
-	input.UserID = userID
-	if err := h.usecase.ChangeEmail(c, input); err != nil {
+	if err := h.usecase.ChangeEmail(c, user.UpdateEmailInput{
+		UserID: userID,
+		Email:  request.Email,
+	}); err != nil {
 		response.Internal(c)
 		return
 	}
@@ -179,15 +190,18 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	var input user.UpdatePassInput
-	if err := c.ShouldBindJSON(&input); err != nil {
+	var request updateUserPasswordRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
 		response.BadRequest(c, "Invalid request payload")
 		return
 	}
 
-	input.UserID = userID
-	if err := h.usecase.ChangePassword(c, input); err != nil {
+	if err := h.usecase.ChangePassword(c, user.UpdatePassInput{
+		UserID:      userID,
+		OldPassword: request.CurrentPassword,
+		NewPassword: request.NewPassword,
+	}); err != nil {
 		if err == errors.ErrInvalidPassword {
 			response.BadRequest(c, "current password is incorrect")
 			return
@@ -206,18 +220,20 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 func (h *UserHandler) ChangeRole(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
 	targetUserID := c.Param("id")
-	var input user.UpdateRoleInput
+	var request updateUserRoleRequest
 
 	_, errId := uuid.Parse(targetUserID)
-	err := c.ShouldBindJSON(&input)
+	err := c.ShouldBindJSON(&request)
 	if err != nil || errId != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
 		response.BadRequest(c, "Invalid request payload")
 		return
 	}
 
-	input.UserID = targetUserID
-	if err := h.usecase.ChangeRole(c, input); err != nil {
+	if err := h.usecase.ChangeRole(c, user.UpdateRoleInput{
+		UserID: targetUserID,
+		Role:   request.Role,
+	}); err != nil {
 		response.Internal(c)
 		return
 	}
@@ -228,10 +244,10 @@ func (h *UserHandler) ChangeRole(c *gin.Context) {
 func (h *UserHandler) ChangeStatus(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
 	targetUserID := c.Param("id")
-	var input user.UpdateStatusInput
+	var request updateUserStatusRequest
 
 	_, errId := uuid.Parse(targetUserID)
-	err := c.ShouldBindJSON(&input)
+	err := c.ShouldBindJSON(&request)
 	if err != nil || errId != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
 		response.BadRequest(c, "Invalid request payload")
@@ -244,9 +260,11 @@ func (h *UserHandler) ChangeStatus(c *gin.Context) {
 		return
 	}
 
-	input.ActorID = actorID
-	input.UserID = targetUserID
-	if err := h.usecase.ChangeStatus(c, input); err != nil {
+	if err := h.usecase.ChangeStatus(c, user.UpdateStatusInput{
+		UserID:  targetUserID,
+		ActorID: actorID,
+		Status:  request.Status,
+	}); err != nil {
 		response.DomainError(c, err)
 		return
 	}

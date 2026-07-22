@@ -42,13 +42,13 @@ func NewUsecase(
 	}
 }
 
-func (us *UserUseCase) CreateUser(ctx context.Context, input CreateInput) (UserResponse, error) {
+func (us *UserUseCase) CreateUser(ctx context.Context, input CreateInput) (UserOutput, error) {
 
 	us.logger.Info("create user attempt", "email", input.Email)
 	hashedPassword, err := us.passwordHasher.Hash(ctx, input.Password)
 	if err != nil {
 		us.logger.Error("failed to hash password", "email", input.Email, "error", err)
-		return UserResponse{}, err
+		return UserOutput{}, err
 	}
 
 	usr := &entity.User{
@@ -63,11 +63,11 @@ func (us *UserUseCase) CreateUser(ctx context.Context, input CreateInput) (UserR
 	err = us.userRepo.Create(ctx, usr)
 	if err != nil {
 		us.logger.Error("failed to create user", "email", input.Email, "error", err)
-		return UserResponse{}, err
+		return UserOutput{}, err
 	}
 
 	us.logger.Info("user created successfully", "userID", usr.ID, "email", usr.Email)
-	return UserResponse{
+	return UserOutput{
 		ID:        usr.ID,
 		Email:     usr.Email,
 		Role:      usr.Role.String(),
@@ -76,14 +76,14 @@ func (us *UserUseCase) CreateUser(ctx context.Context, input CreateInput) (UserR
 	}, nil
 }
 
-func (us *UserUseCase) GetUser(ctx context.Context, userID string) (UserResponse, error) {
+func (us *UserUseCase) GetUser(ctx context.Context, userID string) (UserOutput, error) {
 	us.logger.Info("Fetching user by ID", "userID:", userID)
 	user, err := us.userRepo.FindByID(ctx, userID)
 	if err != nil {
 		us.logger.Error("Failed to fetch user", "userID", userID, "error", err)
-		return UserResponse{}, err
+		return UserOutput{}, err
 	}
-	response := UserResponse{
+	response := UserOutput{
 		ID:        user.ID,
 		Email:     user.Email,
 		Role:      user.Role.String(),
@@ -94,14 +94,17 @@ func (us *UserUseCase) GetUser(ctx context.Context, userID string) (UserResponse
 	return response, nil
 }
 
-func (us *UserUseCase) GetUserslist(ctx context.Context, input GetListInput) ([]UserResponse, int64, error) {
+func (us *UserUseCase) GetUserslist(ctx context.Context, input GetListInput) ([]UserOutput, int64, error) {
 	us.logger.Info("Fetching users List")
 
 	actorRole, err := us.userCache.GetUserRole(ctx, input.ActorID)
-	allowedRoles := valueobject.VisibleRoles(actorRole)
 	if err != nil {
 		us.logger.Error("change user status faild", "target_id", input.ActorID, "error", err)
-		return []UserResponse{}, 0, err
+		return []UserOutput{}, 0, err
+	}
+	allowedRoles := valueobject.VisibleRoles(actorRole)
+	if len(allowedRoles) == 0 {
+		return []UserOutput{}, 0, nil
 	}
 
 	//INTERSECT allowed and requested roles
@@ -120,22 +123,26 @@ func (us *UserUseCase) GetUserslist(ctx context.Context, input GetListInput) ([]
 		}
 
 		if len(effectiveRoles) == 0 {
-			return []UserResponse{}, 0, nil
+			return []UserOutput{}, 0, nil
 		}
 		input.Filter.Roles = effectiveRoles
 	} else {
 		input.Filter.Roles = allowedRoles
 	}
 
-	users, total, err := us.userRepo.List(ctx, input.Offset, input.Limit, input.Filter)
+	users, total, err := us.userRepo.List(ctx, input.Offset, input.Limit, repository.UserListFilter{
+		Statuses: input.Filter.Statuses,
+		Roles:    input.Filter.Roles,
+		Search:   input.Filter.Search,
+	})
 	if err != nil {
 		us.logger.Error("Failed to fetch users List", "error", err)
-		return []UserResponse{}, 0, err
+		return []UserOutput{}, 0, err
 	}
 
-	response := make([]UserResponse, 0, len(users))
+	response := make([]UserOutput, 0, len(users))
 	for _, usr := range users {
-		r := UserResponse{
+		r := UserOutput{
 			ID:        usr.ID,
 			Email:     usr.Email,
 			Role:      usr.Role.String(),

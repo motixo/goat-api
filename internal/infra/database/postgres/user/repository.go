@@ -20,6 +20,8 @@ type Repository struct {
 	db *sqlx.DB
 }
 
+const userListSelectFields = `SELECT id, email, role, status, created_at, updated_at FROM users`
+
 func NewRepository(db *sqlx.DB) repository.UserRepository {
 	return &Repository{db: db}
 }
@@ -148,8 +150,7 @@ func (r *Repository) Delete(ctx context.Context, userID string) error {
 	return nil
 }
 
-func (r *Repository) List(ctx context.Context, offset, limit int, filters entity.UserFilter) ([]*entity.User, int64, error) {
-	selectFields := `SELECT id, email, role, status, created_at, updated_at FROM users`
+func (r *Repository) List(ctx context.Context, offset, limit int, filters repository.UserListFilter) ([]*entity.User, int64, error) {
 	countFields := `SELECT COUNT(*) FROM users`
 	whereClauses := []string{}
 	args := []interface{}{}
@@ -190,8 +191,7 @@ func (r *Repository) List(ctx context.Context, offset, limit int, filters entity
 		return []*entity.User{}, 0, nil
 	}
 
-	selectQuery := selectFields + whereClause + " ORDER BY created_at DESC"
-	selectQuery += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argIndex, argIndex+1)
+	selectQuery := buildUserListSelectQuery(whereClause, argIndex)
 	args = append(args, limit, offset)
 
 	var users []*entity.User
@@ -200,4 +200,10 @@ func (r *Repository) List(ctx context.Context, offset, limit int, filters entity
 	}
 
 	return users, total, nil
+}
+
+func buildUserListSelectQuery(whereClause string, argIndex int) string {
+	return userListSelectFields + whereClause +
+		" ORDER BY created_at DESC, id DESC" +
+		fmt.Sprintf(" LIMIT $%d OFFSET $%d", argIndex, argIndex+1)
 }

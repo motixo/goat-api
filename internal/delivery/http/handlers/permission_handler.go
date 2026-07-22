@@ -29,13 +29,14 @@ func (h *PermissionHandler) GetPermissions(c *gin.Context) {
 		response.BadRequest(c, "Invalid request payload")
 		return
 	}
+	input.Validate()
 	output, total, err := h.usecase.GetPermissions(c, input.Offset(), input.Limit)
 	if err != nil {
 		response.Internal(c)
 		return
 	}
 	meta := helper.NewPaginationMeta(total, input)
-	response.OK(c, gin.H{"data": output, "meta": meta})
+	response.OK(c, gin.H{"data": newPermissionResponses(output), "meta": meta})
 }
 
 func (h *PermissionHandler) GetPermissionsByRole(c *gin.Context) {
@@ -58,29 +59,44 @@ func (h *PermissionHandler) GetPermissionsByRole(c *gin.Context) {
 		response.Internal(c)
 		return
 	}
-	response.OK(c, output)
+	response.OK(c, newPermissionResponses(output))
 }
 
 func (h *PermissionHandler) CreatePermissin(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
-	var input permission.CreateInput
-	if err := c.ShouldBindJSON(&input); err != nil {
-		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
-		response.BadRequest(c, "Invalid request payload")
-		return
-	}
-	if input.Role == valueobject.RoleUnknown {
+	var request createPermissionRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
 		response.BadRequest(c, "Invalid request payload")
 		return
 	}
 
-	output, err := h.usecase.Create(c, input)
+	role, err := valueobject.ParseUserRole(request.Role)
+	if err != nil {
+		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
+		response.BadRequest(c, "Invalid request payload")
+		return
+	}
+
+	var action valueobject.Permission
+	if request.Action != "" {
+		action, err = valueobject.ParsePermission(request.Action)
+		if err != nil {
+			h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
+			response.BadRequest(c, "Invalid request payload")
+			return
+		}
+	}
+
+	output, err := h.usecase.Create(c, permission.CreateInput{
+		Role:   role,
+		Action: action,
+	})
 	if err != nil {
 		response.Internal(c)
 		return
 	}
-	response.Created(c, output)
+	response.Created(c, newPermissionResponse(output))
 }
 
 func (h *PermissionHandler) DeletePermissin(c *gin.Context) {

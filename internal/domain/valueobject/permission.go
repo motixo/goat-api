@@ -1,7 +1,6 @@
 package valueobject
 
 import (
-	"encoding/json"
 	"fmt"
 )
 
@@ -31,19 +30,12 @@ var knownPermissions = map[Permission]struct{}{
 	PermUserChangeStatus: {},
 }
 
-func (p *Permission) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return fmt.Errorf("permission must be a string")
-	}
-
+func ParsePermission(s string) (Permission, error) {
 	perm := Permission(s)
 	if _, ok := knownPermissions[perm]; !ok {
-		return fmt.Errorf("invalid permission: %q", s)
+		return "", fmt.Errorf("invalid permission: %q", s)
 	}
-
-	*p = perm
-	return nil
+	return perm, nil
 }
 
 func (p Permission) String() string {

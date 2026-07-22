@@ -3,58 +3,63 @@ package user
 import (
 	"time"
 
-	"github.com/motixo/goat-api/internal/domain/entity"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
-type UserResponse struct {
-	ID        string    `json:"id"`
-	Email     string    `json:"email"`
-	Role      string    `json:"Role"`
-	Status    string    `json:"Status"`
-	CreatedAt time.Time `json:"createdAt"`
+type UserOutput struct {
+	ID        string
+	Email     string
+	Role      string
+	Status    string
+	CreatedAt time.Time
 }
 
 type CreateInput struct {
-	Email    string                 `json:"email" validate:"required,email"`
-	Password string                 `json:"password" binding:"required"`
-	Status   valueobject.UserStatus `json:"status" binding:"required"`
-	Role     valueobject.UserRole   `json:"role" binding:"required"`
+	Email    string
+	Password string
+	Status   valueobject.UserStatus
+	Role     valueobject.UserRole
 }
 
 type UpdateInput struct {
 	UserID   string
-	Email    string                 `json:"email" validate:"email"`
-	Password string                 `json:"password"`
-	Status   valueobject.UserStatus `json:"status"`
-	Role     valueobject.UserRole   `json:"role"`
+	Email    string
+	Password string
+	Status   valueobject.UserStatus
+	Role     valueobject.UserRole
 }
 
 type UpdateEmailInput struct {
 	UserID string
-	Email  string `json:"email" binding:"required"`
+	Email  string
 }
 
 type UpdatePassInput struct {
 	UserID      string
-	OldPassword string `json:"current_password" binding:"required"`
-	NewPassword string `json:"new_password" binding:"required"`
+	OldPassword string
+	NewPassword string
 }
 
 type UpdateRoleInput struct {
 	UserID string
-	Role   valueobject.UserRole `json:"role" binding:"required"`
+	Role   valueobject.UserRole
 }
 
 type UpdateStatusInput struct {
 	UserID  string
 	ActorID string
-	Status  valueobject.UserStatus `json:"status" binding:"required"`
+	Status  valueobject.UserStatus
+}
+
+type ListFilter struct {
+	Statuses []valueobject.UserStatus
+	Roles    []valueobject.UserRole
+	Search   string
 }
 
 type GetListInput struct {
 	ActorID string
-	Filter  entity.UserFilter
+	Filter  ListFilter
 	Offset  int
 	Limit   int
 }

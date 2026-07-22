@@ -30,7 +30,7 @@ func NewUsecase(
 	}
 }
 
-func (us *PermissionUseCase) Create(ctx context.Context, input CreateInput) (PermissionResponse, error) {
+func (us *PermissionUseCase) Create(ctx context.Context, input CreateInput) (PermissionOutput, error) {
 	us.logger.Info("create permission attempt", "role", input.Role.String(), "action", input.Action)
 	perm := &entity.Permission{
 		ID:        uuid.New().String(),
@@ -40,7 +40,7 @@ func (us *PermissionUseCase) Create(ctx context.Context, input CreateInput) (Per
 	}
 	if err := us.permissionRepo.Create(ctx, perm); err != nil {
 		us.logger.Error("failed to create permission", "role", input.Role.String(), "action", input.Action, "error", err)
-		return PermissionResponse{}, err
+		return PermissionOutput{}, err
 	}
 
 	us.publisher.Publish(ctx, event.PermissionUpdatedEvent{
@@ -48,7 +48,7 @@ func (us *PermissionUseCase) Create(ctx context.Context, input CreateInput) (Per
 	})
 
 	us.logger.Info("permission created successfully", "role", input.Role.String(), "action", input.Action)
-	return PermissionResponse{
+	return PermissionOutput{
 		ID:        perm.ID,
 		Role:      perm.Role.String(),
 		Action:    perm.Action.String(),
@@ -56,7 +56,7 @@ func (us *PermissionUseCase) Create(ctx context.Context, input CreateInput) (Per
 	}, nil
 }
 
-func (us *PermissionUseCase) GetPermissions(ctx context.Context, offset, limit int) ([]PermissionResponse, int64, error) {
+func (us *PermissionUseCase) GetPermissions(ctx context.Context, offset, limit int) ([]PermissionOutput, int64, error) {
 	us.logger.Info("fetching all permissions")
 	perms, total, err := us.permissionRepo.List(ctx, offset, limit)
 	if err != nil {
@@ -64,9 +64,9 @@ func (us *PermissionUseCase) GetPermissions(ctx context.Context, offset, limit i
 		return nil, 0, err
 	}
 
-	response := make([]PermissionResponse, 0, len(perms))
+	response := make([]PermissionOutput, 0, len(perms))
 	for _, perm := range perms {
-		r := PermissionResponse{
+		r := PermissionOutput{
 			ID:        perm.ID,
 			Role:      perm.Role.String(),
 			Action:    perm.Action.String(),
@@ -78,7 +78,7 @@ func (us *PermissionUseCase) GetPermissions(ctx context.Context, offset, limit i
 	return response, total, nil
 }
 
-func (us *PermissionUseCase) GetPermissionsByRole(ctx context.Context, role valueobject.UserRole) ([]PermissionResponse, error) {
+func (us *PermissionUseCase) GetPermissionsByRole(ctx context.Context, role valueobject.UserRole) ([]PermissionOutput, error) {
 	us.logger.Info("fetching permissions for role", "role_id", role.String())
 	perms, err := us.permissionRepo.GetByRoleID(ctx, role)
 	if err != nil {
@@ -86,9 +86,9 @@ func (us *PermissionUseCase) GetPermissionsByRole(ctx context.Context, role valu
 		return nil, err
 	}
 
-	response := make([]PermissionResponse, 0, len(perms))
+	response := make([]PermissionOutput, 0, len(perms))
 	for _, perm := range perms {
-		r := PermissionResponse{
+		r := PermissionOutput{
 			ID:        perm.ID,
 			Role:      perm.Role.String(),
 			Action:    perm.Action.String(),

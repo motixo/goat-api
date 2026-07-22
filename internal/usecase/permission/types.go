@@ -7,13 +7,13 @@ import (
 )
 
 type CreateInput struct {
-	Role   valueobject.UserRole   `json:"role"`
-	Action valueobject.Permission `json:"action"`
+	Role   valueobject.UserRole
+	Action valueobject.Permission
 }
 
-type PermissionResponse struct {
-	ID        string    `json:"id"`
-	Role      string    `json:"role"`
-	Action    string    `json:"action"`
-	CreatedAt time.Time `json:"created_at"`
+type PermissionOutput struct {
+	ID        string
+	Role      string
+	Action    string
+	CreatedAt time.Time
 }

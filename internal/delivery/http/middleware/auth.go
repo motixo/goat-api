@@ -51,6 +51,11 @@ func (m *AuthMiddleware) Required() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+		if !claims.IsAccess() {
+			response.Unauthorized(c, "access token required")
+			c.Abort()
+			return
+		}
 
 		isValid, err := m.sessionUC.IsJTIValid(c, claims.JTI)
 		if err != nil {
