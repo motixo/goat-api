@@ -61,12 +61,13 @@ func (us *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (UserOut
 	}
 
 	usr := &entity.User{
-		ID:        uuid.New().String(),
-		Email:     input.Email,
-		Password:  hashedPassword,
-		Status:    valueobject.StatusActive,
-		Role:      valueobject.RoleClient,
-		CreatedAt: time.Now().UTC(),
+		ID:                uuid.New().String(),
+		Email:             input.Email,
+		Password:          hashedPassword,
+		Status:            valueobject.StatusActive,
+		Role:              valueobject.RoleClient,
+		CredentialVersion: entity.InitialCredentialVersion,
+		CreatedAt:         time.Now().UTC(),
 	}
 
 	err = us.userRepo.Create(ctx, usr)
@@ -95,7 +96,7 @@ func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput
 	}
 	if userEntity == nil {
 		us.logger.Warn("login failed: user not found", "email", input.Email)
-		return LoginOutput{}, domainErrors.ErrNotFound
+		return LoginOutput{}, domainErrors.ErrInvalidCredentials
 	}
 
 	if userEntity.Status != valueobject.StatusActive {
@@ -117,13 +118,14 @@ func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput
 
 	sessionID := pkg.ULIDGenerator()
 	sessionInput := session.CreateInput{
-		ID:         sessionID,
-		UserID:     userEntity.ID,
-		CurrentJTI: refreshJTI,
-		IP:         input.IP,
-		Device:     input.Device,
-		JTITTL:     us.refreshTTL,
-		SessionTTL: us.sessionTTL,
+		ID:                sessionID,
+		UserID:            userEntity.ID,
+		CurrentJTI:        refreshJTI,
+		CredentialVersion: userEntity.CredentialVersion,
+		IP:                input.IP,
+		Device:            input.Device,
+		JTITTL:            us.refreshTTL,
+		SessionTTL:        us.sessionTTL,
 	}
 
 	if err := us.sessionUC.CreateSession(ctx, sessionInput); err != nil {
@@ -210,6 +212,7 @@ func (us *AuthUseCase) Refresh(ctx context.Context, input RefreshInput) (Refresh
 	}
 
 	rotateInput := session.RotateInput{
+		UserID:     claims.UserID,
 		OldJTI:     claims.JTI,
 		CurrentJTI: refreshJTI,
 		Device:     input.Device,

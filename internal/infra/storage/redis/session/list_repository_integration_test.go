@@ -227,6 +227,8 @@ func TestListByUserIndexLivesAsLongAsActiveSessions(t *testing.T) {
 			ctx,
 			current.CurrentJTI,
 			newJTI,
+			current.UserID,
+			current.CredentialVersion,
 			current.IP,
 			current.Device,
 			time.Now().UTC().Add(5*time.Second),

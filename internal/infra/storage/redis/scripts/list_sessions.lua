@@ -40,6 +40,7 @@ for _, sessionKey in ipairs(indexedSessionKeys) do
         "device",
         "ip",
         "current_jti",
+        "credential_version",
         "created_at",
         "updated_at",
         "expires_at"
@@ -53,9 +54,10 @@ for _, sessionKey in ipairs(indexedSessionKeys) do
         local device = fields[3]
         local ip = fields[4]
         local currentJTI = fields[5]
-        local createdAt = fields[6]
-        local updatedAt = fields[7]
-        local expiresAt = fields[8]
+        local credentialVersion = fields[6]
+        local createdAt = fields[7]
+        local updatedAt = fields[8]
+        local expiresAt = fields[9]
         local hasSessionPrefix = string.sub(sessionKey, 1, string.len(sessionKeyPrefix)) == sessionKeyPrefix
         local complete = owner == expectedUserID
             and hasSessionPrefix
@@ -64,6 +66,8 @@ for _, sessionKey in ipairs(indexedSessionKeys) do
             and sessionKey == sessionKeyPrefix .. id
             and currentJTI
             and currentJTI ~= ""
+            and credentialVersion
+            and string.match(credentialVersion, "^[1-9]%d*$")
             and isUnixTimestamp(createdAt)
             and isUnixTimestamp(updatedAt)
             and isUnixTimestamp(expiresAt)
@@ -75,6 +79,7 @@ for _, sessionKey in ipairs(indexedSessionKeys) do
                 result[#result + 1] = device or ""
                 result[#result + 1] = ip or ""
                 result[#result + 1] = currentJTI
+                result[#result + 1] = credentialVersion
                 result[#result + 1] = createdAt
                 result[#result + 1] = updatedAt
                 result[#result + 1] = expiresAt

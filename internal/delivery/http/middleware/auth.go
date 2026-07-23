@@ -46,9 +46,13 @@ func (m *AuthMiddleware) Required() gin.HandlerFunc {
 			return
 		}
 
-		isValid, err := m.sessionUC.IsJTIValid(c, claims.JTI)
+		isValid, err := m.sessionUC.ValidateSession(c.Request.Context(), session.ValidateInput{
+			UserID:    claims.UserID,
+			SessionID: claims.SessionID,
+			JTI:       claims.JTI,
+		})
 		if err != nil {
-			response.Internal(c)
+			response.WriteProblem(c, response.MapError(err))
 			c.Abort()
 			return
 		}

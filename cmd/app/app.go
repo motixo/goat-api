@@ -68,7 +68,7 @@ func InitializeApp(cfg *config.Config) (*AppContext, error) {
 	metricsService := metrics.NewPrometheusMetrics()
 	rateLimiter := ratelimiter.NewRedisRateLimiter(redisClient)
 
-	sessionUseCase := session.NewUsecase(sessionRepository, appLogger)
+	sessionUseCase := session.NewUsecase(sessionRepository, userRepository, appLogger)
 	authUseCase := auth.NewUsecase(
 		userRepository,
 		sessionUseCase,
@@ -87,6 +87,7 @@ func InitializeApp(cfg *config.Config) (*AppContext, error) {
 		sessionRepository,
 		userCacheService,
 		eventBus,
+		metricsService,
 	)
 	permissionUseCase := permission.NewUsecase(permissionRepository, eventBus, appLogger)
 

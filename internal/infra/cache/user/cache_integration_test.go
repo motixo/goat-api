@@ -2,6 +2,7 @@ package usercache
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -310,6 +311,29 @@ func TestCachedRepositoryFallsBackOnMissAndPropagatesPostgreSQLFailures(t *testi
 			t.Fatalf("status = %d, want unknown for missing user", status)
 		}
 	})
+
+	t.Run("cache miss remains distinct from authoritative PostgreSQL not found", func(t *testing.T) {
+		userID := uuid.NewString()
+		registerUserCacheCleanup(t, client, userID)
+		postgresErr := fmt.Errorf("%w: %w", domainErrors.ErrUserNotFound, sql.ErrNoRows)
+		database := &userRepositoryStub{findByIDErr: postgresErr}
+		repository := NewCachedRepository(database, cache, &recordingUserCacheLogger{})
+
+		role, err := repository.GetUserRole(ctx, userID)
+
+		if !errors.Is(err, domainErrors.ErrUserNotFound) {
+			t.Fatalf("GetUserRole() error = %v, want ErrUserNotFound", err)
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("GetUserRole() error = %v, want preserved sql.ErrNoRows", err)
+		}
+		if role != valueobject.RoleUnknown {
+			t.Fatalf("role = %d, want unknown for authoritative not found", role)
+		}
+		if database.findByIDCalls != 1 {
+			t.Fatalf("PostgreSQL fallback calls = %d, want 1", database.findByIDCalls)
+		}
+	})
 }
 
 func TestCachedRepositoryReportsRedisReadFailureAndUsesPostgreSQL(t *testing.T) {
@@ -534,6 +558,21 @@ func (r *userRepositoryStub) FindByID(context.Context, string) (*entity.User, er
 
 func (r *userRepositoryStub) FindByEmail(context.Context, string) (*entity.User, error) {
 	return r.user, nil
+}
+
+func (r *userRepositoryStub) GetCredentialVersion(context.Context, string) (int64, error) {
+	if r.user == nil {
+		return 0, domainErrors.ErrUserNotFound
+	}
+	return r.user.CredentialVersion, nil
+}
+
+func (r *userRepositoryStub) UpdatePassword(
+	context.Context,
+	string,
+	valueobject.Password,
+) (int64, error) {
+	return 0, nil
 }
 
 func (r *userRepositoryStub) Update(context.Context, *entity.User) error {

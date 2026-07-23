@@ -26,3 +26,11 @@ func TestListByUserRejectsInvalidScopeAndPagination(t *testing.T) {
 		})
 	}
 }
+
+func TestDeleteAllByUserRejectsEmptyUserIDBeforeRedis(t *testing.T) {
+	repository := &Repository{}
+
+	if err := repository.DeleteAllByUser(context.Background(), ""); err == nil {
+		t.Fatal("DeleteAllByUser() accepted an empty user ID")
+	}
+}

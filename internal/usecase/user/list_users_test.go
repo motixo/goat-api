@@ -25,7 +25,7 @@ func TestGetUsersListAppliesAuthorizationScopeBeforeRepositoryPagination(t *test
 		total: 1,
 	}
 	cache := &fixedUserRoleCache{role: valueobject.RoleOperator}
-	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, cache, nil)
+	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, cache, nil, nil)
 
 	output, total, err := usecase.GetUserslist(context.Background(), GetListInput{
 		ActorID: "operator-1",
@@ -73,7 +73,7 @@ func TestGetUsersListAppliesAuthorizationScopeBeforeRepositoryPagination(t *test
 func TestGetUsersListReturnsEmptyBeforeRepositoryWhenActorHasNoVisibleRoles(t *testing.T) {
 	repo := &recordingUserListRepository{}
 	cache := &fixedUserRoleCache{role: valueobject.RoleClient}
-	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, cache, nil)
+	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, cache, nil, nil)
 
 	output, total, err := usecase.GetUserslist(context.Background(), GetListInput{
 		ActorID: "client-1",
@@ -94,7 +94,7 @@ func TestGetUsersListReturnsEmptyBeforeRepositoryWhenActorHasNoVisibleRoles(t *t
 func TestGetUsersListReturnsEmptyBeforeRepositoryWhenRequestedRolesAreOutsideScope(t *testing.T) {
 	repo := &recordingUserListRepository{}
 	cache := &fixedUserRoleCache{role: valueobject.RoleOperator}
-	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, cache, nil)
+	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, cache, nil, nil)
 
 	output, total, err := usecase.GetUserslist(context.Background(), GetListInput{
 		ActorID: "operator-1",
@@ -118,7 +118,7 @@ func TestGetUsersListReturnsEmptyBeforeRepositoryWhenRequestedRolesAreOutsideSco
 func TestGetUsersListAuthorizesBeforeReturningAnUnmatchableFilter(t *testing.T) {
 	repo := &recordingUserListRepository{}
 	cache := &fixedUserRoleCache{role: valueobject.RoleOperator}
-	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, cache, nil)
+	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, cache, nil, nil)
 
 	output, total, err := usecase.GetUserslist(context.Background(), GetListInput{
 		ActorID: "operator-1",

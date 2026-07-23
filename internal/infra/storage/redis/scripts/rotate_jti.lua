@@ -2,18 +2,26 @@ local oldJTIKey = KEYS[1]
 local newJTIKey = KEYS[2]
 
 local newJTI = ARGV[1]
-local ip = ARGV[2]
-local device = ARGV[3]
-local updatedAt = ARGV[4]
-local expiresAt = ARGV[5]
-local jtiTTL = tonumber(ARGV[6])
-local sessionTTL = tonumber(ARGV[7])
+local expectedUserID = ARGV[2]
+local expectedCredentialVersion = ARGV[3]
+local ip = ARGV[4]
+local device = ARGV[5]
+local updatedAt = ARGV[6]
+local expiresAt = ARGV[7]
+local jtiTTL = tonumber(ARGV[8])
+local sessionTTL = tonumber(ARGV[9])
 
 if not jtiTTL or jtiTTL <= 0 then
     return redis.error_reply("JTI TTL must be positive")
 end
 if not sessionTTL or sessionTTL <= 0 then
     return redis.error_reply("Session TTL must be positive")
+end
+if not expectedUserID or expectedUserID == "" then
+    return redis.error_reply("User ID is required")
+end
+if not expectedCredentialVersion or not string.match(expectedCredentialVersion, "^[1-9]%d*$") then
+    return redis.error_reply("Credential version must be a positive integer")
 end
 
 local sessionKey = redis.call("GET", oldJTIKey)
@@ -25,10 +33,24 @@ if redis.call("EXISTS", sessionKey) == 0 then
     return redis.error_reply("session_expired_or_deleted")
 end
 
-local sessionIndexFields = redis.call("HMGET", sessionKey, "user_id", "created_at")
+local sessionIndexFields = redis.call(
+    "HMGET",
+    sessionKey,
+    "user_id",
+    "created_at",
+    "credential_version",
+    "current_jti"
+)
 local userID = sessionIndexFields[1]
 local createdAt = tonumber(sessionIndexFields[2])
-if not userID or userID == "" or not createdAt then
+local credentialVersion = sessionIndexFields[3]
+local currentJTI = sessionIndexFields[4]
+if not userID or userID == ""
+    or userID ~= expectedUserID
+    or not createdAt
+    or not credentialVersion
+    or credentialVersion ~= expectedCredentialVersion
+    or currentJTI ~= string.match(oldJTIKey, "session:jti:(.+)") then
     return redis.error_reply("invalid_session_index_fields")
 end
 

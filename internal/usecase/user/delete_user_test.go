@@ -5,98 +5,45 @@ import (
 	stdErrors "errors"
 	"reflect"
 	"testing"
+	"time"
 
-	"github.com/motixo/goat-api/internal/domain/entity"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/event"
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/domain/service"
 )
 
-func TestDeleteUserSuccess(t *testing.T) {
-	tests := []struct {
-		name          string
-		sessions      []*entity.Session
-		wantDeleted   []string
-		wantCallOrder []string
-	}{
-		{
-			name:          "no active sessions",
-			wantCallOrder: []string{"user.exists", "session.list", "cache.clear", "user.delete"},
-		},
-		{
-			name:          "one active session",
-			sessions:      []*entity.Session{{ID: "session-1", UserID: "user-1"}},
-			wantDeleted:   []string{"session-1"},
-			wantCallOrder: []string{"user.exists", "session.list", "session.delete", "cache.clear", "user.delete"},
-		},
-		{
-			name: "multiple active sessions",
-			sessions: []*entity.Session{
-				{ID: "session-1", UserID: "user-1"},
-				{ID: "session-2", UserID: "user-1"},
-				{ID: "session-3", UserID: "user-1"},
-			},
-			wantDeleted:   []string{"session-1", "session-2", "session-3"},
-			wantCallOrder: []string{"user.exists", "session.list", "session.delete", "cache.clear", "user.delete"},
-		},
-	}
+const expectedUserDeletionSessionCleanupTimeout = 2 * time.Second
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			fixture := newDeletionFixture()
-			fixture.sessionRepo.sessions = tt.sessions
-
-			if err := fixture.usecase.DeleteUser(context.Background(), "user-1"); err != nil {
-				t.Fatalf("DeleteUser() error = %v", err)
-			}
-
-			if !reflect.DeepEqual(fixture.recorder.calls, tt.wantCallOrder) {
-				t.Fatalf("call order = %v, want %v", fixture.recorder.calls, tt.wantCallOrder)
-			}
-			if !reflect.DeepEqual(fixture.sessionRepo.deletedIDs, tt.wantDeleted) {
-				t.Fatalf("deleted session IDs = %v, want %v", fixture.sessionRepo.deletedIDs, tt.wantDeleted)
-			}
-			if fixture.sessionRepo.listUserID != "user-1" {
-				t.Fatalf("session lookup user ID = %q, want %q", fixture.sessionRepo.listUserID, "user-1")
-			}
-			if fixture.sessionRepo.listOffset != 0 || fixture.sessionRepo.listLimit != 0 {
-				t.Fatalf("session lookup bounds = (%d, %d), want (0, 0)", fixture.sessionRepo.listOffset, fixture.sessionRepo.listLimit)
-			}
-			if !reflect.DeepEqual(fixture.cache.clearedUserIDs, []string{"user-1"}) {
-				t.Fatalf("cleared user IDs = %v, want [user-1]", fixture.cache.clearedUserIDs)
-			}
-			if fixture.publisher.publishCalls != 0 {
-				t.Fatalf("publisher calls = %d, want 0", fixture.publisher.publishCalls)
-			}
-		})
-	}
-}
-
-func TestDeleteUserWithActiveSessionDoesNotPanic(t *testing.T) {
+func TestDeleteUserUsesAtomicCleanupBeforeCacheAndDatabase(t *testing.T) {
 	fixture := newDeletionFixture()
-	fixture.sessionRepo.sessions = []*entity.Session{{ID: "session-1", UserID: "user-1"}}
 
-	var (
-		gotErr    error
-		recovered any
-	)
-	func() {
-		defer func() {
-			recovered = recover()
-		}()
-		gotErr = fixture.usecase.DeleteUser(context.Background(), "user-1")
-	}()
-
-	if recovered != nil {
-		t.Fatalf("DeleteUser panicked with an active session: %v", recovered)
+	if err := fixture.usecase.DeleteUser(context.Background(), "user-1"); err != nil {
+		t.Fatalf("DeleteUser() error = %v", err)
 	}
-	if gotErr != nil {
-		t.Fatalf("DeleteUser() error = %v", gotErr)
-	}
-	wantCallOrder := []string{"user.exists", "session.list", "session.delete", "cache.clear", "user.delete"}
+	wantCallOrder := []string{"user.exists", "session.delete_all", "cache.clear", "user.delete"}
 	if !reflect.DeepEqual(fixture.recorder.calls, wantCallOrder) {
 		t.Fatalf("call order = %v, want %v", fixture.recorder.calls, wantCallOrder)
+	}
+	if fixture.sessionRepo.deletedUserID != "user-1" {
+		t.Fatalf("atomic cleanup user ID = %q, want user-1", fixture.sessionRepo.deletedUserID)
+	}
+	if !fixture.sessionRepo.hasDeadline {
+		t.Fatal("atomic cleanup context has no deadline")
+	}
+	cleanupBudget := time.Until(fixture.sessionRepo.deadline)
+	if cleanupBudget <= 0 || cleanupBudget > expectedUserDeletionSessionCleanupTimeout {
+		t.Fatalf(
+			"atomic cleanup deadline budget = %s, want within (0, %s]",
+			cleanupBudget,
+			expectedUserDeletionSessionCleanupTimeout,
+		)
+	}
+	if !reflect.DeepEqual(fixture.cache.clearedUserIDs, []string{"user-1"}) {
+		t.Fatalf("cleared user IDs = %v, want [user-1]", fixture.cache.clearedUserIDs)
+	}
+	if fixture.publisher.publishCalls != 0 {
+		t.Fatalf("publisher calls = %d, want 0", fixture.publisher.publishCalls)
 	}
 }
 
@@ -125,37 +72,36 @@ func TestDeleteUserExistenceLookupFailureStopsBeforeDestructiveChanges(t *testin
 	assertDeletionCalls(t, fixture, "user.exists")
 }
 
-func TestDeleteUserSessionLookupFailureStopsBeforeDestructiveChanges(t *testing.T) {
-	lookupErr := stdErrors.New("redis lookup failed")
+func TestDeleteUserAtomicSessionCleanupFailureStopsBeforeCacheAndDatabase(t *testing.T) {
+	cleanupErr := stdErrors.New("redis cleanup failed")
 	fixture := newDeletionFixture()
-	fixture.sessionRepo.listErr = lookupErr
+	fixture.sessionRepo.deleteAllErr = cleanupErr
 
 	err := fixture.usecase.DeleteUser(context.Background(), "user-1")
 
-	if !stdErrors.Is(err, lookupErr) {
-		t.Fatalf("DeleteUser() error = %v, want wrapped session lookup error", err)
+	if !stdErrors.Is(err, cleanupErr) {
+		t.Fatalf("DeleteUser() error = %v, want wrapped cleanup error", err)
 	}
-	assertDeletionCalls(t, fixture, "user.exists", "session.list")
+	assertDeletionCalls(t, fixture, "user.exists", "session.delete_all")
 }
 
-func TestDeleteUserSessionDeletionFailureIsNotReportedAsSuccess(t *testing.T) {
-	revocationErr := stdErrors.New("redis delete failed")
+func TestDeleteUserAtomicSessionCleanupTimeoutStopsBeforeCacheAndDatabase(t *testing.T) {
 	fixture := newDeletionFixture()
-	fixture.sessionRepo.sessions = []*entity.Session{{ID: "session-1", UserID: "user-1"}}
-	fixture.sessionRepo.deleteErr = revocationErr
+	fixture.sessionRepo.waitForContext = true
 
-	err := fixture.usecase.DeleteUser(context.Background(), "user-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := fixture.usecase.DeleteUser(ctx, "user-1")
 
-	if !stdErrors.Is(err, revocationErr) {
-		t.Fatalf("DeleteUser() error = %v, want wrapped revocation error", err)
+	if !stdErrors.Is(err, context.Canceled) {
+		t.Fatalf("DeleteUser() error = %v, want wrapped context cancellation", err)
 	}
-	assertDeletionCalls(t, fixture, "user.exists", "session.list", "session.delete")
+	assertDeletionCalls(t, fixture, "user.exists", "session.delete_all")
 }
 
 func TestDeleteUserCacheInvalidationFailureStopsDatabaseDeletion(t *testing.T) {
 	cacheErr := stdErrors.New("redis cache delete failed")
 	fixture := newDeletionFixture()
-	fixture.sessionRepo.sessions = []*entity.Session{{ID: "session-1", UserID: "user-1"}}
 	fixture.cache.clearErr = cacheErr
 
 	err := fixture.usecase.DeleteUser(context.Background(), "user-1")
@@ -163,13 +109,12 @@ func TestDeleteUserCacheInvalidationFailureStopsDatabaseDeletion(t *testing.T) {
 	if !stdErrors.Is(err, cacheErr) {
 		t.Fatalf("DeleteUser() error = %v, want wrapped cache error", err)
 	}
-	assertDeletionCalls(t, fixture, "user.exists", "session.list", "session.delete", "cache.clear")
+	assertDeletionCalls(t, fixture, "user.exists", "session.delete_all", "cache.clear")
 }
 
 func TestDeleteUserDatabaseFailureAfterRevocationIsReturned(t *testing.T) {
 	databaseErr := stdErrors.New("postgres delete failed")
 	fixture := newDeletionFixture()
-	fixture.sessionRepo.sessions = []*entity.Session{{ID: "session-1", UserID: "user-1"}}
 	fixture.userRepo.deleteErr = databaseErr
 
 	err := fixture.usecase.DeleteUser(context.Background(), "user-1")
@@ -177,22 +122,10 @@ func TestDeleteUserDatabaseFailureAfterRevocationIsReturned(t *testing.T) {
 	if !stdErrors.Is(err, databaseErr) {
 		t.Fatalf("DeleteUser() error = %v, want database error", err)
 	}
-	assertDeletionCalls(t, fixture, "user.exists", "session.list", "session.delete", "cache.clear", "user.delete")
-	if !reflect.DeepEqual(fixture.sessionRepo.deletedIDs, []string{"session-1"}) {
-		t.Fatalf("deleted session IDs = %v, want [session-1]", fixture.sessionRepo.deletedIDs)
+	assertDeletionCalls(t, fixture, "user.exists", "session.delete_all", "cache.clear", "user.delete")
+	if fixture.sessionRepo.deletedUserID != "user-1" {
+		t.Fatalf("atomic cleanup user ID = %q, want user-1", fixture.sessionRepo.deletedUserID)
 	}
-}
-
-func TestDeleteUserRejectsSessionWithoutServerOwnedID(t *testing.T) {
-	fixture := newDeletionFixture()
-	fixture.sessionRepo.sessions = []*entity.Session{{UserID: "user-1"}}
-
-	err := fixture.usecase.DeleteUser(context.Background(), "user-1")
-
-	if err == nil {
-		t.Fatal("DeleteUser() error = nil, want invalid session error")
-	}
-	assertDeletionCalls(t, fixture, "user.exists", "session.list")
 }
 
 func assertDeletionCalls(t *testing.T, fixture *deletionFixture, want ...string) {
@@ -231,6 +164,7 @@ func newDeletionFixture() *deletionFixture {
 			sessionRepo,
 			cache,
 			publisher,
+			nil,
 		),
 	}
 }
@@ -263,28 +197,23 @@ func (r *deletionUserRepository) Delete(context.Context, string) error {
 
 type deletionSessionRepository struct {
 	repository.SessionRepository
-	recorder   *deletionRecorder
-	sessions   []*entity.Session
-	listErr    error
-	deleteErr  error
-	listUserID string
-	listOffset int
-	listLimit  int
-	deletedIDs []string
+	recorder       *deletionRecorder
+	deleteAllErr   error
+	deletedUserID  string
+	deadline       time.Time
+	hasDeadline    bool
+	waitForContext bool
 }
 
-func (r *deletionSessionRepository) ListByUser(_ context.Context, userID string, offset, limit int) ([]*entity.Session, int64, error) {
-	r.recorder.record("session.list")
-	r.listUserID = userID
-	r.listOffset = offset
-	r.listLimit = limit
-	return r.sessions, int64(len(r.sessions)), r.listErr
-}
-
-func (r *deletionSessionRepository) Delete(_ context.Context, sessionIDs []string) error {
-	r.recorder.record("session.delete")
-	r.deletedIDs = append([]string(nil), sessionIDs...)
-	return r.deleteErr
+func (r *deletionSessionRepository) DeleteAllByUser(ctx context.Context, userID string) error {
+	r.recorder.record("session.delete_all")
+	r.deletedUserID = userID
+	r.deadline, r.hasDeadline = ctx.Deadline()
+	if r.waitForContext {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return r.deleteAllErr
 }
 
 type deletionUserCache struct {

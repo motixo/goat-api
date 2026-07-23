@@ -1,6 +1,7 @@
 package response
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lib/pq"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/usecase/auth"
 	"github.com/motixo/goat-api/internal/usecase/session"
@@ -517,6 +519,190 @@ func TestUnknownErrorsNeverLeakInternalDetailsOrTranslationKeys(t *testing.T) {
 			}
 			if recorder.Code != http.StatusInternalServerError {
 				t.Fatalf("status = %d, want %d", recorder.Code, http.StatusInternalServerError)
+			}
+		})
+	}
+}
+
+func TestEmailConflictPreservesExactLocalizedProblemContracts(t *testing.T) {
+	postgresErr := &pq.Error{
+		Code:       "23505",
+		Constraint: "users_email_key",
+		Message:    "duplicate key value violates unique constraint users_email_key",
+		Detail:     "Key (email)=(private@example.com) already exists.",
+	}
+	err := fmt.Errorf(
+		"create user: %w",
+		fmt.Errorf("%w: %w", domainErrors.ErrEmailAlreadyExists, postgresErr),
+	)
+
+	for _, test := range []struct {
+		name         string
+		header       string
+		wantLanguage string
+		wantTitle    string
+		wantDetail   string
+	}{
+		{
+			name:         "English",
+			header:       "en-US",
+			wantLanguage: "en",
+			wantTitle:    "Conflict",
+			wantDetail:   "This email is already registered.",
+		},
+		{
+			name:         "Persian",
+			header:       "fa-IR",
+			wantLanguage: "fa",
+			wantTitle:    "امکان انجام درخواست وجود ندارد",
+			wantDetail:   "قبلاً حسابی با این ایمیل ثبت شده است.",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := renderMappedError(t, err, test.header)
+			assertProblemHTTPContract(t, recorder, test.wantLanguage, "Accept-Language", Problem{
+				Type:     "/errors/email-already-exists",
+				Title:    test.wantTitle,
+				Status:   http.StatusConflict,
+				Detail:   test.wantDetail,
+				Instance: "/resource",
+			})
+			if strings.Contains(recorder.Body.String(), "private@example.com") ||
+				strings.Contains(recorder.Body.String(), "users_email_key") {
+				t.Fatalf("localized conflict leaked PostgreSQL details: %s", recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestUnclassifiedPostgresErrorsRemainSafeLocalizedInternalProblems(t *testing.T) {
+	err := &pq.Error{
+		Code:       "23505",
+		Constraint: "users_pkey",
+		Message:    "duplicate key value exposes database detail",
+		Detail:     "Key (id)=(private-user-id) already exists.",
+	}
+
+	for _, test := range []struct {
+		name         string
+		header       string
+		wantLanguage string
+		wantTitle    string
+		wantDetail   string
+	}{
+		{
+			name:         "English",
+			header:       "en",
+			wantLanguage: "en",
+			wantTitle:    "Internal Server Error",
+			wantDetail:   "An unexpected error occurred.",
+		},
+		{
+			name:         "Persian",
+			header:       "fa",
+			wantLanguage: "fa",
+			wantTitle:    "خطای سرور",
+			wantDetail:   "مشکلی پیش آمد. لطفاً دوباره تلاش کنید.",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := renderMappedError(t, err, test.header)
+			assertProblemHTTPContract(t, recorder, test.wantLanguage, "Accept-Language", Problem{
+				Type:     "/errors/internal",
+				Title:    test.wantTitle,
+				Status:   http.StatusInternalServerError,
+				Detail:   test.wantDetail,
+				Instance: "/resource",
+			})
+			if strings.Contains(recorder.Body.String(), "private-user-id") ||
+				strings.Contains(recorder.Body.String(), "users_pkey") {
+				t.Fatalf("internal problem leaked PostgreSQL details: %s", recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestUserIDLookupNotFoundPreservesExactLocalizedProblemContracts(t *testing.T) {
+	err := fmt.Errorf(
+		"get user: %w",
+		fmt.Errorf("%w: %w", domainErrors.ErrUserNotFound, sql.ErrNoRows),
+	)
+
+	for _, test := range []struct {
+		name         string
+		header       string
+		wantLanguage string
+		wantTitle    string
+		wantDetail   string
+	}{
+		{
+			name:         "English",
+			header:       "en-US",
+			wantLanguage: "en",
+			wantTitle:    "Not Found",
+			wantDetail:   "The requested resource was not found.",
+		},
+		{
+			name:         "Persian",
+			header:       "fa-IR",
+			wantLanguage: "fa",
+			wantTitle:    "پیدا نشد",
+			wantDetail:   "اطلاعات موردنظر پیدا نشد.",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := renderMappedError(t, err, test.header)
+			assertProblemHTTPContract(t, recorder, test.wantLanguage, "Accept-Language", Problem{
+				Type:     "/errors/not-found",
+				Title:    test.wantTitle,
+				Status:   http.StatusNotFound,
+				Detail:   test.wantDetail,
+				Instance: "/resource",
+			})
+			if strings.Contains(recorder.Body.String(), sql.ErrNoRows.Error()) {
+				t.Fatalf("localized not-found problem leaked SQL details: %s", recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestUnknownUserIDLookupFailureRemainsSafeLocalizedInternalProblem(t *testing.T) {
+	err := fmt.Errorf("find user by ID: %w", errors.New("postgres host=db.internal password=secret"))
+
+	for _, test := range []struct {
+		name         string
+		header       string
+		wantLanguage string
+		wantTitle    string
+		wantDetail   string
+	}{
+		{
+			name:         "English",
+			header:       "en",
+			wantLanguage: "en",
+			wantTitle:    "Internal Server Error",
+			wantDetail:   "An unexpected error occurred.",
+		},
+		{
+			name:         "Persian",
+			header:       "fa",
+			wantLanguage: "fa",
+			wantTitle:    "خطای سرور",
+			wantDetail:   "مشکلی پیش آمد. لطفاً دوباره تلاش کنید.",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := renderMappedError(t, err, test.header)
+			assertProblemHTTPContract(t, recorder, test.wantLanguage, "Accept-Language", Problem{
+				Type:     "/errors/internal",
+				Title:    test.wantTitle,
+				Status:   http.StatusInternalServerError,
+				Detail:   test.wantDetail,
+				Instance: "/resource",
+			})
+			if strings.Contains(recorder.Body.String(), "db.internal") ||
+				strings.Contains(recorder.Body.String(), "password=secret") {
+				t.Fatalf("localized internal problem leaked PostgreSQL details: %s", recorder.Body.String())
 			}
 		})
 	}

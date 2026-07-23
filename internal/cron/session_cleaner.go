@@ -32,7 +32,7 @@ func (c *SessionCleaner) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := c.sessionRepo.CleanOrphanSessions(ctx); err != nil {
+				if err := c.sessionRepo.DeleteOrphanSessions(ctx); err != nil {
 					c.logger.Error("Failed to clean orphan sessions", "error", err)
 				}
 			}

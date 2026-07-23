@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -30,6 +31,9 @@ func (r *Repository) Create(ctx context.Context, s *entity.Session) error {
 	if s.SessionTTLSeconds <= 0 || s.JTITTLSeconds <= 0 {
 		return fmt.Errorf("TTL values must be positive")
 	}
+	if s.CredentialVersion <= 0 {
+		return fmt.Errorf("credential version must be positive")
+	}
 	sessionkey := pkg.RedisKey("session", "id", s.ID)
 	jtiKey := pkg.RedisKey("session", "jti", s.CurrentJTI)
 	userkey := pkg.RedisKey("session", "user", s.UserID)
@@ -43,6 +47,7 @@ func (r *Repository) Create(ctx context.Context, s *entity.Session) error {
 		"updated_at", s.UpdatedAt.Unix(),
 		"expires_at", s.ExpiresAt.Unix(),
 		"current_jti", s.CurrentJTI,
+		"credential_version", s.CredentialVersion,
 		s.SessionTTLSeconds,
 		s.JTITTLSeconds,
 	}
@@ -50,6 +55,45 @@ func (r *Repository) Create(ctx context.Context, s *entity.Session) error {
 	script := redisClinet.GetScript("create_session")
 	_, err := script.Run(ctx, r.client, []string{sessionkey, jtiKey, userkey}, argv...).Result()
 	return err
+}
+
+func (r *Repository) FindByJTI(ctx context.Context, jti string) (*entity.Session, error) {
+	if jti == "" {
+		return nil, nil
+	}
+
+	jtiKey := pkg.RedisKey("session", "jti", jti)
+	script := redisClinet.GetScript("get_session_by_jti")
+	result, err := script.Run(ctx, r.client, []string{jtiKey}, jti).Slice()
+	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(result) != 4 {
+		return nil, fmt.Errorf("unexpected Redis session field count: %d", len(result))
+	}
+
+	fields := make([]string, len(result))
+	for index := range result {
+		value, ok := result[index].(string)
+		if !ok {
+			return nil, fmt.Errorf("unexpected Redis session field type at index %d: %T", index, result[index])
+		}
+		fields[index] = value
+	}
+	credentialVersion, err := strconv.ParseInt(fields[3], 10, 64)
+	if err != nil || credentialVersion <= 0 {
+		return nil, fmt.Errorf("parse session credential version")
+	}
+
+	return &entity.Session{
+		ID:                fields[0],
+		UserID:            fields[1],
+		CurrentJTI:        fields[2],
+		CredentialVersion: credentialVersion,
+	}, nil
 }
 
 func (r *Repository) ListByUser(ctx context.Context, userID string, offset, limit int) ([]*entity.Session, int64, error) {
@@ -69,7 +113,7 @@ func (r *Repository) ListByUser(ctx context.Context, userID string, offset, limi
 	return decodeSessionList(result)
 }
 
-const sessionListFieldCount = 8
+const sessionListFieldCount = 9
 
 func decodeSessionList(result []any) ([]*entity.Session, int64, error) {
 	if len(result) == 0 {
@@ -94,28 +138,33 @@ func decodeSessionList(result []any) ([]*entity.Session, int64, error) {
 			fields[fieldIndex] = value
 		}
 
-		createdAt, err := strconv.ParseInt(fields[5], 10, 64)
+		credentialVersion, err := strconv.ParseInt(fields[5], 10, 64)
+		if err != nil || credentialVersion <= 0 {
+			return nil, 0, fmt.Errorf("parse session credential_version")
+		}
+		createdAt, err := strconv.ParseInt(fields[6], 10, 64)
 		if err != nil {
 			return nil, 0, fmt.Errorf("parse session created_at: %w", err)
 		}
-		updatedAt, err := strconv.ParseInt(fields[6], 10, 64)
+		updatedAt, err := strconv.ParseInt(fields[7], 10, 64)
 		if err != nil {
 			return nil, 0, fmt.Errorf("parse session updated_at: %w", err)
 		}
-		expiresAt, err := strconv.ParseInt(fields[7], 10, 64)
+		expiresAt, err := strconv.ParseInt(fields[8], 10, 64)
 		if err != nil {
 			return nil, 0, fmt.Errorf("parse session expires_at: %w", err)
 		}
 
 		s := &entity.Session{
-			ID:         fields[0],
-			UserID:     fields[1],
-			Device:     fields[2],
-			IP:         fields[3],
-			CurrentJTI: fields[4],
-			CreatedAt:  time.Unix(createdAt, 0).UTC(),
-			UpdatedAt:  time.Unix(updatedAt, 0).UTC(),
-			ExpiresAt:  time.Unix(expiresAt, 0).UTC(),
+			ID:                fields[0],
+			UserID:            fields[1],
+			Device:            fields[2],
+			IP:                fields[3],
+			CurrentJTI:        fields[4],
+			CredentialVersion: credentialVersion,
+			CreatedAt:         time.Unix(createdAt, 0).UTC(),
+			UpdatedAt:         time.Unix(updatedAt, 0).UTC(),
+			ExpiresAt:         time.Unix(expiresAt, 0).UTC(),
 		}
 		sessions = append(sessions, s)
 	}
@@ -123,15 +172,11 @@ func decodeSessionList(result []any) ([]*entity.Session, int64, error) {
 	return sessions, total, nil
 }
 
-func (r *Repository) ExistsJTI(ctx context.Context, jti string) (bool, error) {
-	jtiKey := pkg.RedisKey("session", "jti", jti)
-	val, err := r.client.Exists(ctx, jtiKey).Result()
-	return val == 1, err
-}
-
 func (r *Repository) RotateJTI(
 	ctx context.Context,
-	oldJTI, newJTI, ip, device string,
+	oldJTI, newJTI, expectedUserID string,
+	expectedCredentialVersion int64,
+	ip, device string,
 	expiresAt time.Time,
 	jtiTTL, sessionTTL int64,
 ) (string, error) {
@@ -143,6 +188,8 @@ func (r *Repository) RotateJTI(
 
 	argv := []interface{}{
 		newJTI,
+		expectedUserID,
+		expectedCredentialVersion,
 		ip,
 		device,
 		updatedAt,
@@ -199,19 +246,42 @@ func (r *Repository) DeleteByUser(ctx context.Context, userID string, sessionIDs
 	return deleted == 1, nil
 }
 
+func (r *Repository) DeleteAllByUser(ctx context.Context, userID string) error {
+	if userID == "" {
+		return fmt.Errorf("user ID is required")
+	}
+
+	userKey := pkg.RedisKey("session", "user", userID)
+	script := redisClinet.GetScript("delete_other_sessions")
+	_, err := script.Run(
+		ctx,
+		r.client,
+		[]string{userKey},
+		userID,
+		"all",
+	).Result()
+	return err
+}
+
 func (r *Repository) DeleteOthersByUser(ctx context.Context, userID, currentSessionID string) (bool, error) {
 	userKey := pkg.RedisKey("session", "user", userID)
 	currentSessionKey := pkg.RedisKey("session", "id", currentSessionID)
 
 	script := redisClinet.GetScript("delete_other_sessions")
-	deleted, err := script.Run(ctx, r.client, []string{userKey, currentSessionKey}, userID).Int64()
+	deleted, err := script.Run(
+		ctx,
+		r.client,
+		[]string{userKey, currentSessionKey},
+		userID,
+		"others",
+	).Int64()
 	if err != nil {
 		return false, err
 	}
 	return deleted >= 0, nil
 }
 
-func (r *Repository) CleanOrphanSessions(ctx context.Context) error {
+func (r *Repository) DeleteOrphanSessions(ctx context.Context) error {
 	script := redisClinet.GetScript("clean_orphans")
 
 	iter := r.client.Scan(ctx, 0, "session:user:*", 0).Iterator()

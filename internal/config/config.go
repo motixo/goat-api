@@ -88,9 +88,10 @@ func (c *Config) DSN() string {
 // RedisOptions returns redis.Options
 func (c *Config) RedisOptions() *redis.Options {
 	return &redis.Options{
-		Addr:     c.RedisHost + ":" + c.RedisPort,
-		Password: c.RedisPassword,
-		DB:       c.RedisDB,
+		Addr:                  c.RedisHost + ":" + c.RedisPort,
+		Password:              c.RedisPassword,
+		DB:                    c.RedisDB,
+		ContextTimeoutEnabled: true,
 	}
 }
 

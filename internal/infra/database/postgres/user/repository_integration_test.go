@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"github.com/motixo/goat-api/internal/domain/entity"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
@@ -21,13 +22,14 @@ func TestRepositoryIntegrationCRUD(t *testing.T) {
 	createdAt := time.Date(2026, time.July, 23, 8, 30, 0, 0, time.UTC)
 	initialUpdatedAt := time.Date(2026, time.July, 23, 8, 45, 0, 0, time.UTC)
 	original := &entity.User{
-		ID:        "11111111-1111-4111-8111-111111111111",
-		Email:     "original@example.com",
-		Password:  valueobject.PasswordFromHash("$argon2id$original-hash"),
-		Status:    valueobject.StatusActive,
-		Role:      valueobject.RoleClient,
-		CreatedAt: createdAt,
-		UpdatedAt: &initialUpdatedAt,
+		ID:                "11111111-1111-4111-8111-111111111111",
+		Email:             "original@example.com",
+		Password:          valueobject.PasswordFromHash("$argon2id$original-hash"),
+		Status:            valueobject.StatusActive,
+		Role:              valueobject.RoleClient,
+		CredentialVersion: entity.InitialCredentialVersion,
+		CreatedAt:         createdAt,
+		UpdatedAt:         &initialUpdatedAt,
 	}
 
 	if err := repo.Create(ctx, original); err != nil {
@@ -63,8 +65,11 @@ func TestRepositoryIntegrationCRUD(t *testing.T) {
 	}
 
 	_, err = repo.FindByID(ctx, "99999999-9999-4999-8999-999999999999")
+	if !errors.Is(err, domainErrors.ErrUserNotFound) {
+		t.Fatalf("FindByID(missing) error = %v, want ErrUserNotFound", err)
+	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("FindByID(missing) error = %v, want sql.ErrNoRows", err)
+		t.Fatalf("FindByID(missing) error = %v, want preserved sql.ErrNoRows", err)
 	}
 
 	updateStartedAt := time.Now().UTC()
@@ -86,6 +91,13 @@ func TestRepositoryIntegrationCRUD(t *testing.T) {
 	if updated.Email != update.Email || updated.Password.Encoded() != update.Password.Encoded() ||
 		updated.Status != update.Status || updated.Role != update.Role {
 		t.Fatalf("updated user = %#v, want values from %#v", updated, update)
+	}
+	if updated.CredentialVersion != original.CredentialVersion+1 {
+		t.Fatalf(
+			"credential version after password update = %d, want %d",
+			updated.CredentialVersion,
+			original.CredentialVersion+1,
+		)
 	}
 	if !updated.CreatedAt.Equal(original.CreatedAt) {
 		t.Fatalf("updated created_at = %v, want %v", updated.CreatedAt, original.CreatedAt)
@@ -116,6 +128,166 @@ func TestRepositoryIntegrationCRUD(t *testing.T) {
 	}
 	if err := repo.Delete(ctx, original.ID); !errors.Is(err, domainErrors.ErrUserNotFound) {
 		t.Fatalf("Delete(missing) error = %v, want ErrUserNotFound", err)
+	}
+}
+
+func TestRepositoryIntegrationTranslatesEmailUniqueViolations(t *testing.T) {
+	repo := newPostgresUserIntegrationRepository(t)
+	ctx := context.Background()
+	createdAt := time.Date(2026, time.July, 23, 13, 0, 0, 0, time.UTC)
+	first := integrationUser(
+		"10000000-0000-4000-8000-000000000001",
+		"first@example.com",
+		valueobject.RoleClient,
+		valueobject.StatusActive,
+		createdAt,
+	)
+	second := integrationUser(
+		"10000000-0000-4000-8000-000000000002",
+		"second@example.com",
+		valueobject.RoleClient,
+		valueobject.StatusActive,
+		createdAt,
+	)
+
+	if err := repo.Create(ctx, first); err != nil {
+		t.Fatalf("Create(first) error = %v", err)
+	}
+
+	duplicateEmail := integrationUser(
+		"10000000-0000-4000-8000-000000000003",
+		first.Email,
+		valueobject.RoleClient,
+		valueobject.StatusActive,
+		createdAt,
+	)
+	assertEmailConflictError(t, repo.Create(ctx, duplicateEmail))
+
+	duplicateID := integrationUser(
+		first.ID,
+		"different@example.com",
+		valueobject.RoleClient,
+		valueobject.StatusActive,
+		createdAt,
+	)
+	primaryKeyErr := repo.Create(ctx, duplicateID)
+	if primaryKeyErr == nil {
+		t.Fatal("Create(duplicate ID) error = nil, want users_pkey violation")
+	}
+	if errors.Is(primaryKeyErr, domainErrors.ErrEmailAlreadyExists) {
+		t.Fatalf("Create(duplicate ID) error = %v, must not be classified as email conflict", primaryKeyErr)
+	}
+	assertPostgresConstraint(t, primaryKeyErr, "23505", "users_pkey")
+
+	if err := repo.Create(ctx, second); err != nil {
+		t.Fatalf("Create(second) error = %v", err)
+	}
+	assertEmailConflictError(t, repo.Update(ctx, &entity.User{
+		ID:    second.ID,
+		Email: first.Email,
+	}))
+
+	storedSecond, err := repo.FindByID(ctx, second.ID)
+	if err != nil {
+		t.Fatalf("FindByID(second after conflict) error = %v", err)
+	}
+	if storedSecond.Email != second.Email {
+		t.Fatalf("email after failed update = %q, want unchanged %q", storedSecond.Email, second.Email)
+	}
+
+	const uniqueEmail = "second-updated@example.com"
+	if err := repo.Update(ctx, &entity.User{ID: second.ID, Email: uniqueEmail}); err != nil {
+		t.Fatalf("Update(unique email) error = %v", err)
+	}
+	storedSecond, err = repo.FindByID(ctx, second.ID)
+	if err != nil {
+		t.Fatalf("FindByID(second after successful update) error = %v", err)
+	}
+	if storedSecond.Email != uniqueEmail {
+		t.Fatalf("email after successful update = %q, want %q", storedSecond.Email, uniqueEmail)
+	}
+}
+
+func TestRepositoryIntegrationUpdatesPasswordAndCredentialVersionAtomically(t *testing.T) {
+	repo := newPostgresUserIntegrationRepository(t)
+	ctx := context.Background()
+	user := integrationUser(
+		"30000000-0000-4000-8000-000000000001",
+		"credentials@example.com",
+		valueobject.RoleClient,
+		valueobject.StatusActive,
+		time.Now().UTC(),
+	)
+	if err := repo.Create(ctx, user); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	initialVersion, err := repo.GetCredentialVersion(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("GetCredentialVersion(initial) error = %v", err)
+	}
+	if initialVersion != entity.InitialCredentialVersion {
+		t.Fatalf("initial credential version = %d, want %d", initialVersion, entity.InitialCredentialVersion)
+	}
+
+	updatedHash := valueobject.PasswordFromHash("$argon2id$updated-credential-hash")
+	updatedVersion, err := repo.UpdatePassword(ctx, user.ID, updatedHash)
+	if err != nil {
+		t.Fatalf("UpdatePassword() error = %v", err)
+	}
+	if updatedVersion != initialVersion+1 {
+		t.Fatalf("updated credential version = %d, want %d", updatedVersion, initialVersion+1)
+	}
+
+	updated, err := repo.FindByID(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("FindByID(after update) error = %v", err)
+	}
+	if updated.Password.Encoded() != updatedHash.Encoded() {
+		t.Fatalf("updated password hash = %q, want %q", updated.Password.Encoded(), updatedHash.Encoded())
+	}
+	if updated.CredentialVersion != updatedVersion {
+		t.Fatalf("stored credential version = %d, want %d", updated.CredentialVersion, updatedVersion)
+	}
+
+	_, err = repo.UpdatePassword(
+		ctx,
+		user.ID,
+		valueobject.PasswordFromHash("$reject-password-update$"),
+	)
+	if err == nil {
+		t.Fatal("UpdatePassword(rejected hash) error = nil, want PostgreSQL constraint failure")
+	}
+	if errors.Is(err, domainErrors.ErrEmailAlreadyExists) {
+		t.Fatalf("password constraint failure was misclassified as email conflict: %v", err)
+	}
+
+	afterRollback, err := repo.FindByID(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("FindByID(after rollback) error = %v", err)
+	}
+	if afterRollback.Password.Encoded() != updatedHash.Encoded() {
+		t.Fatalf(
+			"password after failed statement = %q, want unchanged %q",
+			afterRollback.Password.Encoded(),
+			updatedHash.Encoded(),
+		)
+	}
+	if afterRollback.CredentialVersion != updatedVersion {
+		t.Fatalf(
+			"credential version after failed statement = %d, want unchanged %d",
+			afterRollback.CredentialVersion,
+			updatedVersion,
+		)
+	}
+
+	_, err = repo.UpdatePassword(
+		ctx,
+		"39999999-9999-4999-8999-999999999999",
+		updatedHash,
+	)
+	if !errors.Is(err, domainErrors.ErrUserNotFound) || !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("UpdatePassword(missing) error = %v, want ErrUserNotFound and sql.ErrNoRows", err)
 	}
 }
 
@@ -215,8 +387,10 @@ func newPostgresUserIntegrationRepository(t *testing.T) repository.UserRepositor
 			password TEXT NOT NULL,
 			status SMALLINT NOT NULL,
 			role SMALLINT NOT NULL,
+			credential_version BIGINT NOT NULL DEFAULT 1 CHECK (credential_version > 0),
 			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-			updated_at TIMESTAMP NULL
+			updated_at TIMESTAMP NULL,
+			CONSTRAINT reject_password_update CHECK (password <> '$reject-password-update$')
 		) ON COMMIT PRESERVE ROWS
 	`
 	if _, err := db.Exec(schema); err != nil {
@@ -228,12 +402,13 @@ func newPostgresUserIntegrationRepository(t *testing.T) repository.UserRepositor
 
 func integrationUser(id, email string, role valueobject.UserRole, status valueobject.UserStatus, createdAt time.Time) *entity.User {
 	return &entity.User{
-		ID:        id,
-		Email:     email,
-		Password:  valueobject.PasswordFromHash("$argon2id$integration-hash"),
-		Role:      role,
-		Status:    status,
-		CreatedAt: createdAt,
+		ID:                id,
+		Email:             email,
+		Password:          valueobject.PasswordFromHash("$argon2id$integration-hash"),
+		Role:              role,
+		Status:            status,
+		CredentialVersion: entity.InitialCredentialVersion,
+		CreatedAt:         createdAt,
 	}
 }
 
@@ -243,7 +418,9 @@ func assertPersistedUserEqual(t *testing.T, got, want *entity.User) {
 		t.Fatal("persisted user is nil")
 	}
 	if got.ID != want.ID || got.Email != want.Email || got.Password.Encoded() != want.Password.Encoded() ||
-		got.Status != want.Status || got.Role != want.Role || !got.CreatedAt.Equal(want.CreatedAt) {
+		got.Status != want.Status || got.Role != want.Role ||
+		got.CredentialVersion != want.CredentialVersion ||
+		!got.CreatedAt.Equal(want.CreatedAt) {
 		t.Fatalf("persisted user = %#v, want %#v", got, want)
 	}
 	if (got.UpdatedAt == nil) != (want.UpdatedAt == nil) {
@@ -263,5 +440,27 @@ func assertUserIDs(t *testing.T, users []*entity.User, want []string) {
 		if users[index].ID != want[index] {
 			t.Fatalf("users[%d].ID = %q, want %q", index, users[index].ID, want[index])
 		}
+	}
+}
+
+func assertEmailConflictError(t *testing.T, err error) {
+	t.Helper()
+	if !errors.Is(err, domainErrors.ErrEmailAlreadyExists) {
+		t.Fatalf("error = %v, want ErrEmailAlreadyExists", err)
+	}
+	assertPostgresConstraint(t, err, "23505", "users_email_key")
+}
+
+func assertPostgresConstraint(t *testing.T, err error, wantCode, wantConstraint string) {
+	t.Helper()
+	var postgresErr *pq.Error
+	if !errors.As(err, &postgresErr) {
+		t.Fatalf("error = %v, want preserved *pq.Error", err)
+	}
+	if got := string(postgresErr.Code); got != wantCode {
+		t.Fatalf("PostgreSQL SQLSTATE = %q, want %q", got, wantCode)
+	}
+	if postgresErr.Constraint != wantConstraint {
+		t.Fatalf("PostgreSQL constraint = %q, want %q", postgresErr.Constraint, wantConstraint)
 	}
 }

@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +12,113 @@ import (
 	"github.com/motixo/goat-api/internal/pkg"
 	"github.com/redis/go-redis/v9"
 )
+
+func TestCredentialVersionRoundTripAndRotation(t *testing.T) {
+	address := os.Getenv("GOAT_REDIS_ADDR")
+	if address == "" {
+		t.Skip("set GOAT_REDIS_ADDR to run Redis integration tests")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client := redis.NewClient(&redis.Options{Addr: address})
+	t.Cleanup(func() { _ = client.Close() })
+	if err := client.Ping(ctx).Err(); err != nil {
+		t.Fatalf("ping Redis: %v", err)
+	}
+
+	repository := &Repository{client: client}
+	current := newIntegrationSession("integration-user-"+pkg.ULIDGenerator(), time.Hour)
+	current.CredentialVersion = 7
+	registerRedisSessionCleanup(t, client, current)
+	if err := repository.Create(ctx, current); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	sessionKey := pkg.RedisKey("session", "id", current.ID)
+	storedVersion, err := client.HGet(ctx, sessionKey, "credential_version").Result()
+	if err != nil {
+		t.Fatalf("read stored credential version: %v", err)
+	}
+	if storedVersion != strconv.FormatInt(current.CredentialVersion, 10) {
+		t.Fatalf("stored credential version = %q, want %d", storedVersion, current.CredentialVersion)
+	}
+
+	found, err := repository.FindByJTI(ctx, current.CurrentJTI)
+	if err != nil {
+		t.Fatalf("FindByJTI() error = %v", err)
+	}
+	if found == nil ||
+		found.ID != current.ID ||
+		found.UserID != current.UserID ||
+		found.CurrentJTI != current.CurrentJTI ||
+		found.CredentialVersion != current.CredentialVersion {
+		t.Fatalf("FindByJTI() = %#v, want identity and credential version from %#v", found, current)
+	}
+
+	rejectedJTI := pkg.ULIDGenerator()
+	t.Cleanup(func() {
+		_ = client.Del(context.Background(), pkg.RedisKey("session", "jti", rejectedJTI)).Err()
+	})
+	_, err = repository.RotateJTI(
+		ctx,
+		current.CurrentJTI,
+		rejectedJTI,
+		current.UserID,
+		current.CredentialVersion+1,
+		current.IP,
+		current.Device,
+		time.Now().UTC().Add(time.Hour),
+		int64(time.Hour.Seconds()),
+		int64(time.Hour.Seconds()),
+	)
+	if err == nil {
+		t.Fatal("RotateJTI(wrong credential version) error = nil")
+	}
+	assertRedisSessionPresent(t, ctx, client, current)
+	if exists, err := client.Exists(ctx, pkg.RedisKey("session", "jti", rejectedJTI)).Result(); err != nil {
+		t.Fatalf("check rejected JTI: %v", err)
+	} else if exists != 0 {
+		t.Fatal("rejected rotation created the new JTI")
+	}
+
+	newJTI := pkg.ULIDGenerator()
+	t.Cleanup(func() {
+		_ = client.Del(context.Background(), pkg.RedisKey("session", "jti", newJTI)).Err()
+	})
+	rotatedID, err := repository.RotateJTI(
+		ctx,
+		current.CurrentJTI,
+		newJTI,
+		current.UserID,
+		current.CredentialVersion,
+		current.IP,
+		current.Device,
+		time.Now().UTC().Add(time.Hour),
+		int64(time.Hour.Seconds()),
+		int64(time.Hour.Seconds()),
+	)
+	if err != nil {
+		t.Fatalf("RotateJTI() error = %v", err)
+	}
+	if rotatedID != current.ID {
+		t.Fatalf("rotated session ID = %q, want %q", rotatedID, current.ID)
+	}
+	rotated, err := repository.FindByJTI(ctx, newJTI)
+	if err != nil {
+		t.Fatalf("FindByJTI(rotated) error = %v", err)
+	}
+	if rotated == nil || rotated.CredentialVersion != current.CredentialVersion {
+		t.Fatalf("rotated session = %#v, want credential version %d", rotated, current.CredentialVersion)
+	}
+	old, err := repository.FindByJTI(ctx, current.CurrentJTI)
+	if err != nil {
+		t.Fatalf("FindByJTI(old) error = %v", err)
+	}
+	if old != nil {
+		t.Fatalf("old JTI still resolves to %#v", old)
+	}
+}
 
 func TestListByUserFiltersBeforePagination(t *testing.T) {
 	address := os.Getenv("GOAT_REDIS_ADDR")
@@ -78,6 +186,7 @@ func TestDeleteByUserIsAtomicInRedis(t *testing.T) {
 	owned := &entity.Session{
 		ID:                pkg.ULIDGenerator(),
 		UserID:            "integration-user-" + pkg.ULIDGenerator(),
+		CredentialVersion: entity.InitialCredentialVersion,
 		CurrentJTI:        pkg.ULIDGenerator(),
 		CreatedAt:         now,
 		UpdatedAt:         now,
@@ -88,6 +197,7 @@ func TestDeleteByUserIsAtomicInRedis(t *testing.T) {
 	foreign := &entity.Session{
 		ID:                pkg.ULIDGenerator(),
 		UserID:            "integration-user-" + pkg.ULIDGenerator(),
+		CredentialVersion: entity.InitialCredentialVersion,
 		CurrentJTI:        pkg.ULIDGenerator(),
 		CreatedAt:         now,
 		UpdatedAt:         now,
@@ -347,6 +457,7 @@ func newIntegrationSession(userID string, ttl time.Duration) *entity.Session {
 	return &entity.Session{
 		ID:                pkg.ULIDGenerator(),
 		UserID:            userID,
+		CredentialVersion: entity.InitialCredentialVersion,
 		CurrentJTI:        pkg.ULIDGenerator(),
 		CreatedAt:         now,
 		UpdatedAt:         now,

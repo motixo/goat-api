@@ -64,10 +64,11 @@ func TestLogoutClassifiesMissingCurrentSessionSemantically(t *testing.T) {
 func TestLoginAccessTokenFailureScopesCleanupToCreatedSessionOwner(t *testing.T) {
 	accessErr := stdErrors.New("access token generation failed")
 	userEntity := &entity.User{
-		ID:       "user-1",
-		Email:    "user@example.com",
-		Password: valueobject.PasswordFromHash("$hash"),
-		Status:   valueobject.StatusActive,
+		ID:                "user-1",
+		Email:             "user@example.com",
+		Password:          valueobject.PasswordFromHash("$hash"),
+		Status:            valueobject.StatusActive,
+		CredentialVersion: 9,
 	}
 	users := &authUserRepository{user: userEntity}
 	sessions := &recordingAuthSessionUseCase{}
@@ -95,6 +96,13 @@ func TestLoginAccessTokenFailureScopesCleanupToCreatedSessionOwner(t *testing.T)
 	}
 	if sessions.createInput.ID == "" {
 		t.Fatal("created session ID is empty")
+	}
+	if sessions.createInput.CredentialVersion != userEntity.CredentialVersion {
+		t.Fatalf(
+			"created session credential version = %d, want %d",
+			sessions.createInput.CredentialVersion,
+			userEntity.CredentialVersion,
+		)
 	}
 	wantDelete := session.DeleteSessionsInput{
 		UserID:         userEntity.ID,

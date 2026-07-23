@@ -15,13 +15,20 @@ import (
 	"github.com/motixo/goat-api/internal/pkg"
 )
 
+const (
+	passwordChangeCleanupStageSessionRevocation = "session_revocation"
+	passwordChangeSessionCleanupTimeout         = 2 * time.Second
+	userDeletionSessionCleanupTimeout           = 2 * time.Second
+)
+
 type UserUseCase struct {
-	userRepo       repository.UserRepository
-	passwordHasher service.PasswordHasher
-	userCache      service.UserCacheService
-	sessionRepo    repository.SessionRepository
-	publisher      event.Publisher
-	logger         pkg.Logger
+	userRepo                    repository.UserRepository
+	passwordHasher              service.PasswordHasher
+	userCache                   service.UserCacheService
+	sessionRepo                 repository.SessionRepository
+	publisher                   event.Publisher
+	logger                      pkg.Logger
+	passwordChangeCleanupMetric PasswordChangeCleanupMetrics
 }
 
 func NewUsecase(
@@ -31,14 +38,16 @@ func NewUsecase(
 	sessionRepo repository.SessionRepository,
 	userCache service.UserCacheService,
 	publisher event.Publisher,
+	passwordChangeCleanupMetric PasswordChangeCleanupMetrics,
 ) UseCase {
 	return &UserUseCase{
-		userRepo:       r,
-		passwordHasher: passwordHasher,
-		sessionRepo:    sessionRepo,
-		userCache:      userCache,
-		publisher:      publisher,
-		logger:         logger,
+		userRepo:                    r,
+		passwordHasher:              passwordHasher,
+		sessionRepo:                 sessionRepo,
+		userCache:                   userCache,
+		publisher:                   publisher,
+		logger:                      logger,
+		passwordChangeCleanupMetric: passwordChangeCleanupMetric,
 	}
 }
 
@@ -52,12 +61,13 @@ func (us *UserUseCase) CreateUser(ctx context.Context, input CreateInput) (UserO
 	}
 
 	usr := &entity.User{
-		ID:        uuid.New().String(),
-		Email:     input.Email,
-		Password:  hashedPassword,
-		Status:    input.Status,
-		Role:      input.Role,
-		CreatedAt: time.Now().UTC(),
+		ID:                uuid.New().String(),
+		Email:             input.Email,
+		Password:          hashedPassword,
+		Status:            input.Status,
+		Role:              input.Role,
+		CredentialVersion: entity.InitialCredentialVersion,
+		CreatedAt:         time.Now().UTC(),
 	}
 
 	err = us.userRepo.Create(ctx, usr)
@@ -170,25 +180,12 @@ func (us *UserUseCase) DeleteUser(ctx context.Context, userID string) error {
 		return errors.ErrUserNotFound
 	}
 
-	sessions, _, err := us.sessionRepo.ListByUser(ctx, userID, 0, 0)
-	if err != nil {
-		us.logger.Error("failed to fetch user sessions before deletion", "user_id", userID, "error", err)
-		return fmt.Errorf("list sessions before user deletion: %w", err)
-	}
-
-	if len(sessions) > 0 {
-		targets := make([]string, 0, len(sessions))
-		for index, session := range sessions {
-			if session == nil || session.ID == "" {
-				return fmt.Errorf("list sessions before user deletion: session %d has no ID", index)
-			}
-			targets = append(targets, session.ID)
-		}
-
-		if err := us.sessionRepo.Delete(ctx, targets); err != nil {
-			us.logger.Error("failed to revoke user sessions", "user_id", userID, "error", err)
-			return fmt.Errorf("revoke sessions before user deletion: %w", err)
-		}
+	cleanupCtx, cancelCleanup := context.WithTimeout(ctx, userDeletionSessionCleanupTimeout)
+	cleanupErr := us.sessionRepo.DeleteAllByUser(cleanupCtx, userID)
+	cancelCleanup()
+	if cleanupErr != nil {
+		us.logger.Error("failed to revoke user sessions", "user_id", userID, "error", cleanupErr)
+		return fmt.Errorf("revoke sessions before user deletion: %w", cleanupErr)
 	}
 
 	if err := us.userCache.ClearCache(ctx, userID); err != nil {
@@ -200,6 +197,8 @@ func (us *UserUseCase) DeleteUser(ctx context.Context, userID string) error {
 	// only after session revocation and cache invalidation are known to succeed.
 	// A database failure can therefore leave an existing user logged out, but a
 	// known revocation failure is never reported as a successful user deletion.
+	// A session created after the atomic Redis cleanup can remain stored, but a
+	// successful user-row deletion makes it fail authoritative session validation.
 	if err := us.userRepo.Delete(ctx, userID); err != nil {
 		us.logger.Error("failed to delete user", "user_id", userID, "error", err)
 		return err
@@ -260,6 +259,9 @@ func (us *UserUseCase) ChangePassword(ctx context.Context, input UpdatePassInput
 	user, err := us.userRepo.FindByID(ctx, input.UserID)
 	if err != nil {
 		us.logger.Error("user lookup failed", "user_id", input.UserID, "error", err)
+		return err
+	}
+	if user == nil {
 		return errors.ErrUserNotFound
 	}
 
@@ -273,37 +275,59 @@ func (us *UserUseCase) ChangePassword(ctx context.Context, input UpdatePassInput
 		return err
 	}
 
-	usr := &entity.User{
-		ID:       user.ID,
-		Password: hashedPassword,
-	}
-	if err := us.userRepo.Update(ctx, usr); err != nil {
+	// PostgreSQL and Redis do not share a transaction. The password hash and
+	// credential version therefore change first, atomically in one PostgreSQL
+	// statement. That durable commit is both the security and success boundary:
+	// every session holding the previous version becomes invalid before
+	// best-effort Redis cleanup starts.
+	version, err := us.userRepo.UpdatePassword(ctx, user.ID, hashedPassword)
+	if err != nil {
 		us.logger.Error("user update failed", "user_id", input.UserID, "error", err)
 		return err
 	}
 
-	sessions, _, err := us.sessionRepo.ListByUser(ctx, user.ID, 0, 0)
-	if err != nil {
-		us.logger.Error("field to fetch user sessions", "user_id", input.UserID, "error", err)
+	// The authorization cache is not invalidated here. Password changes do not
+	// alter the role or status used by authorization, and cached timestamps are
+	// not consulted for authorization decisions.
+	cleanupCtx, cancelCleanup := context.WithTimeout(ctx, passwordChangeSessionCleanupTimeout)
+	cleanupErr := us.sessionRepo.DeleteAllByUser(cleanupCtx, user.ID)
+	cancelCleanup()
+	if cleanupErr != nil {
+		us.observePasswordChangeCleanupFailure(
+			input.UserID,
+			version,
+			passwordChangeCleanupStageSessionRevocation,
+			cleanupErr,
+		)
 		return nil
 	}
 
-	if len(sessions) == 0 {
-		return nil
-	}
-
-	targets := make([]string, len(sessions))
-	for i := range sessions {
-		targets[i] = sessions[i].ID
-	}
-	if err := us.sessionRepo.Delete(ctx, targets); err != nil {
-		us.logger.Error("filed to delete user sessions", "user_id", input.UserID, "error", err)
-		return nil
-	}
-
-	us.logger.Info("password updated and sessions removed", "user_id", input.UserID)
+	us.logger.Info(
+		"password and credential version updated; session cleanup completed",
+		"user_id", input.UserID,
+		"credential_version", version,
+	)
 	return nil
 
+}
+
+func (us *UserUseCase) observePasswordChangeCleanupFailure(
+	userID string,
+	credentialVersion int64,
+	stage string,
+	err error,
+) {
+	us.logger.Error(
+		"post-commit password-change session cleanup failed",
+		"user_id", userID,
+		"credential_version", credentialVersion,
+		"cleanup_stage", stage,
+		"credential_change_committed", true,
+		"error", err,
+	)
+	if us.passwordChangeCleanupMetric != nil {
+		us.passwordChangeCleanupMetric.RecordPasswordChangeCleanupFailure(stage)
+	}
 }
 
 func (us *UserUseCase) ChangeRole(ctx context.Context, input UpdateRoleInput) error {

@@ -9,5 +9,9 @@ type UseCase interface {
 	GetSessionsByUser(ctx context.Context, userID, sessionID string, offset, limit int) ([]SessionOutput, int64, error)
 	DeleteSessions(ctx context.Context, input DeleteSessionsInput) error
 	RotateSessionJTI(ctx context.Context, input RotateInput) (string, error)
-	IsJTIValid(ctx context.Context, jti string) (bool, error)
+	ValidateSession(ctx context.Context, input ValidateInput) (bool, error)
+}
+
+type CredentialVersionReader interface {
+	GetCredentialVersion(ctx context.Context, userID string) (int64, error)
 }

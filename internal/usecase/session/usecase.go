@@ -2,10 +2,12 @@ package session
 
 import (
 	"context"
+	stdErrors "errors"
+	"fmt"
 	"time"
 
 	"github.com/motixo/goat-api/internal/domain/entity"
-	"github.com/motixo/goat-api/internal/domain/errors"
+	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/pkg"
 	"github.com/oklog/ulid/v2"
@@ -13,21 +15,27 @@ import (
 
 type SessionUseCase struct {
 	sessionRepo repository.SessionRepository
+	userRepo    CredentialVersionReader
 	logger      pkg.Logger
 }
 
 func NewUsecase(
-	r repository.SessionRepository,
+	sessionRepo repository.SessionRepository,
+	userRepo CredentialVersionReader,
 	logger pkg.Logger,
 ) UseCase {
 	return &SessionUseCase{
-		sessionRepo: r,
+		sessionRepo: sessionRepo,
+		userRepo:    userRepo,
 		logger:      logger,
 	}
 }
 
 func (us *SessionUseCase) CreateSession(ctx context.Context, input CreateInput) error {
 	us.logger.Debug("creating session", "userID", input.UserID, "device", input.Device, "ip", input.IP, "currentJTI", input.CurrentJTI)
+	if input.CredentialVersion <= 0 {
+		return fmt.Errorf("credential version must be positive")
+	}
 
 	now := time.Now().UTC()
 	expiresAt := now.Add(input.SessionTTL)
@@ -35,6 +43,7 @@ func (us *SessionUseCase) CreateSession(ctx context.Context, input CreateInput) 
 	session := &entity.Session{
 		ID:                input.ID,
 		UserID:            input.UserID,
+		CredentialVersion: input.CredentialVersion,
 		CurrentJTI:        input.CurrentJTI,
 		IP:                input.IP,
 		Device:            input.Device,
@@ -81,14 +90,17 @@ func (us *SessionUseCase) GetSessionsByUser(ctx context.Context, userID, session
 
 func (us *SessionUseCase) RotateSessionJTI(ctx context.Context, input RotateInput) (string, error) {
 	us.logger.Debug("rotating session JTI", "oldJTI", input.OldJTI, "newJTI", input.CurrentJTI, "ip", input.IP, "device", input.Device)
-	valid, err := us.sessionRepo.ExistsJTI(ctx, input.OldJTI)
+	current, valid, err := us.validateSession(ctx, ValidateInput{
+		UserID: input.UserID,
+		JTI:    input.OldJTI,
+	})
 	if err != nil {
-		us.logger.Error("failed to check if JTI exists", "oldJTI", input.OldJTI, "error", err)
+		us.logger.Error("failed to validate session before JTI rotation", "oldJTI", input.OldJTI, "error", err)
 		return "", err
 	}
 	if !valid {
-		us.logger.Warn("attempt to rotate non-existent or expired JTI", "oldJTI", input.OldJTI, "ip", input.IP, "device", input.Device)
-		return "", errors.ErrUnauthorized
+		us.logger.Warn("attempt to rotate invalid session JTI", "oldJTI", input.OldJTI, "ip", input.IP, "device", input.Device)
+		return "", domainErrors.ErrUnauthorized
 	}
 
 	now := time.Now().UTC()
@@ -98,6 +110,8 @@ func (us *SessionUseCase) RotateSessionJTI(ctx context.Context, input RotateInpu
 		ctx,
 		input.OldJTI,
 		input.CurrentJTI,
+		input.UserID,
+		current.CredentialVersion,
 		input.IP,
 		input.Device,
 		expiresAt,
@@ -112,20 +126,60 @@ func (us *SessionUseCase) RotateSessionJTI(ctx context.Context, input RotateInpu
 	return sessionID, nil
 }
 
-func (us *SessionUseCase) IsJTIValid(ctx context.Context, jti string) (bool, error) {
-	valid, err := us.sessionRepo.ExistsJTI(ctx, jti)
+func (us *SessionUseCase) ValidateSession(ctx context.Context, input ValidateInput) (bool, error) {
+	if input.UserID == "" || input.SessionID == "" || input.JTI == "" {
+		return false, nil
+	}
+	_, valid, err := us.validateSession(ctx, input)
 	if err != nil {
-		us.logger.Error("failed to check JTI validity", "jti", jti, "error", err)
+		us.logger.Error("failed to validate session", "userID", input.UserID, "sessionID", input.SessionID, "error", err)
 		return false, err
 	}
-	us.logger.Debug("JTI validation result", "jti", jti, "valid", valid)
+	us.logger.Debug("session validation result", "userID", input.UserID, "sessionID", input.SessionID, "valid", valid)
 	return valid, nil
+}
+
+func (us *SessionUseCase) validateSession(
+	ctx context.Context,
+	input ValidateInput,
+) (*entity.Session, bool, error) {
+	if input.UserID == "" || input.JTI == "" {
+		return nil, false, nil
+	}
+
+	current, err := us.sessionRepo.FindByJTI(ctx, input.JTI)
+	if err != nil {
+		return nil, false, err
+	}
+	if current == nil ||
+		current.ID == "" ||
+		current.UserID != input.UserID ||
+		current.CurrentJTI != input.JTI ||
+		current.CredentialVersion <= 0 ||
+		(input.SessionID != "" && current.ID != input.SessionID) {
+		return nil, false, nil
+	}
+
+	authoritativeVersion, err := us.userRepo.GetCredentialVersion(ctx, input.UserID)
+	if err != nil {
+		if stdErrors.Is(err, domainErrors.ErrUserNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	if authoritativeVersion <= 0 {
+		return nil, false, fmt.Errorf("authoritative credential version must be positive")
+	}
+	if current.CredentialVersion != authoritativeVersion {
+		return nil, false, nil
+	}
+	return current, true, nil
 }
 
 func (us *SessionUseCase) DeleteSessions(ctx context.Context, input DeleteSessionsInput) error {
 	us.logger.Info("delete sessions requested", "userID", input.UserID, "removeOthers", input.RemoveOthers, "targetCount", len(input.TargetSessions))
 	if input.UserID == "" {
-		return errors.ErrUnauthorized
+		return domainErrors.ErrUnauthorized
 	}
 
 	if input.RemoveOthers {
@@ -140,7 +194,7 @@ func (us *SessionUseCase) DeleteSessions(ctx context.Context, input DeleteSessio
 		}
 		if !currentOwned {
 			us.logger.Warn("current session was missing or not owned by user", "userID", input.UserID)
-			return errors.ErrNotFound
+			return domainErrors.ErrNotFound
 		}
 		us.logger.Info("other sessions deleted successfully", "userID", input.UserID)
 		return nil
@@ -163,7 +217,7 @@ func (us *SessionUseCase) DeleteSessions(ctx context.Context, input DeleteSessio
 	}
 	if !deleted {
 		us.logger.Warn("session deletion target was missing or not owned by user", "userID", input.UserID, "targetCount", len(input.TargetSessions))
-		return errors.ErrNotFound
+		return domainErrors.ErrNotFound
 	}
 	us.logger.Info("sessions deleted successfully", "userID", input.UserID, "removeOthers", input.RemoveOthers, "targetCount", len(input.TargetSessions))
 	return nil

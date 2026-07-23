@@ -22,8 +22,9 @@ type PrometheusMetrics struct {
 	cacheHits *prometheus.CounterVec
 
 	// Business metrics
-	userLoginsTotal   *prometheus.CounterVec
-	tokenRefreshTotal *prometheus.CounterVec
+	userLoginsTotal               *prometheus.CounterVec
+	tokenRefreshTotal             *prometheus.CounterVec
+	passwordChangeCleanupFailures *prometheus.CounterVec
 }
 
 func NewPrometheusMetrics() *PrometheusMetrics {
@@ -100,6 +101,13 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 			},
 			[]string{"success"},
 		),
+		passwordChangeCleanupFailures: promauto.With(registry).NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "password_change_cleanup_failures_total",
+				Help: "Total password-change session cleanup failures after the credential update committed",
+			},
+			[]string{"stage"},
+		),
 	}
 
 	return m
@@ -149,6 +157,10 @@ func (m *PrometheusMetrics) RecordTokenRefresh(success bool) {
 		successStr = "false"
 	}
 	m.tokenRefreshTotal.WithLabelValues(successStr).Inc()
+}
+
+func (m *PrometheusMetrics) RecordPasswordChangeCleanupFailure(stage string) {
+	m.passwordChangeCleanupFailures.WithLabelValues(stage).Inc()
 }
 
 func (m *PrometheusMetrics) GetRegistry() *prometheus.Registry {

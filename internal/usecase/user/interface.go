@@ -15,3 +15,9 @@ type UseCase interface {
 	ChangeRole(ctx context.Context, input UpdateRoleInput) error
 	ChangeStatus(ctx context.Context, input UpdateStatusInput) error
 }
+
+// PasswordChangeCleanupMetrics observes failures in non-authoritative cleanup
+// that runs after a password and credential-version update has committed.
+type PasswordChangeCleanupMetrics interface {
+	RecordPasswordChangeCleanupFailure(stage string)
+}

@@ -20,19 +20,26 @@ type Repository struct {
 	db *sqlx.DB
 }
 
-const userListSelectFields = `SELECT id, email, role, status, created_at, updated_at FROM users`
+const (
+	userListSelectFields      = `SELECT id, email, role, status, credential_version, created_at, updated_at FROM users`
+	uniqueViolationSQLState   = "23505"
+	userEmailUniqueConstraint = "users_email_key"
+)
 
 func NewRepository(db *sqlx.DB) repository.UserRepository {
 	return &Repository{db: db}
 }
 
 func (r *Repository) Create(ctx context.Context, u *entity.User) error {
+	if u.CredentialVersion <= 0 {
+		return fmt.Errorf("credential version must be positive")
+	}
 	query := `
-        INSERT INTO users (id, email, password, status, role, created_at, updated_at)
-        VALUES (:id, :email, :password, :status, :role, :created_at, :updated_at)
-    `
+        INSERT INTO users (id, email, password, status, role, credential_version, created_at, updated_at)
+        VALUES (:id, :email, :password, :status, :role, :credential_version, :created_at, :updated_at)
+	`
 	_, err := r.db.NamedExecContext(ctx, query, userRowFromDomain(u))
-	return err
+	return translateUserWriteError(err)
 }
 
 func (r *Repository) ExistsByID(ctx context.Context, id string) (bool, error) {
@@ -46,14 +53,14 @@ func (r *Repository) ExistsByID(ctx context.Context, id string) (bool, error) {
 func (r *Repository) FindByID(ctx context.Context, id string) (*entity.User, error) {
 	var row userRow
 	query := `
-        SELECT id, email, password, status, role, created_at, updated_at
+        SELECT id, email, password, status, role, credential_version, created_at, updated_at
         FROM users
         WHERE id = $1
 		LIMIT 1
-    `
+	`
 	err := r.db.GetContext(ctx, &row, query, id)
 	if err != nil {
-		return nil, err
+		return nil, translateUserFindByIDError(err)
 	}
 	return row.toDomain(), nil
 }
@@ -61,7 +68,7 @@ func (r *Repository) FindByID(ctx context.Context, id string) (*entity.User, err
 func (r *Repository) FindByEmail(ctx context.Context, email string) (*entity.User, error) {
 	var row userRow
 	query := `
-        SELECT id, email, password, status, role, created_at, updated_at
+        SELECT id, email, password, status, role, credential_version, created_at, updated_at
         FROM users
         WHERE email = $1
 		LIMIT 1
@@ -74,6 +81,43 @@ func (r *Repository) FindByEmail(ctx context.Context, email string) (*entity.Use
 		return nil, fmt.Errorf("failed to get user by email: %w", err)
 	}
 	return row.toDomain(), nil
+}
+
+func (r *Repository) GetCredentialVersion(ctx context.Context, id string) (int64, error) {
+	var version int64
+	err := r.db.GetContext(ctx, &version, "SELECT credential_version FROM users WHERE id = $1", id)
+	if err != nil {
+		return 0, translateUserFindByIDError(err)
+	}
+	if version <= 0 {
+		return 0, fmt.Errorf("user %s has invalid credential version", id)
+	}
+	return version, nil
+}
+
+func (r *Repository) UpdatePassword(
+	ctx context.Context,
+	id string,
+	password valueobject.Password,
+) (int64, error) {
+	var version int64
+	err := r.db.GetContext(
+		ctx,
+		&version,
+		`UPDATE users
+		 SET password = $1,
+		     credential_version = credential_version + 1,
+		     updated_at = $2
+		 WHERE id = $3
+		 RETURNING credential_version`,
+		password.Encoded(),
+		time.Now().UTC(),
+		id,
+	)
+	if err != nil {
+		return 0, translateUserFindByIDError(err)
+	}
+	return version, nil
 }
 
 func (r *Repository) Update(ctx context.Context, user *entity.User) error {
@@ -92,6 +136,7 @@ func (r *Repository) Update(ctx context.Context, user *entity.User) error {
 		setClauses = append(setClauses, fmt.Sprintf("password = $%d", argIndex))
 		args = append(args, row.PasswordHash)
 		argIndex++
+		setClauses = append(setClauses, "credential_version = credential_version + 1")
 	}
 
 	if row.Role != int16(valueobject.RoleUnknown) {
@@ -120,7 +165,7 @@ func (r *Repository) Update(ctx context.Context, user *entity.User) error {
 
 	result, err := r.db.ExecContext(ctx, query, args...)
 	if err != nil {
-		return err
+		return translateUserWriteError(err)
 	}
 
 	affected, err := result.RowsAffected()
@@ -207,4 +252,29 @@ func buildUserListSelectQuery(whereClause string, argIndex int) string {
 	return userListSelectFields + whereClause +
 		" ORDER BY created_at DESC, id DESC" +
 		fmt.Sprintf(" LIMIT $%d OFFSET $%d", argIndex, argIndex+1)
+}
+
+func translateUserFindByIDError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: %w", domainErrors.ErrUserNotFound, err)
+	}
+	return err
+}
+
+func translateUserWriteError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var postgresErr *pq.Error
+	if errors.As(err, &postgresErr) &&
+		string(postgresErr.Code) == uniqueViolationSQLState &&
+		postgresErr.Constraint == userEmailUniqueConstraint {
+		return fmt.Errorf("%w: %w", domainErrors.ErrEmailAlreadyExists, err)
+	}
+
+	return err
 }

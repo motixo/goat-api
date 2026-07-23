@@ -21,6 +21,7 @@ func NewDatabase(cfg *config.Config, logger pkg.Logger, passwordSrv service.Pass
 		password TEXT NOT NULL,
 		status SMALLINT NOT NULL,
 		role SMALLINT NOT NULL,
+		credential_version BIGINT NOT NULL DEFAULT 1 CHECK (credential_version > 0),
 		created_at TIMESTAMP NOT NULL DEFAULT NOW(),
 		updated_at TIMESTAMP NULL
 	);`

@@ -35,7 +35,7 @@ func TestDeleteSessionsAllowsSessionsOwnedByCurrentUser(t *testing.T) {
 				currentSessionID: "user-1",
 				secondSessionID:  "user-1",
 			})
-			usecase := NewUsecase(repo, discardSessionLogger{})
+			usecase := NewUsecase(repo, nil, discardSessionLogger{})
 
 			err := usecase.DeleteSessions(context.Background(), DeleteSessionsInput{
 				UserID:         "user-1",
@@ -60,7 +60,7 @@ func TestDeleteSessionsRejectsSessionOwnedByAnotherUser(t *testing.T) {
 	repo := newOwnershipSessionRepository(map[string]string{
 		foreignSessionID: "user-2",
 	})
-	usecase := NewUsecase(repo, discardSessionLogger{})
+	usecase := NewUsecase(repo, nil, discardSessionLogger{})
 
 	err := usecase.DeleteSessions(context.Background(), DeleteSessionsInput{
 		UserID:         "user-1",
@@ -86,7 +86,7 @@ func TestDeleteSessionsRejectsMixedOwnershipWithoutMutation(t *testing.T) {
 		currentSessionID: "user-1",
 		foreignSessionID: "user-2",
 	})
-	usecase := NewUsecase(repo, discardSessionLogger{})
+	usecase := NewUsecase(repo, nil, discardSessionLogger{})
 
 	err := usecase.DeleteSessions(context.Background(), DeleteSessionsInput{
 		UserID:         "user-1",
@@ -107,7 +107,7 @@ func TestDeleteSessionsRejectsMixedOwnershipWithoutMutation(t *testing.T) {
 
 func TestDeleteSessionsMissingSessionUsesSameNotFoundResult(t *testing.T) {
 	repo := newOwnershipSessionRepository(nil)
-	usecase := NewUsecase(repo, discardSessionLogger{})
+	usecase := NewUsecase(repo, nil, discardSessionLogger{})
 
 	err := usecase.DeleteSessions(context.Background(), DeleteSessionsInput{
 		UserID:         "user-1",
@@ -124,7 +124,7 @@ func TestDeleteSessionsMissingSessionUsesSameNotFoundResult(t *testing.T) {
 
 func TestDeleteSessionsRejectsMalformedSessionIDBeforeRedis(t *testing.T) {
 	repo := newOwnershipSessionRepository(nil)
-	usecase := NewUsecase(repo, discardSessionLogger{})
+	usecase := NewUsecase(repo, nil, discardSessionLogger{})
 
 	err := usecase.DeleteSessions(context.Background(), DeleteSessionsInput{
 		UserID:         "user-1",
@@ -149,7 +149,7 @@ func TestDeleteSessionsRemoveOthersScopesTargetsToCurrentUser(t *testing.T) {
 		{ID: currentSessionID, UserID: "user-1"},
 		{ID: secondSessionID, UserID: "user-1"},
 	}
-	usecase := NewUsecase(repo, discardSessionLogger{})
+	usecase := NewUsecase(repo, nil, discardSessionLogger{})
 
 	err := usecase.DeleteSessions(context.Background(), DeleteSessionsInput{
 		UserID:         "user-1",
@@ -191,7 +191,7 @@ func TestDeleteSessionsRemoveOthersIncludesSessionMissingFromEarlierSnapshot(t *
 		{ID: currentSessionID, UserID: "user-1"},
 		{ID: secondSessionID, UserID: "user-1"},
 	}
-	usecase := NewUsecase(repo, discardSessionLogger{})
+	usecase := NewUsecase(repo, nil, discardSessionLogger{})
 
 	err := usecase.DeleteSessions(context.Background(), DeleteSessionsInput{
 		UserID:         "user-1",
@@ -210,7 +210,7 @@ func TestDeleteSessionsRemoveOthersIncludesSessionMissingFromEarlierSnapshot(t *
 
 func TestDeleteSessionsRemoveOthersIsIdempotentWhenNoOthersExist(t *testing.T) {
 	repo := newOwnershipSessionRepository(map[string]string{currentSessionID: "user-1"})
-	usecase := NewUsecase(repo, discardSessionLogger{})
+	usecase := NewUsecase(repo, nil, discardSessionLogger{})
 	input := DeleteSessionsInput{
 		UserID:         "user-1",
 		CurrentSession: currentSessionID,
@@ -232,7 +232,7 @@ func TestDeleteSessionsRemoveOthersIsIdempotentWhenNoOthersExist(t *testing.T) {
 
 func TestDeleteSessionsRemoveOthersRejectsMalformedCurrentSessionBeforeRedis(t *testing.T) {
 	repo := newOwnershipSessionRepository(map[string]string{secondSessionID: "user-1"})
-	usecase := NewUsecase(repo, discardSessionLogger{})
+	usecase := NewUsecase(repo, nil, discardSessionLogger{})
 
 	err := usecase.DeleteSessions(context.Background(), DeleteSessionsInput{
 		UserID:         "user-1",
@@ -270,7 +270,7 @@ func TestDeleteSessionsRemoveOthersHidesInvalidCurrentOwnershipWithoutMutation(t
 			for sessionID, userID := range repo.owners {
 				before[sessionID] = userID
 			}
-			usecase := NewUsecase(repo, discardSessionLogger{})
+			usecase := NewUsecase(repo, nil, discardSessionLogger{})
 
 			err := usecase.DeleteSessions(context.Background(), DeleteSessionsInput{
 				UserID:         "user-1",
@@ -292,7 +292,7 @@ func TestDeleteSessionsRemoveOthersRepositoryFailureIsReturned(t *testing.T) {
 	repositoryErr := stdErrors.New("redis unavailable")
 	repo := newOwnershipSessionRepository(map[string]string{currentSessionID: "user-1"})
 	repo.deleteOthersErr = repositoryErr
-	usecase := NewUsecase(repo, discardSessionLogger{})
+	usecase := NewUsecase(repo, nil, discardSessionLogger{})
 
 	err := usecase.DeleteSessions(context.Background(), DeleteSessionsInput{
 		UserID:         "user-1",
@@ -312,7 +312,7 @@ func TestDeleteSessionsRepositoryFailureIsReturned(t *testing.T) {
 	repositoryErr := stdErrors.New("redis unavailable")
 	repo := newOwnershipSessionRepository(map[string]string{currentSessionID: "user-1"})
 	repo.deleteByUserErr = repositoryErr
-	usecase := NewUsecase(repo, discardSessionLogger{})
+	usecase := NewUsecase(repo, nil, discardSessionLogger{})
 
 	err := usecase.DeleteSessions(context.Background(), DeleteSessionsInput{
 		UserID:         "user-1",
