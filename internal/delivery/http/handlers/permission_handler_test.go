@@ -126,6 +126,51 @@ func TestPermissionHandlerCreateRejectsUnknownPermission(t *testing.T) {
 	}`)
 }
 
+func TestPermissionHandlerLocalizesInvalidRoleWithoutExposingParserErrors(t *testing.T) {
+	usecase := &stubPermissionUseCase{
+		getPermissionsByRole: func(context.Context, valueobject.UserRole) ([]permission.PermissionOutput, error) {
+			t.Fatal("GetPermissionsByRole called for an invalid role")
+			return nil, nil
+		},
+	}
+	tests := []struct {
+		name     string
+		language string
+		title    string
+		detail   string
+	}{
+		{name: "English", language: "en-US", title: "Bad Request", detail: "invalid user role: auditor"},
+		{name: "Persian", language: "fa-IR", title: "درخواست نامعتبر", detail: "نقش کاربری «auditor» معتبر نیست."},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := performPermissionRequestWithLanguage(
+				t,
+				http.MethodGet,
+				"/permission/auditor",
+				"",
+				test.language,
+				usecase,
+				func(router *gin.Engine, handler *PermissionHandler) {
+					router.GET("/permission/:role", handler.GetPermissionsByRole)
+				},
+			)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+			}
+			assertJSONEqual(t, recorder.Body.Bytes(), `{
+				"type": "/errors/validation",
+				"title": "`+test.title+`",
+				"status": 400,
+				"detail": "`+test.detail+`",
+				"instance": "/permission/auditor"
+			}`)
+		})
+	}
+}
+
 func TestPermissionHandlerMapsPermissionPersistenceErrors(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -225,6 +270,19 @@ func performPermissionRequest(
 	register func(*gin.Engine, *PermissionHandler),
 ) *httptest.ResponseRecorder {
 	t.Helper()
+	return performPermissionRequestWithLanguage(t, method, path, body, "", usecase, register)
+}
+
+func performPermissionRequestWithLanguage(
+	t *testing.T,
+	method string,
+	path string,
+	body string,
+	acceptLanguage string,
+	usecase permission.UseCase,
+	register func(*gin.Engine, *PermissionHandler),
+) *httptest.ResponseRecorder {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
@@ -232,6 +290,9 @@ func performPermissionRequest(
 
 	request := httptest.NewRequest(method, path, strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
+	if acceptLanguage != "" {
+		request.Header.Set("Accept-Language", acceptLanguage)
+	}
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	return recorder

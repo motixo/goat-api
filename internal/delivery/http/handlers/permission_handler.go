@@ -26,7 +26,7 @@ func (h *PermissionHandler) GetPermissions(c *gin.Context) {
 	var input helper.PaginationInput
 	if err := c.ShouldBindQuery(&input); err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
-		response.BadRequest(c, "Invalid request payload")
+		response.BadRequest(c, response.DetailInvalidRequestPayload)
 		return
 	}
 	input.Validate()
@@ -44,14 +44,16 @@ func (h *PermissionHandler) GetPermissionsByRole(c *gin.Context) {
 	roleInput := c.Param("role")
 	if roleInput == "" {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
-		response.BadRequest(c, "Invalid request payload")
+		response.BadRequest(c, response.DetailInvalidRequestPayload)
 		return
 	}
 
 	role, err := valueobject.ParseUserRole(roleInput)
 	if err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
-		response.BadRequest(c, err.Error())
+		response.BadRequestWithParams(c, response.DetailInvalidUserRole, response.TranslationParams{
+			"Role": roleInput,
+		})
 		return
 	}
 	output, err := h.usecase.GetPermissionsByRole(c, role)
@@ -67,14 +69,14 @@ func (h *PermissionHandler) CreatePermissin(c *gin.Context) {
 	var request createPermissionRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
-		response.BadRequest(c, "Invalid request payload")
+		response.BadRequest(c, response.DetailInvalidRequestPayload)
 		return
 	}
 
 	role, err := valueobject.ParseUserRole(request.Role)
 	if err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
-		response.BadRequest(c, "Invalid request payload")
+		response.BadRequest(c, response.DetailInvalidRequestPayload)
 		return
 	}
 
@@ -83,7 +85,7 @@ func (h *PermissionHandler) CreatePermissin(c *gin.Context) {
 		action, err = valueobject.ParsePermission(request.Action)
 		if err != nil {
 			h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
-			response.BadRequest(c, "Invalid request payload")
+			response.BadRequest(c, response.DetailInvalidRequestPayload)
 			return
 		}
 	}
@@ -104,7 +106,7 @@ func (h *PermissionHandler) DeletePermissin(c *gin.Context) {
 	permissionID := c.Param("id")
 	if permissionID == "" {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
-		response.BadRequest(c, "Invalid request payload")
+		response.BadRequest(c, response.DetailInvalidRequestPayload)
 		return
 	}
 	if err := h.usecase.Delete(c, permissionID); err != nil {

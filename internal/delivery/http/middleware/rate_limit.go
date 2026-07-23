@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"fmt"
 	"strconv"
 	"time"
 
@@ -78,8 +77,12 @@ func (m *RateLimitMiddleware) Handler(config RateLimit) gin.HandlerFunc {
 		if !allowed {
 			c.Header("Retry-After", strconv.FormatInt(int64(retryAfter.Seconds()), 10))
 
-			detail := fmt.Sprintf("Limit exceeded. Please try again in %s.", retryAfter.Round(time.Second))
-			response.TooManyRequests(c, detail, meta)
+			response.TooManyRequests(
+				c,
+				response.DetailRateLimitExceeded,
+				response.TranslationParams{"RetryAfter": retryAfter.Round(time.Second).String()},
+				meta,
+			)
 			return
 		}
 

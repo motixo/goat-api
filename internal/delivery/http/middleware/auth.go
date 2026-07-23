@@ -28,7 +28,7 @@ func (m *AuthMiddleware) Required() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		auth := c.GetHeader("Authorization")
 		if auth == "" || !strings.HasPrefix(auth, "Bearer ") {
-			response.Unauthorized(c, "missing or invalid Authorization header")
+			response.Unauthorized(c, response.DetailMissingAuthorizationHeader)
 			c.Abort()
 			return
 		}
@@ -41,7 +41,7 @@ func (m *AuthMiddleware) Required() gin.HandlerFunc {
 			return
 		}
 		if !claims.IsAccess() {
-			response.Unauthorized(c, "access token required")
+			response.Unauthorized(c, response.DetailAccessTokenRequired)
 			c.Abort()
 			return
 		}
@@ -53,7 +53,7 @@ func (m *AuthMiddleware) Required() gin.HandlerFunc {
 			return
 		}
 		if !isValid {
-			response.Unauthorized(c, "token has been revoked")
+			response.Unauthorized(c, response.DetailTokenRevoked)
 			c.Abort()
 			return
 		}
@@ -67,15 +67,15 @@ func (m *AuthMiddleware) Required() gin.HandlerFunc {
 
 		switch userStatus {
 		case valueobject.StatusInactive:
-			response.Unauthorized(c, "account not activated.")
+			response.Unauthorized(c, response.DetailAccountNotActivated)
 			c.Abort()
 			return
 		case valueobject.StatusSuspended:
-			response.Unauthorized(c, "account suspended.")
+			response.Unauthorized(c, response.DetailAccountSuspended)
 			c.Abort()
 			return
 		case valueobject.StatusUnknown:
-			response.Unauthorized(c, "someting went wrong, contact support.")
+			response.Unauthorized(c, response.DetailContactSupport)
 			c.Abort()
 			return
 		}

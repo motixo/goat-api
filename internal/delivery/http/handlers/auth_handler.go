@@ -25,7 +25,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	var request loginRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
-		response.BadRequest(c, "Invalid request payload")
+		response.BadRequest(c, response.DetailInvalidRequestPayload)
 		return
 	}
 
@@ -50,7 +50,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	var request registerRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
-		response.BadRequest(c, "Invalid request payload")
+		response.BadRequest(c, response.DetailInvalidRequestPayload)
 		return
 	}
 
@@ -71,7 +71,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	var request refreshRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
-		response.BadRequest(c, "Invalid request payload")
+		response.BadRequest(c, response.DetailInvalidRequestPayload)
 		return
 	}
 
@@ -94,13 +94,13 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
 	userID := c.GetString("user_id")
 	if userID == "" {
-		response.Unauthorized(c, "authentication context missing")
+		response.Unauthorized(c, response.DetailAuthenticationContextMissing)
 		return
 	}
 
 	sessionID := c.GetString("session_id")
 	if sessionID == "" {
-		response.Unauthorized(c, "authentication context missing")
+		response.Unauthorized(c, response.DetailAuthenticationContextMissing)
 		return
 	}
 

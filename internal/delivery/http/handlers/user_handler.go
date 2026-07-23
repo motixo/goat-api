@@ -27,13 +27,13 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&request); err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
-		response.BadRequest(c, "Invalid request payload")
+		response.BadRequest(c, response.DetailInvalidRequestPayload)
 		return
 	}
 	input, err := request.toInput()
 	if err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
-		response.BadRequest(c, "Invalid request payload")
+		response.BadRequest(c, response.DetailInvalidRequestPayload)
 		return
 	}
 
@@ -53,7 +53,7 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 	if targetUserID == "" {
 		targetUserID = c.GetString("user_id")
 		if targetUserID == "" {
-			response.Unauthorized(c, "authentication context missing")
+			response.Unauthorized(c, response.DetailAuthenticationContextMissing)
 			return
 		}
 	}
@@ -69,14 +69,14 @@ func (h *UserHandler) GetUserList(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
 	var input listUsersQuery
 	if err := c.ShouldBindQuery(&input); err != nil {
-		response.BadRequest(c, "invalid pagination params")
+		response.BadRequest(c, response.DetailInvalidPaginationParams)
 		return
 	}
 	input.PaginationInput.Validate()
 
 	actorID := c.GetString("user_id")
 	if actorID == "" {
-		response.Unauthorized(c, "authentication context missing")
+		response.Unauthorized(c, response.DetailAuthenticationContextMissing)
 		return
 	}
 
@@ -117,13 +117,13 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 	err := c.ShouldBindJSON(&request)
 	if err != nil || errId != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
-		response.BadRequest(c, "Invalid request payload")
+		response.BadRequest(c, response.DetailInvalidRequestPayload)
 		return
 	}
 	input, err := request.toInput(targetUserID)
 	if err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
-		response.BadRequest(c, "Invalid request payload")
+		response.BadRequest(c, response.DetailInvalidRequestPayload)
 		return
 	}
 
@@ -142,13 +142,13 @@ func (h *UserHandler) ChangeEmail(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&request); err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
-		response.BadRequest(c, "Invalid request payload")
+		response.BadRequest(c, response.DetailInvalidRequestPayload)
 		return
 	}
 
 	userID := c.GetString("user_id")
 	if userID == "" {
-		response.Unauthorized(c, "authentication context missing")
+		response.Unauthorized(c, response.DetailAuthenticationContextMissing)
 		return
 	}
 
@@ -168,14 +168,14 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 
 	userID := c.GetString("user_id")
 	if userID == "" {
-		response.Unauthorized(c, "authentication context missing")
+		response.Unauthorized(c, response.DetailAuthenticationContextMissing)
 		return
 	}
 
 	var request updateUserPasswordRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
-		response.BadRequest(c, "Invalid request payload")
+		response.BadRequest(c, response.DetailInvalidRequestPayload)
 		return
 	}
 
@@ -200,13 +200,13 @@ func (h *UserHandler) ChangeRole(c *gin.Context) {
 	err := c.ShouldBindJSON(&request)
 	if err != nil || errId != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
-		response.BadRequest(c, "Invalid request payload")
+		response.BadRequest(c, response.DetailInvalidRequestPayload)
 		return
 	}
 	input, err := request.toInput(targetUserID)
 	if err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
-		response.BadRequest(c, "Invalid request payload")
+		response.BadRequest(c, response.DetailInvalidRequestPayload)
 		return
 	}
 
@@ -227,7 +227,7 @@ func (h *UserHandler) ChangeStatus(c *gin.Context) {
 	err := c.ShouldBindJSON(&request)
 	if err != nil || errId != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
-		response.BadRequest(c, "Invalid request payload")
+		response.BadRequest(c, response.DetailInvalidRequestPayload)
 		return
 	}
 
@@ -235,11 +235,11 @@ func (h *UserHandler) ChangeStatus(c *gin.Context) {
 	input, err := request.toInput(targetUserID, actorID)
 	if err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
-		response.BadRequest(c, "Invalid request payload")
+		response.BadRequest(c, response.DetailInvalidRequestPayload)
 		return
 	}
 	if actorID == "" {
-		response.Unauthorized(c, "authentication context missing")
+		response.Unauthorized(c, response.DetailAuthenticationContextMissing)
 		return
 	}
 

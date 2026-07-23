@@ -175,6 +175,58 @@ func TestAuthMiddlewareDelegatesTokenErrorsToCentralMapper(t *testing.T) {
 	}
 }
 
+func TestAuthMiddlewareUsesSharedLocalizedWriter(t *testing.T) {
+	tests := []struct {
+		name       string
+		jwt        *stubJWTService
+		token      string
+		wantDetail string
+	}{
+		{
+			name:       "delivery error",
+			jwt:        &stubJWTService{},
+			wantDetail: "اطلاعات ورود ارسال نشده یا معتبر نیست.",
+		},
+		{
+			name:       "mapped semantic error",
+			jwt:        &stubJWTService{err: domainErrors.ErrTokenExpired},
+			token:      "access-token",
+			wantDetail: "زمان ورود شما به پایان رسیده است. لطفاً دوباره وارد شوید.",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			middleware := NewAuthMiddleware(
+				test.jwt,
+				&recordingSessionUseCase{valid: true},
+				&stubUserCacheService{status: valueobject.StatusActive},
+			)
+			recorder := performRequiredMiddlewareRequestWithLanguage(t, middleware, test.token, "fa-IR")
+
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusUnauthorized, recorder.Body.String())
+			}
+			if got, want := recorder.Header().Get("Content-Type"), "application/problem+json"; got != want {
+				t.Fatalf("Content-Type = %q, want %q", got, want)
+			}
+			if got, want := recorder.Header().Get("Content-Language"), "fa"; got != want {
+				t.Fatalf("Content-Language = %q, want %q", got, want)
+			}
+			if got, want := recorder.Header().Get("Vary"), "Accept-Language"; got != want {
+				t.Fatalf("Vary = %q, want %q", got, want)
+			}
+			assertMiddlewareProblem(t, recorder.Body.Bytes(), map[string]any{
+				"type":     "/errors/unauthorized",
+				"title":    "لطفاً وارد حساب خود شوید",
+				"status":   float64(http.StatusUnauthorized),
+				"detail":   test.wantDetail,
+				"instance": "/protected",
+			})
+		})
+	}
+}
+
 func TestAuthMiddlewareKeepsUnknownTokenFailuresInternal(t *testing.T) {
 	internalErr := stdErrors.New("jwt key provider unavailable: secret details")
 	middleware := NewAuthMiddleware(
@@ -198,6 +250,16 @@ func TestAuthMiddlewareKeepsUnknownTokenFailuresInternal(t *testing.T) {
 
 func performRequiredMiddlewareRequest(t *testing.T, middleware *AuthMiddleware) *httptest.ResponseRecorder {
 	t.Helper()
+	return performRequiredMiddlewareRequestWithLanguage(t, middleware, "access-token", "")
+}
+
+func performRequiredMiddlewareRequestWithLanguage(
+	t *testing.T,
+	middleware *AuthMiddleware,
+	token string,
+	acceptLanguage string,
+) *httptest.ResponseRecorder {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.GET("/protected", middleware.Required(), func(c *gin.Context) {
@@ -205,7 +267,12 @@ func performRequiredMiddlewareRequest(t *testing.T, middleware *AuthMiddleware) 
 	})
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/protected", nil)
-	request.Header.Set("Authorization", "Bearer access-token")
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	if acceptLanguage != "" {
+		request.Header.Set("Accept-Language", acceptLanguage)
+	}
 	router.ServeHTTP(recorder, request)
 	return recorder
 }

@@ -27,13 +27,13 @@ func (m *PermMiddleware) Require(requiredPerm valueobject.Permission) gin.Handle
 	return func(c *gin.Context) {
 		userIDVal, exists := c.Get(string(UserIDKey))
 		if !exists {
-			response.Unauthorized(c, "authentication required")
+			response.Unauthorized(c, response.DetailAuthenticationRequired)
 			c.Abort()
 			return
 		}
 		userID, ok := userIDVal.(string)
 		if !ok || userID == "" {
-			response.Unauthorized(c, "invalid user context")
+			response.Unauthorized(c, response.DetailInvalidUserContext)
 			c.Abort()
 			return
 		}
@@ -45,7 +45,7 @@ func (m *PermMiddleware) Require(requiredPerm valueobject.Permission) gin.Handle
 			return
 		}
 		if roleID == valueobject.RoleUnknown {
-			response.Unauthorized(c, "someting went wrong, contact support.")
+			response.Unauthorized(c, response.DetailContactSupport)
 			c.Abort()
 			return
 		}
@@ -58,7 +58,7 @@ func (m *PermMiddleware) Require(requiredPerm valueobject.Permission) gin.Handle
 		}
 
 		if !hasPermission(perms, requiredPerm) {
-			response.Forbidden(c, "insufficient permissions")
+			response.Forbidden(c, response.DetailInsufficientPermissions)
 			c.Abort()
 			return
 		}

@@ -303,6 +303,43 @@ func TestAuthHandlerRejectsMalformedJSONBeforeUseCase(t *testing.T) {
 	}
 }
 
+func TestAuthHandlerLocalizesValidationProblems(t *testing.T) {
+	usecase := &stubAuthUseCase{
+		login: func(context.Context, auth.LoginInput) (auth.LoginOutput, error) {
+			t.Fatal("Login called for malformed JSON")
+			return auth.LoginOutput{}, nil
+		},
+	}
+	recorder := performAuthHandlerRequestWithLanguage(
+		t,
+		newAuthHandlerTestRouter(usecase),
+		http.MethodPost,
+		"/auth/login",
+		`{"email":42}`,
+		"fa-IR",
+	)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	if got, want := recorder.Header().Get("Content-Type"), "application/problem+json"; got != want {
+		t.Fatalf("Content-Type = %q, want %q", got, want)
+	}
+	if got, want := recorder.Header().Get("Content-Language"), "fa"; got != want {
+		t.Fatalf("Content-Language = %q, want %q", got, want)
+	}
+	if got, want := recorder.Header().Get("Vary"), "Accept-Language"; got != want {
+		t.Fatalf("Vary = %q, want %q", got, want)
+	}
+	assertAuthHandlerJSONEqual(t, recorder.Body.Bytes(), `{
+		"type":"/errors/validation",
+		"title":"درخواست نامعتبر",
+		"status":400,
+		"detail":"اطلاعات واردشده معتبر نیست.",
+		"instance":"/auth/login"
+	}`)
+}
+
 func TestAuthHandlerPreservesExistingMissingFieldBindingBehavior(t *testing.T) {
 	loginCalled := false
 	registerCalled := false
@@ -364,11 +401,23 @@ func performAuthHandlerRequest(
 	method, path, body string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
+	return performAuthHandlerRequestWithLanguage(t, router, method, path, body, "")
+}
+
+func performAuthHandlerRequestWithLanguage(
+	t *testing.T,
+	router http.Handler,
+	method, path, body, acceptLanguage string,
+) *httptest.ResponseRecorder {
+	t.Helper()
 
 	request := httptest.NewRequest(method, path, strings.NewReader(body))
 	request.RemoteAddr = "203.0.113.9:4321"
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("User-Agent", "contract-test-agent")
+	if acceptLanguage != "" {
+		request.Header.Set("Accept-Language", acceptLanguage)
+	}
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	return recorder
