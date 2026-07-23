@@ -3,6 +3,8 @@ package permcache
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/motixo/goat-api/internal/domain/entity"
@@ -24,27 +26,47 @@ func NewCache(rdb *redis.Client) *Cache {
 }
 
 func (c *Cache) Get(ctx context.Context, roleID int8) ([]*entity.Permission, error) {
+	role, err := permissionCacheRole(roleID)
+	if err != nil {
+		return nil, err
+	}
+
 	data, err := c.rdb.Get(ctx, pkg.RedisKey("perm", "role", roleID)).Bytes()
-	if err == redis.Nil {
+	if errors.Is(err, redis.Nil) {
 		return nil, nil // cache miss
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read permission cache for role %q: %w", role.String(), err)
 	}
 
-	var perms []*entity.Permission
-	if err := json.Unmarshal(data, &perms); err != nil {
-		return nil, err
+	var records []permissionCacheRecord
+	if err := json.Unmarshal(data, &records); err != nil {
+		return nil, fmt.Errorf("decode permission cache for role %q: %w", role.String(), err)
 	}
-	return perms, nil
+	permissions, err := permissionCacheRecordsToDomain(records, role)
+	if err != nil {
+		return nil, fmt.Errorf("decode permission cache for role %q: %w", role.String(), err)
+	}
+	return permissions, nil
 }
 
 func (c *Cache) Set(ctx context.Context, roleID int8, perms []*entity.Permission) error {
-	b, err := json.Marshal(perms)
+	role, err := permissionCacheRole(roleID)
 	if err != nil {
 		return err
 	}
-	return c.rdb.Set(ctx, pkg.RedisKey("perm", "role", roleID), b, c.ttl).Err()
+	records, err := permissionCacheRecordsFromDomain(perms, role)
+	if err != nil {
+		return fmt.Errorf("encode permission cache for role %q: %w", role.String(), err)
+	}
+	b, err := json.Marshal(records)
+	if err != nil {
+		return fmt.Errorf("encode permission cache for role %q: %w", role.String(), err)
+	}
+	if err := c.rdb.Set(ctx, pkg.RedisKey("perm", "role", roleID), b, c.ttl).Err(); err != nil {
+		return fmt.Errorf("write permission cache for role %q: %w", role.String(), err)
+	}
+	return nil
 }
 
 func (c *Cache) Delete(ctx context.Context, roleID int8) error {

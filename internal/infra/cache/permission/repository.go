@@ -30,7 +30,14 @@ func NewCachedRepository(
 
 func (c *CachedRepository) GetRolePermissions(ctx context.Context, role valueobject.UserRole) ([]*entity.Permission, error) {
 	roleID := int8(role)
-	if perms, _ := c.cache.Get(ctx, roleID); perms != nil {
+	perms, cacheErr := c.cache.Get(ctx, roleID)
+	if cacheErr != nil {
+		c.logger.Warn(
+			"read permission cache failed; falling back to database",
+			"role", role.String(),
+			"error", cacheErr,
+		)
+	} else if perms != nil {
 		return perms, nil
 	}
 
@@ -39,8 +46,11 @@ func (c *CachedRepository) GetRolePermissions(ctx context.Context, role valueobj
 		return nil, err
 	}
 
-	_ = c.cache.Set(ctx, roleID, perms)
-	c.logger.Info("permission cached successfully", "role", role.String())
+	if err := c.cache.Set(ctx, roleID, perms); err != nil {
+		c.logger.Warn("write permission cache failed", "role", role.String(), "error", err)
+	} else {
+		c.logger.Info("permission cached successfully", "role", role.String())
+	}
 	return perms, nil
 }
 
