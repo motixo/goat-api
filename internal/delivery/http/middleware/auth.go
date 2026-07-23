@@ -1,12 +1,10 @@
 package middleware
 
 import (
-	"errors"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/motixo/goat-api/internal/delivery/http/response"
-	DomainError "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 	"github.com/motixo/goat-api/internal/usecase/session"
@@ -38,16 +36,7 @@ func (m *AuthMiddleware) Required() gin.HandlerFunc {
 		token := strings.TrimPrefix(auth, "Bearer ")
 		claims, err := m.jwtService.ParseAndValidate(token)
 		if err != nil {
-			var msg string
-			switch {
-			case errors.Is(err, DomainError.ErrTokenExpired):
-				msg = "token has expired"
-			case errors.Is(err, DomainError.ErrUnauthorized):
-				msg = "invalid or malformed token"
-			default:
-				msg = "authentication failed"
-			}
-			response.Unauthorized(c, msg)
+			response.WriteProblem(c, response.MapError(err))
 			c.Abort()
 			return
 		}

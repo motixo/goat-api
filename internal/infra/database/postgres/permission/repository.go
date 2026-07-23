@@ -7,9 +7,16 @@ import (
 	"fmt"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"github.com/motixo/goat-api/internal/domain/entity"
+	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
+)
+
+const (
+	permissionUniqueViolation            = "23505"
+	permissionRoleActionUniqueConstraint = "unique_role_action"
 )
 
 type Repository struct {
@@ -24,9 +31,9 @@ func (r *Repository) Create(ctx context.Context, permission *entity.Permission) 
 	query := `
         INSERT INTO permissions (id, role, action, created_at)
         VALUES (:id, :role, :action, :created_at)
-    `
+	`
 	_, err := r.db.NamedExecContext(ctx, query, permissionRowFromDomain(permission))
-	return err
+	return translatePermissionCreateError(err)
 }
 
 func (r *Repository) List(ctx context.Context, offset, limit int) ([]*entity.Permission, int64, error) {
@@ -68,10 +75,32 @@ func (r *Repository) Delete(ctx context.Context, permissionID string) (int8, err
 	var roleID int8
 	err := r.db.QueryRowxContext(ctx, "DELETE FROM permissions WHERE id = $1 RETURNING role", permissionID).Scan(&roleID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return 0, fmt.Errorf("permission not found")
-		}
-		return 0, err
+		return 0, translatePermissionDeleteError(err)
 	}
 	return roleID, nil
+}
+
+func translatePermissionCreateError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var postgresErr *pq.Error
+	if errors.As(err, &postgresErr) &&
+		postgresErr.Code == permissionUniqueViolation &&
+		postgresErr.Constraint == permissionRoleActionUniqueConstraint {
+		return fmt.Errorf("%w: %w", domainErrors.ErrPermissionAlreadyExists, err)
+	}
+
+	return err
+}
+
+func translatePermissionDeleteError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: %w", domainErrors.ErrPermissionNotFound, err)
+	}
+	return err
 }

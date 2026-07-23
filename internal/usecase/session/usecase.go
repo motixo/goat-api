@@ -130,7 +130,7 @@ func (us *SessionUseCase) DeleteSessions(ctx context.Context, input DeleteSessio
 
 	if input.RemoveOthers {
 		if !isValidSessionID(input.CurrentSession) {
-			return errors.ErrInvalidInput
+			return ErrInvalidSessionSelection
 		}
 
 		currentOwned, err := us.sessionRepo.DeleteOthersByUser(ctx, input.UserID, input.CurrentSession)
@@ -147,12 +147,12 @@ func (us *SessionUseCase) DeleteSessions(ctx context.Context, input DeleteSessio
 	}
 
 	if len(input.TargetSessions) == 0 {
-		return errors.ErrInvalidInput
+		return ErrInvalidSessionSelection
 	}
 
 	for _, sessionID := range input.TargetSessions {
 		if !isValidSessionID(sessionID) {
-			return errors.ErrInvalidInput
+			return ErrInvalidSessionSelection
 		}
 	}
 

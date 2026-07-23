@@ -2,13 +2,16 @@ package permission
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 	"github.com/motixo/goat-api/internal/domain/entity"
+	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
@@ -86,8 +89,16 @@ func TestRepositoryIntegrationAllOperations(t *testing.T) {
 		additional.Action,
 		createdAt.Add(4*time.Minute),
 	)
-	if err := repo.Create(ctx, duplicate); err == nil {
-		t.Fatal("Create(duplicate role/action) error = nil, want uniqueness error")
+	err = repo.Create(ctx, duplicate)
+	if !errors.Is(err, domainErrors.ErrPermissionAlreadyExists) {
+		t.Fatalf("Create(duplicate role/action) error = %v, want ErrPermissionAlreadyExists", err)
+	}
+	var pqErr *pq.Error
+	if !errors.As(err, &pqErr) {
+		t.Fatalf("Create(duplicate role/action) error = %v, want wrapped *pq.Error", err)
+	}
+	if pqErr.Code != "23505" || pqErr.Constraint != "unique_role_action" {
+		t.Fatalf("Create(duplicate role/action) PostgreSQL error = code %q constraint %q", pqErr.Code, pqErr.Constraint)
 	}
 
 	deletedRole, err := repo.Delete(ctx, additional.ID)
@@ -105,8 +116,12 @@ func TestRepositoryIntegrationAllOperations(t *testing.T) {
 		t.Fatalf("GetByRoleID(after delete) = %#v, want only %s", byRole, permissions[1].ID)
 	}
 
-	if _, err := repo.Delete(ctx, additional.ID); err == nil || err.Error() != "permission not found" {
-		t.Fatalf("Delete(missing) error = %v, want permission not found", err)
+	_, err = repo.Delete(ctx, additional.ID)
+	if !errors.Is(err, domainErrors.ErrPermissionNotFound) {
+		t.Fatalf("Delete(missing) error = %v, want ErrPermissionNotFound", err)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("Delete(missing) error = %v, want wrapped sql.ErrNoRows", err)
 	}
 }
 

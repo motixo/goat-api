@@ -192,7 +192,7 @@ func TestSessionHandlerDeleteHidesMissingAndForeignOwnership(t *testing.T) {
 func TestSessionHandlerDeleteMapsMalformedSessionIDToBadRequest(t *testing.T) {
 	usecase := &stubSessionDeletionUseCase{
 		deleteSessions: func(context.Context, session.DeleteSessionsInput) error {
-			return domainErrors.ErrInvalidInput
+			return session.ErrInvalidSessionSelection
 		},
 	}
 

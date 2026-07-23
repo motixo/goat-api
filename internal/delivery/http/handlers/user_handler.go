@@ -5,7 +5,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/motixo/goat-api/internal/delivery/http/helper"
 	"github.com/motixo/goat-api/internal/delivery/http/response"
-	"github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/pkg"
 	"github.com/motixo/goat-api/internal/usecase/user"
 )
@@ -40,7 +39,7 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 
 	output, err := h.usecase.CreateUser(c, input)
 	if err != nil {
-		response.DomainError(c, err)
+		response.WriteProblem(c, response.MapError(err))
 		return
 	}
 
@@ -60,7 +59,7 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 	}
 	output, err := h.usecase.GetUser(c, targetUserID)
 	if err != nil {
-		response.Internal(c)
+		response.WriteProblem(c, response.MapError(err))
 		return
 	}
 	response.OK(c, newUserResponse(output))
@@ -83,7 +82,7 @@ func (h *UserHandler) GetUserList(c *gin.Context) {
 
 	output, total, err := h.usecase.GetUserslist(c, input.toInput(actorID))
 	if err != nil {
-		response.Internal(c)
+		response.WriteProblem(c, response.MapError(err))
 		return
 	}
 
@@ -104,7 +103,7 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 	}
 
 	if err := h.usecase.DeleteUser(c, targetUserID); err != nil {
-		response.DomainError(c, err)
+		response.WriteProblem(c, response.MapError(err))
 		return
 	}
 	response.OK(c, "Deleted")
@@ -129,7 +128,7 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 	}
 
 	if err := h.usecase.UpdateUser(c, input); err != nil {
-		response.Internal(c)
+		response.WriteProblem(c, response.MapError(err))
 		return
 	}
 
@@ -157,7 +156,7 @@ func (h *UserHandler) ChangeEmail(c *gin.Context) {
 		UserID: userID,
 		Email:  request.Email,
 	}); err != nil {
-		response.Internal(c)
+		response.WriteProblem(c, response.MapError(err))
 		return
 	}
 
@@ -185,15 +184,7 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 		OldPassword: request.CurrentPassword,
 		NewPassword: request.NewPassword,
 	}); err != nil {
-		if err == errors.ErrInvalidPassword {
-			response.BadRequest(c, "current password is incorrect")
-			return
-		}
-		if err == errors.ErrPasswordSameAsCurrent {
-			response.DomainError(c, err)
-			return
-		}
-		response.Internal(c)
+		response.WriteProblem(c, response.MapError(err))
 		return
 	}
 
@@ -220,7 +211,7 @@ func (h *UserHandler) ChangeRole(c *gin.Context) {
 	}
 
 	if err := h.usecase.ChangeRole(c, input); err != nil {
-		response.Internal(c)
+		response.WriteProblem(c, response.MapError(err))
 		return
 	}
 
@@ -253,7 +244,7 @@ func (h *UserHandler) ChangeStatus(c *gin.Context) {
 	}
 
 	if err := h.usecase.ChangeStatus(c, input); err != nil {
-		response.DomainError(c, err)
+		response.WriteProblem(c, response.MapError(err))
 		return
 	}
 

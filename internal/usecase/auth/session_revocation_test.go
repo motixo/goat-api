@@ -3,11 +3,13 @@ package auth
 import (
 	"context"
 	stdErrors "errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/motixo/goat-api/internal/domain/entity"
+	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
@@ -29,6 +31,33 @@ func TestLogoutScopesCurrentSessionRevocationToAuthenticatedUser(t *testing.T) {
 	}
 	if !reflect.DeepEqual(sessions.deleteInput, want) {
 		t.Fatalf("DeleteSessions input = %#v, want %#v", sessions.deleteInput, want)
+	}
+}
+
+func TestLogoutClassifiesMissingCurrentSessionSemantically(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "direct", err: domainErrors.ErrNotFound},
+		{name: "wrapped", err: fmt.Errorf("delete session: %w", domainErrors.ErrNotFound)},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			sessions := &recordingAuthSessionUseCase{deleteErr: test.err}
+			usecase := NewUsecase(nil, sessions, nil, nil, nil, discardAuthLogger{}, 0, 0, 0)
+
+			err := usecase.Logout(context.Background(), "01ARZ3NDEKTSV4RRFFQ69G5FAV", "user-1")
+
+			var currentSessionInvalid *CurrentSessionInvalidError
+			if !stdErrors.As(err, &currentSessionInvalid) {
+				t.Fatalf("Logout() error = %v, want CurrentSessionInvalidError", err)
+			}
+			if !stdErrors.Is(err, domainErrors.ErrNotFound) {
+				t.Fatalf("Logout() error = %v, want wrapped ErrNotFound cause", err)
+			}
+		})
 	}
 }
 
@@ -89,6 +118,7 @@ type recordingAuthSessionUseCase struct {
 	session.UseCase
 	createInput session.CreateInput
 	deleteInput session.DeleteSessionsInput
+	deleteErr   error
 }
 
 func (s *recordingAuthSessionUseCase) CreateSession(_ context.Context, input session.CreateInput) error {
@@ -98,7 +128,7 @@ func (s *recordingAuthSessionUseCase) CreateSession(_ context.Context, input ses
 
 func (s *recordingAuthSessionUseCase) DeleteSessions(_ context.Context, input session.DeleteSessionsInput) error {
 	s.deleteInput = input
-	return nil
+	return s.deleteErr
 }
 
 type authPasswordHasher struct {

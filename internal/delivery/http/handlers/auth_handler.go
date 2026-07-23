@@ -38,7 +38,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	output, err := h.usecase.Login(c.Request.Context(), input)
 	if err != nil {
-		response.DomainError(c, err)
+		response.WriteProblem(c, response.MapError(err))
 		return
 	}
 
@@ -59,7 +59,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		Password: request.Password,
 	})
 	if err != nil {
-		response.DomainError(c, err)
+		response.WriteProblem(c, response.MapError(err))
 		return
 	}
 
@@ -83,7 +83,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	output, err := h.usecase.Refresh(c.Request.Context(), input)
 	if err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP(), "device", c.GetHeader("User-Agent"))
-		response.DomainError(c, err)
+		response.WriteProblem(c, response.MapError(err))
 		return
 	}
 
@@ -105,7 +105,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	}
 
 	if err := h.usecase.Logout(c.Request.Context(), sessionID, userID); err != nil {
-		response.Unauthorized(c, err.Error())
+		response.WriteProblem(c, response.MapError(err))
 		return
 	}
 

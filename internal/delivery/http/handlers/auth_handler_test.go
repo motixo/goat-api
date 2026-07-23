@@ -3,6 +3,8 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -180,6 +182,57 @@ func TestAuthHandlerLogoutPreservesAuthenticatedContract(t *testing.T) {
 		t.Fatalf("Logout principal = session %q, user %q; want authenticated context", gotSessionID, gotUserID)
 	}
 	assertAuthHandlerJSONEqual(t, recorder.Body.Bytes(), `{"data":"logout successful"}`)
+}
+
+func TestAuthHandlerLogoutPreservesKnownFailureContracts(t *testing.T) {
+	currentSessionInvalid := auth.NewCurrentSessionInvalidError(domainErrors.ErrNotFound)
+	for _, variant := range []struct {
+		name string
+		err  error
+	}{
+		{name: "direct", err: currentSessionInvalid},
+		{name: "wrapped", err: fmt.Errorf("logout failed: %w", currentSessionInvalid)},
+	} {
+		t.Run(variant.name, func(t *testing.T) {
+			usecase := &stubAuthUseCase{
+				logout: func(context.Context, string, string) error {
+					return variant.err
+				},
+			}
+			recorder := performAuthHandlerRequest(t, newAuthHandlerTestRouter(usecase), http.MethodPost, "/auth/logout", "")
+
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusUnauthorized, recorder.Body.String())
+			}
+			assertAuthHandlerJSONEqual(t, recorder.Body.Bytes(), `{
+				"type":"/errors/unauthorized",
+				"title":"Unauthorized",
+				"status":401,
+				"detail":"not found",
+				"instance":"/auth/logout"
+			}`)
+		})
+	}
+}
+
+func TestAuthHandlerLogoutDoesNotExposeUnknownFailures(t *testing.T) {
+	usecase := &stubAuthUseCase{
+		logout: func(context.Context, string, string) error {
+			return errors.New("redis dial tcp 10.0.0.5:6379: connection refused")
+		},
+	}
+	recorder := performAuthHandlerRequest(t, newAuthHandlerTestRouter(usecase), http.MethodPost, "/auth/logout", "")
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusInternalServerError, recorder.Body.String())
+	}
+	assertAuthHandlerJSONEqual(t, recorder.Body.Bytes(), `{
+		"type":"/errors/internal",
+		"title":"Internal Server Error",
+		"status":500,
+		"detail":"An unexpected error occurred.",
+		"instance":"/auth/logout"
+	}`)
 }
 
 func TestAuthHandlerLoginPreservesInvalidCredentialsProblemContract(t *testing.T) {

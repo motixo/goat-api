@@ -2,11 +2,12 @@ package auth
 
 import (
 	"context"
+	stdErrors "errors"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/motixo/goat-api/internal/domain/entity"
-	"github.com/motixo/goat-api/internal/domain/errors"
+	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
@@ -94,17 +95,17 @@ func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput
 	}
 	if userEntity == nil {
 		us.logger.Warn("login failed: user not found", "email", input.Email)
-		return LoginOutput{}, errors.ErrNotFound
+		return LoginOutput{}, domainErrors.ErrNotFound
 	}
 
 	if userEntity.Status != valueobject.StatusActive {
 		us.logger.Warn("login failed: user account suspended", "email", input.Email)
-		return LoginOutput{}, errors.ErrAccountSuspended
+		return LoginOutput{}, domainErrors.ErrAccountSuspended
 	}
 
 	if !us.passwordHasher.Verify(ctx, input.Password, userEntity.Password) {
 		us.logger.Warn("login failed: invalid password", "email", input.Email, "ip", input.IP, "device", input.Device)
-		return LoginOutput{}, errors.ErrInvalidCredentials
+		return LoginOutput{}, domainErrors.ErrInvalidCredentials
 	}
 
 	refreshJTI := pkg.ULIDGenerator()
@@ -169,6 +170,9 @@ func (us *AuthUseCase) Logout(ctx context.Context, sessionID, userID string) err
 
 	err := us.sessionUC.DeleteSessions(ctx, input)
 	if err != nil {
+		if stdErrors.Is(err, domainErrors.ErrNotFound) {
+			return NewCurrentSessionInvalidError(err)
+		}
 		return err
 	}
 	us.logger.Info("user logged out", "userID", userID)
@@ -180,12 +184,12 @@ func (us *AuthUseCase) Refresh(ctx context.Context, input RefreshInput) (Refresh
 	claims, err := us.jwtService.ParseAndValidate(input.RefreshToken)
 	if err != nil {
 		us.logger.Error("invalid refresh token", "error", err)
-		return RefreshOutput{}, errors.ErrUnauthorized
+		return RefreshOutput{}, domainErrors.ErrUnauthorized
 	}
 
 	if claims.TokenType != valueobject.TokenTypeRefresh {
 		us.logger.Error("refresh token with wrong type", "userID", claims.UserID, "tokenType", claims.TokenType)
-		return RefreshOutput{}, errors.ErrUnauthorized
+		return RefreshOutput{}, domainErrors.ErrUnauthorized
 	}
 
 	role, err := us.userCache.GetUserStatus(ctx, claims.UserID)
@@ -194,7 +198,7 @@ func (us *AuthUseCase) Refresh(ctx context.Context, input RefreshInput) (Refresh
 		return RefreshOutput{}, err
 	}
 	if role == valueobject.StatusSuspended {
-		return RefreshOutput{}, errors.ErrAccountSuspended
+		return RefreshOutput{}, domainErrors.ErrAccountSuspended
 	}
 	us.logger.Debug("refresh token requested", "userID", claims.UserID, "ip", input.IP, "device", input.Device)
 

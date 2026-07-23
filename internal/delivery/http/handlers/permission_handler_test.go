@@ -3,6 +3,8 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 	"github.com/motixo/goat-api/internal/usecase/permission"
 )
@@ -121,6 +124,96 @@ func TestPermissionHandlerCreateRejectsUnknownPermission(t *testing.T) {
 		"detail": "Invalid request payload",
 		"instance": "/permission"
 	}`)
+}
+
+func TestPermissionHandlerMapsPermissionPersistenceErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		method   string
+		path     string
+		body     string
+		usecase  *stubPermissionUseCase
+		register func(*gin.Engine, *PermissionHandler)
+		status   int
+		want     string
+	}{
+		{
+			name:   "duplicate permission",
+			method: http.MethodPost,
+			path:   "/permission",
+			body:   `{"role":"operator","action":"user:read"}`,
+			usecase: &stubPermissionUseCase{
+				create: func(context.Context, permission.CreateInput) (permission.PermissionOutput, error) {
+					return permission.PermissionOutput{}, fmt.Errorf("create permission: %w", domainErrors.ErrPermissionAlreadyExists)
+				},
+			},
+			register: func(router *gin.Engine, handler *PermissionHandler) {
+				router.POST("/permission", handler.CreatePermissin)
+			},
+			status: http.StatusConflict,
+			want: `{
+				"type": "/errors/conflict",
+				"title": "Conflict",
+				"status": 409,
+				"detail": "The request conflicts with current state.",
+				"instance": "/permission"
+			}`,
+		},
+		{
+			name:   "missing permission",
+			method: http.MethodDelete,
+			path:   "/permission/permission-404",
+			usecase: &stubPermissionUseCase{
+				delete: func(context.Context, string) error {
+					return fmt.Errorf("delete permission: %w", domainErrors.ErrPermissionNotFound)
+				},
+			},
+			register: func(router *gin.Engine, handler *PermissionHandler) {
+				router.DELETE("/permission/:id", handler.DeletePermissin)
+			},
+			status: http.StatusNotFound,
+			want: `{
+				"type": "/errors/not-found",
+				"title": "Not Found",
+				"status": 404,
+				"detail": "The requested resource was not found.",
+				"instance": "/permission/permission-404"
+			}`,
+		},
+		{
+			name:   "unknown postgres error remains safe",
+			method: http.MethodPost,
+			path:   "/permission",
+			body:   `{"role":"operator","action":"user:read"}`,
+			usecase: &stubPermissionUseCase{
+				create: func(context.Context, permission.CreateInput) (permission.PermissionOutput, error) {
+					return permission.PermissionOutput{}, errors.New("pq: connection refused at internal host")
+				},
+			},
+			register: func(router *gin.Engine, handler *PermissionHandler) {
+				router.POST("/permission", handler.CreatePermissin)
+			},
+			status: http.StatusInternalServerError,
+			want: `{
+				"type": "/errors/internal",
+				"title": "Internal Server Error",
+				"status": 500,
+				"detail": "An unexpected error occurred.",
+				"instance": "/permission"
+			}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := performPermissionRequest(t, test.method, test.path, test.body, test.usecase, test.register)
+
+			if recorder.Code != test.status {
+				t.Fatalf("status = %d, want %d; body = %s", recorder.Code, test.status, recorder.Body.String())
+			}
+			assertJSONEqual(t, recorder.Body.Bytes(), test.want)
+		})
+	}
 }
 
 func performPermissionRequest(

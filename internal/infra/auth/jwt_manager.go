@@ -93,34 +93,34 @@ func (j *JWTManager) ParseAndValidate(tokenStr string) (*valueobject.JWTClaims, 
 		case errors.Is(err, jwt.ErrTokenMalformed),
 			errors.Is(err, jwt.ErrSignatureInvalid),
 			errors.Is(err, jwt.ErrTokenNotValidYet):
-			return nil, DomainError.ErrUnauthorized
+			return nil, DomainError.ErrTokenInvalid
 		default:
-			return nil, DomainError.ErrUnauthorized
+			return nil, DomainError.ErrTokenInvalid
 		}
 	}
 
 	if !token.Valid {
-		return nil, DomainError.ErrUnauthorized
+		return nil, DomainError.ErrTokenInvalid
 	}
 
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		return nil, DomainError.ErrUnauthorized
+		return nil, DomainError.ErrTokenInvalid
 	}
 
 	userID, ok := claims["user_id"].(string)
 	if !ok || userID == "" {
-		return nil, DomainError.ErrUnauthorized
+		return nil, DomainError.ErrTokenInvalid
 	}
 
 	jti, ok := claims["jti"].(string)
 	if !ok || jti == "" {
-		return nil, DomainError.ErrUnauthorized
+		return nil, DomainError.ErrTokenInvalid
 	}
 
 	tokenTypeStr, ok := claims["token_type"].(string)
 	if !ok {
-		return nil, DomainError.ErrUnauthorized
+		return nil, DomainError.ErrTokenInvalid
 	}
 	tokenType := valueobject.TokenType(tokenTypeStr)
 
@@ -134,12 +134,12 @@ func (j *JWTManager) ParseAndValidate(tokenStr string) (*valueobject.JWTClaims, 
 	} else if audStr, ok := claims["aud"].(string); ok {
 		audience = []string{audStr}
 	} else {
-		return nil, DomainError.ErrUnauthorized
+		return nil, DomainError.ErrTokenInvalid
 	}
 
 	issuer, _ := claims["iss"].(string)
 	if issuer != valueobject.TokenIssuer {
-		return nil, DomainError.ErrUnauthorized
+		return nil, DomainError.ErrTokenInvalid
 	}
 
 	hasValidAud := false
@@ -150,20 +150,20 @@ func (j *JWTManager) ParseAndValidate(tokenStr string) (*valueobject.JWTClaims, 
 		}
 	}
 	if !hasValidAud {
-		return nil, DomainError.ErrUnauthorized
+		return nil, DomainError.ErrTokenInvalid
 	}
 
 	exp, ok := claims["exp"].(float64)
 	if !ok {
-		return nil, DomainError.ErrUnauthorized
+		return nil, DomainError.ErrTokenInvalid
 	}
 	iat, ok := claims["iat"].(float64)
 	if !ok {
-		return nil, DomainError.ErrUnauthorized
+		return nil, DomainError.ErrTokenInvalid
 	}
 	nbf, ok := claims["nbf"].(float64)
 	if !ok {
-		return nil, DomainError.ErrUnauthorized
+		return nil, DomainError.ErrTokenInvalid
 	}
 
 	sessionID, _ := claims["session_id"].(string)
@@ -186,7 +186,7 @@ func (j *JWTManager) ValidateClaims(claims *valueobject.JWTClaims) error {
 	now := time.Now()
 
 	if now.Before(claims.NotBefore) {
-		return DomainError.ErrUnauthorized
+		return DomainError.ErrTokenInvalid
 	}
 
 	if now.After(claims.ExpiresAt) {
@@ -194,12 +194,12 @@ func (j *JWTManager) ValidateClaims(claims *valueobject.JWTClaims) error {
 	}
 
 	if claims.UserID == "" || claims.JTI == "" {
-		return DomainError.ErrUnauthorized
+		return DomainError.ErrTokenInvalid
 	}
 
 	if claims.IsAccess() {
 		if claims.SessionID == "" {
-			return DomainError.ErrUnauthorized
+			return DomainError.ErrTokenInvalid
 		}
 	}
 

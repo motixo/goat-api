@@ -131,8 +131,8 @@ func TestDeleteSessionsRejectsMalformedSessionIDBeforeRedis(t *testing.T) {
 		TargetSessions: []string{"not-a-ulid"},
 	})
 
-	if !stdErrors.Is(err, domainErrors.ErrInvalidInput) {
-		t.Fatalf("DeleteSessions() error = %v, want ErrInvalidInput", err)
+	if !stdErrors.Is(err, ErrInvalidSessionSelection) {
+		t.Fatalf("DeleteSessions() error = %v, want ErrInvalidSessionSelection", err)
 	}
 	if repo.deleteByUserCalls != 0 {
 		t.Fatalf("DeleteByUser() calls = %d, want 0", repo.deleteByUserCalls)
@@ -240,8 +240,8 @@ func TestDeleteSessionsRemoveOthersRejectsMalformedCurrentSessionBeforeRedis(t *
 		RemoveOthers:   true,
 	})
 
-	if !stdErrors.Is(err, domainErrors.ErrInvalidInput) {
-		t.Fatalf("DeleteSessions() error = %v, want ErrInvalidInput", err)
+	if !stdErrors.Is(err, ErrInvalidSessionSelection) {
+		t.Fatalf("DeleteSessions() error = %v, want ErrInvalidSessionSelection", err)
 	}
 	if repo.deleteOthersCalls != 0 {
 		t.Fatalf("DeleteOthersByUser() calls = %d, want 0", repo.deleteOthersCalls)

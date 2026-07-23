@@ -32,7 +32,7 @@ func (h *PermissionHandler) GetPermissions(c *gin.Context) {
 	input.Validate()
 	output, total, err := h.usecase.GetPermissions(c, input.Offset(), input.Limit)
 	if err != nil {
-		response.Internal(c)
+		response.WriteProblem(c, response.MapError(err))
 		return
 	}
 	meta := helper.NewPaginationMeta(total, input)
@@ -56,7 +56,7 @@ func (h *PermissionHandler) GetPermissionsByRole(c *gin.Context) {
 	}
 	output, err := h.usecase.GetPermissionsByRole(c, role)
 	if err != nil {
-		response.Internal(c)
+		response.WriteProblem(c, response.MapError(err))
 		return
 	}
 	response.OK(c, newPermissionResponses(output))
@@ -93,7 +93,7 @@ func (h *PermissionHandler) CreatePermissin(c *gin.Context) {
 		Action: action,
 	})
 	if err != nil {
-		response.Internal(c)
+		response.WriteProblem(c, response.MapError(err))
 		return
 	}
 	response.Created(c, newPermissionResponse(output))
@@ -108,7 +108,7 @@ func (h *PermissionHandler) DeletePermissin(c *gin.Context) {
 		return
 	}
 	if err := h.usecase.Delete(c, permissionID); err != nil {
-		response.Internal(c)
+		response.WriteProblem(c, response.MapError(err))
 		return
 	}
 	response.OK(c, "Deleted")

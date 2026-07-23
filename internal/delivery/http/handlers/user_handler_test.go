@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 	"github.com/motixo/goat-api/internal/usecase/user"
 )
@@ -570,6 +571,59 @@ func TestUserHandlerChangeCommandsPreserveMappingsAndContracts(t *testing.T) {
 		}
 		assertUserHandlerJSONEqual(t, recorder.Body.Bytes(), `{"data":"status updated successfully"}`)
 	})
+}
+
+func TestUserHandlerChangePasswordRecognizesWrappedDomainErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name:       "invalid current password",
+			err:        domainErrors.ErrInvalidPassword,
+			wantStatus: http.StatusBadRequest,
+			wantBody: `{
+				"type":"/errors/validation",
+				"title":"Bad Request",
+				"status":400,
+				"detail":"current password is incorrect",
+				"instance":"/user/change-password"
+			}`,
+		},
+		{
+			name:       "password unchanged",
+			err:        domainErrors.ErrPasswordSameAsCurrent,
+			wantStatus: http.StatusConflict,
+			wantBody: `{
+				"type":"/errors/internal",
+				"title":"Conflict",
+				"status":409,
+				"detail":"Passwords can't be same",
+				"instance":"/user/change-password"
+			}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			usecase := &stubUserHandlerUseCase{
+				changePassword: func(context.Context, user.UpdatePassInput) error {
+					return fmt.Errorf("change password: %w", test.err)
+				},
+			}
+			recorder := performUserHandlerRequest(t, newUserHandlerTestRouter(usecase), http.MethodPatch, "/user/change-password", `{
+				"current_password":"OldPassword1!",
+				"new_password":"NewPassword1!"
+			}`)
+
+			if recorder.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d; body = %s", recorder.Code, test.wantStatus, recorder.Body.String())
+			}
+			assertUserHandlerJSONEqual(t, recorder.Body.Bytes(), test.wantBody)
+		})
+	}
 }
 
 func TestUserHandlerPreservesRequiredFieldBinding(t *testing.T) {
