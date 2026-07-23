@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -210,8 +211,7 @@ func TestUserHandlerListPreservesInvalidFilterContract(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
 	wantFilter := user.ListFilter{
-		Roles:    []valueobject.UserRole{valueobject.RoleUnknown},
-		Statuses: []valueobject.UserStatus{valueobject.StatusUnknown},
+		MatchNone: true,
 	}
 	if !reflect.DeepEqual(gotInput.Filter, wantFilter) {
 		t.Fatalf("filter = %#v, want %#v", gotInput.Filter, wantFilter)
@@ -279,6 +279,189 @@ func TestUserHandlerUpdatePreservesRequestAndResponseContract(t *testing.T) {
 		t.Fatalf("UpdateUser input = %#v, want %#v", gotInput, wantInput)
 	}
 	assertUserHandlerJSONEqual(t, recorder.Body.Bytes(), `{"data":"user updated successfully"}`)
+}
+
+func TestUserHandlerCreateAcceptsEverySupportedRoleAndStatus(t *testing.T) {
+	roles := []valueobject.UserRole{
+		valueobject.RoleClient,
+		valueobject.RoleOperator,
+		valueobject.RoleAdmin,
+	}
+	statuses := []valueobject.UserStatus{
+		valueobject.StatusInactive,
+		valueobject.StatusActive,
+		valueobject.StatusSuspended,
+	}
+
+	for _, role := range roles {
+		for _, status := range statuses {
+			t.Run(role.String()+"/"+status.String(), func(t *testing.T) {
+				var gotInput user.CreateInput
+				usecase := &stubUserHandlerUseCase{
+					createUser: func(_ context.Context, input user.CreateInput) (user.UserOutput, error) {
+						gotInput = input
+						return user.UserOutput{}, nil
+					},
+				}
+				router := newUserHandlerTestRouter(usecase)
+				body := fmt.Sprintf(
+					`{"password":"Password1!","role":%q,"status":%q}`,
+					role.String(),
+					status.String(),
+				)
+
+				recorder := performUserHandlerRequest(t, router, http.MethodPost, "/user", body)
+
+				if recorder.Code != http.StatusCreated {
+					t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusCreated, recorder.Body.String())
+				}
+				if gotInput.Role != role || gotInput.Status != status {
+					t.Fatalf("CreateUser enums = (%v, %v), want (%v, %v)", gotInput.Role, gotInput.Status, role, status)
+				}
+			})
+		}
+	}
+}
+
+func TestUserHandlerUpdatePreservesOmittedOptionalRoleAndStatus(t *testing.T) {
+	var gotInput user.UpdateInput
+	usecase := &stubUserHandlerUseCase{
+		updateUser: func(_ context.Context, input user.UpdateInput) error {
+			gotInput = input
+			return nil
+		},
+	}
+	router := newUserHandlerTestRouter(usecase)
+
+	recorder := performUserHandlerRequest(
+		t,
+		router,
+		http.MethodPut,
+		"/user/"+userHandlerTargetID,
+		`{"email":"updated@example.com","password":"NewPassword1!"}`,
+	)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	wantInput := user.UpdateInput{
+		UserID:   userHandlerTargetID,
+		Email:    "updated@example.com",
+		Password: "NewPassword1!",
+		Status:   valueobject.StatusUnknown,
+		Role:     valueobject.RoleUnknown,
+	}
+	if !reflect.DeepEqual(gotInput, wantInput) {
+		t.Fatalf("UpdateUser input = %#v, want %#v", gotInput, wantInput)
+	}
+}
+
+func TestUserHandlerRejectsInvalidRoleAndStatusJSONWithExistingProblemContract(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{
+			name:   "unknown create role",
+			method: http.MethodPost,
+			path:   "/user",
+			body:   `{"password":"Password1!","role":"owner","status":"active"}`,
+		},
+		{
+			name:   "unknown create status",
+			method: http.MethodPost,
+			path:   "/user",
+			body:   `{"password":"Password1!","role":"client","status":"deleted"}`,
+		},
+		{
+			name:   "case sensitive role",
+			method: http.MethodPatch,
+			path:   "/user/" + userHandlerTargetID + "/change-role",
+			body:   `{"role":"Admin"}`,
+		},
+		{
+			name:   "case sensitive status",
+			method: http.MethodPatch,
+			path:   "/user/" + userHandlerTargetID + "/change-status",
+			body:   `{"status":"ACTIVE"}`,
+		},
+		{
+			name:   "numeric role",
+			method: http.MethodPatch,
+			path:   "/user/" + userHandlerTargetID + "/change-role",
+			body:   `{"role":3}`,
+		},
+		{
+			name:   "numeric status",
+			method: http.MethodPatch,
+			path:   "/user/" + userHandlerTargetID + "/change-status",
+			body:   `{"status":2}`,
+		},
+		{
+			name:   "null optional role",
+			method: http.MethodPut,
+			path:   "/user/" + userHandlerTargetID,
+			body:   `{"role":null}`,
+		},
+		{
+			name:   "null optional status",
+			method: http.MethodPut,
+			path:   "/user/" + userHandlerTargetID,
+			body:   `{"status":null}`,
+		},
+		{
+			name:   "malformed JSON",
+			method: http.MethodPost,
+			path:   "/user",
+			body:   `{"password":"Password1!","role":"client","status":`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			router := newUserHandlerTestRouter(&stubUserHandlerUseCase{})
+			recorder := performUserHandlerRequest(t, router, test.method, test.path, test.body)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+			}
+			assertUserHandlerValidationProblem(t, recorder, test.path)
+		})
+	}
+}
+
+func TestUserHandlerChangeStatusPreservesValidationBeforeAuthenticationContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	usecase := &stubUserHandlerUseCase{
+		changeStatus: func(context.Context, user.UpdateStatusInput) error {
+			t.Fatal("ChangeStatus called without an authenticated principal")
+			return nil
+		},
+	}
+	handler := NewUserHandler(usecase, discardUserHandlerLogger{})
+	path := "/user/" + userHandlerTargetID + "/change-status"
+	router.PATCH("/user/:id/change-status", handler.ChangeStatus)
+
+	invalid := performUserHandlerRequest(t, router, http.MethodPatch, path, `{"status":"deleted"}`)
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid status response = %d, want %d; body = %s", invalid.Code, http.StatusBadRequest, invalid.Body.String())
+	}
+	assertUserHandlerValidationProblem(t, invalid, path)
+
+	valid := performUserHandlerRequest(t, router, http.MethodPatch, path, `{"status":"active"}`)
+	if valid.Code != http.StatusUnauthorized {
+		t.Fatalf("valid unauthenticated response = %d, want %d; body = %s", valid.Code, http.StatusUnauthorized, valid.Body.String())
+	}
+	assertUserHandlerJSONEqual(t, valid.Body.Bytes(), `{
+		"type":"/errors/unauthorized",
+		"title":"Unauthorized",
+		"status":401,
+		"detail":"authentication context missing",
+		"instance":"`+path+`"
+	}`)
 }
 
 func TestUserHandlerChangeCommandsPreserveMappingsAndContracts(t *testing.T) {
@@ -397,6 +580,8 @@ func TestUserHandlerPreservesRequiredFieldBinding(t *testing.T) {
 		body   string
 	}{
 		{name: "create password", method: http.MethodPost, path: "/user", body: `{"status":"active","role":"client"}`},
+		{name: "create role", method: http.MethodPost, path: "/user", body: `{"password":"Password1!","status":"active"}`},
+		{name: "create status", method: http.MethodPost, path: "/user", body: `{"password":"Password1!","role":"client"}`},
 		{name: "email", method: http.MethodPatch, path: "/user/change-email", body: `{}`},
 		{name: "password current", method: http.MethodPatch, path: "/user/change-password", body: `{"new_password":"NewPassword1!"}`},
 		{name: "role", method: http.MethodPatch, path: "/user/" + userHandlerTargetID + "/change-role", body: `{}`},
@@ -410,15 +595,20 @@ func TestUserHandlerPreservesRequiredFieldBinding(t *testing.T) {
 			if recorder.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
 			}
-			assertUserHandlerJSONEqual(t, recorder.Body.Bytes(), `{
-				"type":"/errors/validation",
-				"title":"Bad Request",
-				"status":400,
-				"detail":"Invalid request payload",
-				"instance":"`+test.path+`"
-			}`)
+			assertUserHandlerValidationProblem(t, recorder, test.path)
 		})
 	}
+}
+
+func assertUserHandlerValidationProblem(t *testing.T, recorder *httptest.ResponseRecorder, path string) {
+	t.Helper()
+	assertUserHandlerJSONEqual(t, recorder.Body.Bytes(), `{
+		"type":"/errors/validation",
+		"title":"Bad Request",
+		"status":400,
+		"detail":"Invalid request payload",
+		"instance":"`+path+`"
+	}`)
 }
 
 func newUserHandlerTestRouter(usecase user.UseCase) *gin.Engine {

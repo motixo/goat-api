@@ -115,6 +115,31 @@ func TestGetUsersListReturnsEmptyBeforeRepositoryWhenRequestedRolesAreOutsideSco
 	}
 }
 
+func TestGetUsersListAuthorizesBeforeReturningAnUnmatchableFilter(t *testing.T) {
+	repo := &recordingUserListRepository{}
+	cache := &fixedUserRoleCache{role: valueobject.RoleOperator}
+	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, cache, nil)
+
+	output, total, err := usecase.GetUserslist(context.Background(), GetListInput{
+		ActorID: "operator-1",
+		Filter:  ListFilter{MatchNone: true},
+		Offset:  10,
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("GetUserslist() error = %v", err)
+	}
+	if !cache.called {
+		t.Fatal("authorization role was not loaded before evaluating the filter")
+	}
+	if repo.called {
+		t.Fatal("repository List was called for a filter that cannot match a user")
+	}
+	if len(output) != 0 || total != 0 {
+		t.Fatalf("result = (%#v, %d), want empty output and total 0", output, total)
+	}
+}
+
 type recordingUserListRepository struct {
 	repository.UserRepository
 	called bool
@@ -136,11 +161,13 @@ func (r *recordingUserListRepository) List(_ context.Context, offset, limit int,
 
 type fixedUserRoleCache struct {
 	service.UserCacheService
-	role valueobject.UserRole
-	err  error
+	role   valueobject.UserRole
+	err    error
+	called bool
 }
 
 func (c *fixedUserRoleCache) GetUserRole(context.Context, string) (valueobject.UserRole, error) {
+	c.called = true
 	return c.role, c.err
 }
 

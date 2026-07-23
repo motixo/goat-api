@@ -106,6 +106,9 @@ func (us *UserUseCase) GetUserslist(ctx context.Context, input GetListInput) ([]
 	if len(allowedRoles) == 0 {
 		return []UserOutput{}, 0, nil
 	}
+	if input.Filter.MatchNone {
+		return []UserOutput{}, 0, nil
+	}
 
 	//INTERSECT allowed and requested roles
 

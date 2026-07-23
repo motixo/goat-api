@@ -55,6 +55,8 @@ type ListFilter struct {
 	Statuses []valueobject.UserStatus
 	Roles    []valueobject.UserRole
 	Search   string
+	// MatchNone preserves the meaning of a supplied filter containing no known values.
+	MatchNone bool
 }
 
 type GetListInput struct {

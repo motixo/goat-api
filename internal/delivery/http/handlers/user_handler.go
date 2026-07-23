@@ -6,7 +6,6 @@ import (
 	"github.com/motixo/goat-api/internal/delivery/http/helper"
 	"github.com/motixo/goat-api/internal/delivery/http/response"
 	"github.com/motixo/goat-api/internal/domain/errors"
-	"github.com/motixo/goat-api/internal/domain/valueobject"
 	"github.com/motixo/goat-api/internal/pkg"
 	"github.com/motixo/goat-api/internal/usecase/user"
 )
@@ -32,13 +31,14 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 		response.BadRequest(c, "Invalid request payload")
 		return
 	}
+	input, err := request.toInput()
+	if err != nil {
+		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
+		response.BadRequest(c, "Invalid request payload")
+		return
+	}
 
-	output, err := h.usecase.CreateUser(c, user.CreateInput{
-		Email:    request.Email,
-		Password: request.Password,
-		Status:   request.Status,
-		Role:     request.Role,
-	})
+	output, err := h.usecase.CreateUser(c, input)
 	if err != nil {
 		response.DomainError(c, err)
 		return
@@ -81,24 +81,7 @@ func (h *UserHandler) GetUserList(c *gin.Context) {
 		return
 	}
 
-	filter := user.ListFilter{
-		Search: input.Filter.Search,
-	}
-	for _, r := range input.Filter.Roles {
-		vr, _ := valueobject.ParseUserRole(r)
-		filter.Roles = append(filter.Roles, vr)
-	}
-
-	for _, s := range input.Filter.Statuses {
-		vs, _ := valueobject.ParseUserStatus(s)
-		filter.Statuses = append(filter.Statuses, vs)
-	}
-	output, total, err := h.usecase.GetUserslist(c, user.GetListInput{
-		ActorID: actorID,
-		Filter:  filter,
-		Offset:  input.Offset(),
-		Limit:   input.Limit,
-	})
+	output, total, err := h.usecase.GetUserslist(c, input.toInput(actorID))
 	if err != nil {
 		response.Internal(c)
 		return
@@ -138,14 +121,14 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 		response.BadRequest(c, "Invalid request payload")
 		return
 	}
+	input, err := request.toInput(targetUserID)
+	if err != nil {
+		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
+		response.BadRequest(c, "Invalid request payload")
+		return
+	}
 
-	if err := h.usecase.UpdateUser(c, user.UpdateInput{
-		UserID:   targetUserID,
-		Email:    request.Email,
-		Password: request.Password,
-		Status:   request.Status,
-		Role:     request.Role,
-	}); err != nil {
+	if err := h.usecase.UpdateUser(c, input); err != nil {
 		response.Internal(c)
 		return
 	}
@@ -229,11 +212,14 @@ func (h *UserHandler) ChangeRole(c *gin.Context) {
 		response.BadRequest(c, "Invalid request payload")
 		return
 	}
+	input, err := request.toInput(targetUserID)
+	if err != nil {
+		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
+		response.BadRequest(c, "Invalid request payload")
+		return
+	}
 
-	if err := h.usecase.ChangeRole(c, user.UpdateRoleInput{
-		UserID: targetUserID,
-		Role:   request.Role,
-	}); err != nil {
+	if err := h.usecase.ChangeRole(c, input); err != nil {
 		response.Internal(c)
 		return
 	}
@@ -255,16 +241,18 @@ func (h *UserHandler) ChangeStatus(c *gin.Context) {
 	}
 
 	actorID := c.GetString("user_id")
+	input, err := request.toInput(targetUserID, actorID)
+	if err != nil {
+		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
+		response.BadRequest(c, "Invalid request payload")
+		return
+	}
 	if actorID == "" {
 		response.Unauthorized(c, "authentication context missing")
 		return
 	}
 
-	if err := h.usecase.ChangeStatus(c, user.UpdateStatusInput{
-		UserID:  targetUserID,
-		ActorID: actorID,
-		Status:  request.Status,
-	}); err != nil {
+	if err := h.usecase.ChangeStatus(c, input); err != nil {
 		response.DomainError(c, err)
 		return
 	}
