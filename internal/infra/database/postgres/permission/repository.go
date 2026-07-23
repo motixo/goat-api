@@ -20,17 +20,17 @@ func NewRepository(db *sqlx.DB) repository.PermissionRepository {
 	return &Repository{db: db}
 }
 
-func (p *Repository) Create(ctx context.Context, u *entity.Permission) error {
+func (r *Repository) Create(ctx context.Context, permission *entity.Permission) error {
 	query := `
         INSERT INTO permissions (id, role, action, created_at)
         VALUES (:id, :role, :action, :created_at)
     `
-	_, err := p.db.NamedExecContext(ctx, query, u)
+	_, err := r.db.NamedExecContext(ctx, query, permissionRowFromDomain(permission))
 	return err
 }
 
 func (r *Repository) List(ctx context.Context, offset, limit int) ([]*entity.Permission, int64, error) {
-	var permission []*entity.Permission
+	var rows []permissionRow
 	var total int64
 
 	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM permissions").Scan(&total); err != nil {
@@ -43,25 +43,25 @@ func (r *Repository) List(ctx context.Context, offset, limit int) ([]*entity.Per
 		ORDER BY role DESC
 		LIMIT $1 OFFSET $2
     `
-	err := r.db.SelectContext(ctx, &permission, query, limit, offset)
+	err := r.db.SelectContext(ctx, &rows, query, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
-	return permission, total, nil
+	return permissionRowsToDomain(rows), total, nil
 }
 
 func (r *Repository) GetByRoleID(ctx context.Context, role valueobject.UserRole) ([]*entity.Permission, error) {
-	var permission []*entity.Permission
+	var rows []permissionRow
 	query := `
         SELECT id, role, action, created_at
         FROM permissions
         WHERE role = $1
     `
-	err := r.db.SelectContext(ctx, &permission, query, int8(role))
+	err := r.db.SelectContext(ctx, &rows, query, int8(role))
 	if err != nil {
 		return nil, err
 	}
-	return permission, nil
+	return permissionRowsToDomain(rows), nil
 }
 
 func (r *Repository) Delete(ctx context.Context, permissionID string) (int8, error) {
