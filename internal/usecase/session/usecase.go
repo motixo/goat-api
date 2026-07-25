@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	stdErrors "errors"
 	"fmt"
 	"time"
 
@@ -15,18 +14,15 @@ import (
 
 type SessionUseCase struct {
 	sessionRepo repository.SessionRepository
-	userRepo    CredentialVersionReader
 	logger      pkg.Logger
 }
 
 func NewUsecase(
 	sessionRepo repository.SessionRepository,
-	userRepo CredentialVersionReader,
 	logger pkg.Logger,
 ) UseCase {
 	return &SessionUseCase{
 		sessionRepo: sessionRepo,
-		userRepo:    userRepo,
 		logger:      logger,
 	}
 }
@@ -90,16 +86,11 @@ func (us *SessionUseCase) GetSessionsByUser(ctx context.Context, userID, session
 
 func (us *SessionUseCase) RotateSessionJTI(ctx context.Context, input RotateInput) (string, error) {
 	us.logger.Debug("rotating session JTI", "oldJTI", input.OldJTI, "newJTI", input.CurrentJTI, "ip", input.IP, "device", input.Device)
-	current, valid, err := us.validateSession(ctx, ValidateInput{
-		UserID: input.UserID,
-		JTI:    input.OldJTI,
-	})
-	if err != nil {
-		us.logger.Error("failed to validate session before JTI rotation", "oldJTI", input.OldJTI, "error", err)
-		return "", err
-	}
-	if !valid {
-		us.logger.Warn("attempt to rotate invalid session JTI", "oldJTI", input.OldJTI, "ip", input.IP, "device", input.Device)
+	if input.UserID == "" ||
+		input.SessionID == "" ||
+		input.OldJTI == "" ||
+		input.CurrentJTI == "" ||
+		input.CredentialVersion <= 0 {
 		return "", domainErrors.ErrUnauthorized
 	}
 
@@ -111,7 +102,8 @@ func (us *SessionUseCase) RotateSessionJTI(ctx context.Context, input RotateInpu
 		input.OldJTI,
 		input.CurrentJTI,
 		input.UserID,
-		current.CredentialVersion,
+		input.SessionID,
+		input.CredentialVersion,
 		input.IP,
 		input.Device,
 		expiresAt,
@@ -122,12 +114,18 @@ func (us *SessionUseCase) RotateSessionJTI(ctx context.Context, input RotateInpu
 		us.logger.Error("failed to rotate JTI", "oldJTI", input.OldJTI, "newJTI", input.CurrentJTI, "ip", input.IP, "device", input.Device, "error", err)
 		return "", err
 	}
+	if sessionID == "" {
+		return "", domainErrors.ErrUnauthorized
+	}
 	us.logger.Info("session JTI rotated successfully", "oldJTI", input.OldJTI, "newJTI", input.CurrentJTI, "sessionID", sessionID)
 	return sessionID, nil
 }
 
 func (us *SessionUseCase) ValidateSession(ctx context.Context, input ValidateInput) (bool, error) {
-	if input.UserID == "" || input.SessionID == "" || input.JTI == "" {
+	if input.UserID == "" ||
+		input.SessionID == "" ||
+		input.JTI == "" ||
+		input.CredentialVersion <= 0 {
 		return false, nil
 	}
 	_, valid, err := us.validateSession(ctx, input)
@@ -147,7 +145,13 @@ func (us *SessionUseCase) validateSession(
 		return nil, false, nil
 	}
 
-	current, err := us.sessionRepo.FindByJTI(ctx, input.JTI)
+	current, err := us.sessionRepo.FindByJTI(
+		ctx,
+		input.JTI,
+		input.UserID,
+		input.SessionID,
+		input.CredentialVersion,
+	)
 	if err != nil {
 		return nil, false, err
 	}
@@ -156,21 +160,9 @@ func (us *SessionUseCase) validateSession(
 		current.UserID != input.UserID ||
 		current.CurrentJTI != input.JTI ||
 		current.CredentialVersion <= 0 ||
+		current.SessionGeneration <= 0 ||
+		current.CredentialVersion != input.CredentialVersion ||
 		(input.SessionID != "" && current.ID != input.SessionID) {
-		return nil, false, nil
-	}
-
-	authoritativeVersion, err := us.userRepo.GetCredentialVersion(ctx, input.UserID)
-	if err != nil {
-		if stdErrors.Is(err, domainErrors.ErrUserNotFound) {
-			return nil, false, nil
-		}
-		return nil, false, err
-	}
-	if authoritativeVersion <= 0 {
-		return nil, false, fmt.Errorf("authoritative credential version must be positive")
-	}
-	if current.CredentialVersion != authoritativeVersion {
 		return nil, false, nil
 	}
 	return current, true, nil

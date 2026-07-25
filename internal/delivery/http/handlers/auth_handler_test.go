@@ -8,13 +8,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
+	"github.com/motixo/goat-api/internal/domain/valueobject"
 	"github.com/motixo/goat-api/internal/usecase/auth"
+	"github.com/motixo/goat-api/internal/usecase/authorization"
 )
 
 func TestAuthHandlerLoginPreservesRequestAndResponseContract(t *testing.T) {
@@ -260,6 +263,70 @@ func TestAuthHandlerLoginPreservesInvalidCredentialsProblemContract(t *testing.T
 	}`)
 }
 
+func TestAuthHandlerLoginLocalizesInactiveAccountProblem(t *testing.T) {
+	tests := []struct {
+		name           string
+		acceptLanguage string
+		wantLanguage   string
+		wantTitle      string
+		wantDetail     string
+	}{
+		{
+			name:         "English",
+			wantLanguage: "en",
+			wantTitle:    "Unauthorized",
+			wantDetail:   "account not activated.",
+		},
+		{
+			name:           "Persian",
+			acceptLanguage: "fa-IR",
+			wantLanguage:   "fa",
+			wantTitle:      "لطفاً وارد حساب خود شوید",
+			wantDetail:     "حساب شما هنوز فعال نشده است.",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			usecase := &stubAuthUseCase{
+				login: func(context.Context, auth.LoginInput) (auth.LoginOutput, error) {
+					return auth.LoginOutput{}, fmt.Errorf(
+						"authenticate account: %w",
+						authorization.ErrPrincipalInactive,
+					)
+				},
+			}
+			recorder := performAuthHandlerRequestWithLanguage(
+				t,
+				newAuthHandlerTestRouter(usecase),
+				http.MethodPost,
+				"/auth/login",
+				`{"email":"inactive@example.com","password":"Password1!"}`,
+				test.acceptLanguage,
+			)
+
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf(
+					"status = %d, want %d; body = %s",
+					recorder.Code,
+					http.StatusUnauthorized,
+					recorder.Body.String(),
+				)
+			}
+			if got := recorder.Header().Get("Content-Language"); got != test.wantLanguage {
+				t.Fatalf("Content-Language = %q, want %q", got, test.wantLanguage)
+			}
+			assertAuthHandlerJSONEqual(t, recorder.Body.Bytes(), `{
+				"type":"/errors/unauthorized",
+				"title":`+strconv.Quote(test.wantTitle)+`,
+				"status":401,
+				"detail":`+strconv.Quote(test.wantDetail)+`,
+				"instance":"/auth/login"
+			}`)
+		})
+	}
+}
+
 func TestAuthHandlerRejectsMalformedJSONBeforeUseCase(t *testing.T) {
 	usecase := &stubAuthUseCase{
 		login: func(context.Context, auth.LoginInput) (auth.LoginOutput, error) {
@@ -388,8 +455,12 @@ func newAuthHandlerTestRouter(usecase auth.UseCase) *gin.Engine {
 	router.POST("/auth/signup", handler.Register)
 	router.POST("/auth/refresh", handler.Refresh)
 	router.POST("/auth/logout", func(c *gin.Context) {
-		c.Set("user_id", "authenticated-user")
-		c.Set("session_id", "01ARZ3NDEKTSV4RRFFQ69G5FAV")
+		setHandlerTestPrincipal(
+			c,
+			"authenticated-user",
+			"01ARZ3NDEKTSV4RRFFQ69G5FAV",
+			valueobject.RoleClient,
+		)
 		c.Next()
 	}, handler.Logout)
 	return router

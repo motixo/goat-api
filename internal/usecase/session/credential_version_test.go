@@ -11,115 +11,84 @@ import (
 	"github.com/motixo/goat-api/internal/domain/repository"
 )
 
-func TestValidateSessionRejectsOlderCredentialVersion(t *testing.T) {
-	sessions := &credentialVersionSessionRepository{
-		session: &entity.Session{
-			ID:                "session-1",
-			UserID:            "user-1",
-			CurrentJTI:        "jti-1",
-			CredentialVersion: 4,
-		},
-	}
-	users := &credentialVersionUserRepository{version: 5}
-	usecase := NewUsecase(sessions, users, discardSessionLogger{})
-
-	valid, err := usecase.ValidateSession(context.Background(), ValidateInput{
-		UserID:    "user-1",
-		SessionID: "session-1",
-		JTI:       "jti-1",
-	})
-
-	if err != nil {
-		t.Fatalf("ValidateSession() error = %v", err)
-	}
-	if valid {
-		t.Fatal("ValidateSession() = true for an older credential version")
-	}
-	if users.calls != 1 {
-		t.Fatalf("authoritative credential-version reads = %d, want 1", users.calls)
-	}
-}
-
-func TestValidateSessionAllowsMatchingCredentialVersion(t *testing.T) {
+func TestValidateSessionMatchesSignedAndRedisSnapshots(t *testing.T) {
 	sessions := &credentialVersionSessionRepository{
 		session: &entity.Session{
 			ID:                "session-1",
 			UserID:            "user-1",
 			CurrentJTI:        "jti-1",
 			CredentialVersion: 5,
+			SessionGeneration: 1,
 		},
 	}
-	users := &credentialVersionUserRepository{version: 5}
-	usecase := NewUsecase(sessions, users, discardSessionLogger{})
+	usecase := NewUsecase(sessions, discardSessionLogger{})
 
 	valid, err := usecase.ValidateSession(context.Background(), ValidateInput{
-		UserID:    "user-1",
-		SessionID: "session-1",
-		JTI:       "jti-1",
+		UserID:            "user-1",
+		SessionID:         "session-1",
+		JTI:               "jti-1",
+		CredentialVersion: 5,
 	})
 
 	if err != nil {
 		t.Fatalf("ValidateSession() error = %v", err)
 	}
 	if !valid {
-		t.Fatal("ValidateSession() = false for matching credential versions")
+		t.Fatal("ValidateSession() = false for matching signed and Redis snapshots")
+	}
+	if sessions.findCalls != 1 {
+		t.Fatalf("FindByJTI calls = %d, want 1", sessions.findCalls)
 	}
 }
 
-func TestValidateSessionFailsClosedOnAuthoritativeLookupFailure(t *testing.T) {
-	lookupErr := errors.New("postgres unavailable")
+func TestValidateSessionRejectsCredentialVersionMismatch(t *testing.T) {
 	sessions := &credentialVersionSessionRepository{
 		session: &entity.Session{
 			ID:                "session-1",
 			UserID:            "user-1",
 			CurrentJTI:        "jti-1",
 			CredentialVersion: 5,
+			SessionGeneration: 1,
 		},
 	}
-	users := &credentialVersionUserRepository{err: lookupErr}
-	usecase := NewUsecase(sessions, users, discardSessionLogger{})
+	usecase := NewUsecase(sessions, discardSessionLogger{})
 
 	valid, err := usecase.ValidateSession(context.Background(), ValidateInput{
-		UserID:    "user-1",
-		SessionID: "session-1",
-		JTI:       "jti-1",
-	})
-
-	if valid {
-		t.Fatal("ValidateSession() = true after authoritative lookup failure")
-	}
-	if !errors.Is(err, lookupErr) {
-		t.Fatalf("ValidateSession() error = %v, want PostgreSQL failure", err)
-	}
-}
-
-func TestValidateSessionTreatsMissingAuthoritativeUserAsInvalid(t *testing.T) {
-	sessions := &credentialVersionSessionRepository{
-		session: &entity.Session{
-			ID:                "session-1",
-			UserID:            "user-1",
-			CurrentJTI:        "jti-1",
-			CredentialVersion: 5,
-		},
-	}
-	users := &credentialVersionUserRepository{err: domainErrors.ErrUserNotFound}
-	usecase := NewUsecase(sessions, users, discardSessionLogger{})
-
-	valid, err := usecase.ValidateSession(context.Background(), ValidateInput{
-		UserID:    "user-1",
-		SessionID: "session-1",
-		JTI:       "jti-1",
+		UserID:            "user-1",
+		SessionID:         "session-1",
+		JTI:               "jti-1",
+		CredentialVersion: 4,
 	})
 
 	if err != nil {
 		t.Fatalf("ValidateSession() error = %v", err)
 	}
 	if valid {
-		t.Fatal("ValidateSession() = true for a deleted authoritative user")
+		t.Fatal("ValidateSession() = true for mismatched credential-version snapshots")
 	}
 }
 
-func TestValidateSessionRejectsClaimIdentityMismatchBeforePostgreSQL(t *testing.T) {
+func TestValidateSessionFailsClosedOnRedisFailure(t *testing.T) {
+	lookupErr := errors.New("redis unavailable")
+	sessions := &credentialVersionSessionRepository{findErr: lookupErr}
+	usecase := NewUsecase(sessions, discardSessionLogger{})
+
+	valid, err := usecase.ValidateSession(context.Background(), ValidateInput{
+		UserID:            "user-1",
+		SessionID:         "session-1",
+		JTI:               "jti-1",
+		CredentialVersion: 5,
+	})
+
+	if valid {
+		t.Fatal("ValidateSession() = true after Redis failure")
+	}
+	if !errors.Is(err, lookupErr) {
+		t.Fatalf("ValidateSession() error = %v, want Redis failure", err)
+	}
+}
+
+func TestValidateSessionRejectsSignedIdentityMismatch(t *testing.T) {
 	tests := []struct {
 		name  string
 		input ValidateInput
@@ -127,17 +96,28 @@ func TestValidateSessionRejectsClaimIdentityMismatchBeforePostgreSQL(t *testing.
 		{
 			name: "foreign user",
 			input: ValidateInput{
-				UserID:    "user-2",
-				SessionID: "session-1",
-				JTI:       "jti-1",
+				UserID:            "user-2",
+				SessionID:         "session-1",
+				JTI:               "jti-1",
+				CredentialVersion: 5,
 			},
 		},
 		{
 			name: "foreign session",
 			input: ValidateInput{
-				UserID:    "user-1",
-				SessionID: "session-2",
-				JTI:       "jti-1",
+				UserID:            "user-1",
+				SessionID:         "session-2",
+				JTI:               "jti-1",
+				CredentialVersion: 5,
+			},
+		},
+		{
+			name: "foreign JTI",
+			input: ValidateInput{
+				UserID:            "user-1",
+				SessionID:         "session-1",
+				JTI:               "jti-2",
+				CredentialVersion: 5,
 			},
 		},
 	}
@@ -150,10 +130,10 @@ func TestValidateSessionRejectsClaimIdentityMismatchBeforePostgreSQL(t *testing.
 					UserID:            "user-1",
 					CurrentJTI:        "jti-1",
 					CredentialVersion: 5,
+					SessionGeneration: 1,
 				},
 			}
-			users := &credentialVersionUserRepository{version: 5}
-			usecase := NewUsecase(sessions, users, discardSessionLogger{})
+			usecase := NewUsecase(sessions, discardSessionLogger{})
 
 			valid, err := usecase.ValidateSession(context.Background(), test.input)
 
@@ -163,16 +143,13 @@ func TestValidateSessionRejectsClaimIdentityMismatchBeforePostgreSQL(t *testing.
 			if valid {
 				t.Fatal("ValidateSession() = true for mismatched signed identity")
 			}
-			if users.calls != 0 {
-				t.Fatalf("authoritative version reads = %d, want 0 for mismatched Redis identity", users.calls)
-			}
 		})
 	}
 }
 
 func TestCreateSessionSnapshotsCredentialVersion(t *testing.T) {
 	sessions := &credentialVersionSessionRepository{}
-	usecase := NewUsecase(sessions, &credentialVersionUserRepository{}, discardSessionLogger{})
+	usecase := NewUsecase(sessions, discardSessionLogger{})
 
 	err := usecase.CreateSession(context.Background(), CreateInput{
 		ID:                "session-1",
@@ -193,7 +170,7 @@ func TestCreateSessionSnapshotsCredentialVersion(t *testing.T) {
 
 func TestCreateSessionRejectsMissingCredentialVersion(t *testing.T) {
 	sessions := &credentialVersionSessionRepository{}
-	usecase := NewUsecase(sessions, &credentialVersionUserRepository{}, discardSessionLogger{})
+	usecase := NewUsecase(sessions, discardSessionLogger{})
 
 	err := usecase.CreateSession(context.Background(), CreateInput{
 		ID:         "session-1",
@@ -218,17 +195,19 @@ func TestRotateSessionJTIPreservesValidatedCredentialVersion(t *testing.T) {
 			UserID:            "user-1",
 			CurrentJTI:        "old-jti",
 			CredentialVersion: 8,
+			SessionGeneration: 1,
 		},
 	}
-	users := &credentialVersionUserRepository{version: 8}
-	usecase := NewUsecase(sessions, users, discardSessionLogger{})
+	usecase := NewUsecase(sessions, discardSessionLogger{})
 
 	sessionID, err := usecase.RotateSessionJTI(context.Background(), RotateInput{
-		UserID:     "user-1",
-		OldJTI:     "old-jti",
-		CurrentJTI: "new-jti",
-		SessionTTL: time.Hour,
-		JTITTL:     time.Minute,
+		UserID:            "user-1",
+		SessionID:         "session-1",
+		CredentialVersion: 8,
+		OldJTI:            "old-jti",
+		CurrentJTI:        "new-jti",
+		SessionTTL:        time.Hour,
+		JTITTL:            time.Minute,
 	})
 
 	if err != nil {
@@ -245,20 +224,13 @@ func TestRotateSessionJTIPreservesValidatedCredentialVersion(t *testing.T) {
 	}
 }
 
-func TestRotateSessionJTIRejectsOldCredentialVersionWithoutRedisMutation(t *testing.T) {
-	sessions := &credentialVersionSessionRepository{
-		session: &entity.Session{
-			ID:                "session-1",
-			UserID:            "user-1",
-			CurrentJTI:        "old-jti",
-			CredentialVersion: 8,
-		},
-	}
-	users := &credentialVersionUserRepository{version: 9}
-	usecase := NewUsecase(sessions, users, discardSessionLogger{})
+func TestRotateSessionJTIRejectsMissingCredentialVersionWithoutRedisMutation(t *testing.T) {
+	sessions := &credentialVersionSessionRepository{}
+	usecase := NewUsecase(sessions, discardSessionLogger{})
 
 	_, err := usecase.RotateSessionJTI(context.Background(), RotateInput{
 		UserID:     "user-1",
+		SessionID:  "session-1",
 		OldJTI:     "old-jti",
 		CurrentJTI: "new-jti",
 		SessionTTL: time.Hour,
@@ -277,6 +249,7 @@ type credentialVersionSessionRepository struct {
 	repository.SessionRepository
 	session                  *entity.Session
 	findErr                  error
+	findCalls                int
 	created                  *entity.Session
 	rotateCalls              int
 	rotatedUserID            string
@@ -289,14 +262,21 @@ func (r *credentialVersionSessionRepository) Create(_ context.Context, session *
 	return nil
 }
 
-func (r *credentialVersionSessionRepository) FindByJTI(context.Context, string) (*entity.Session, error) {
+func (r *credentialVersionSessionRepository) FindByJTI(
+	context.Context,
+	string,
+	string,
+	string,
+	int64,
+) (*entity.Session, error) {
+	r.findCalls++
 	return r.session, r.findErr
 }
 
 func (r *credentialVersionSessionRepository) RotateJTI(
 	_ context.Context,
 	_, _ string,
-	expectedUserID string,
+	expectedUserID, _ string,
 	expectedCredentialVersion int64,
 	_, _ string,
 	_ time.Time,
@@ -306,16 +286,4 @@ func (r *credentialVersionSessionRepository) RotateJTI(
 	r.rotatedUserID = expectedUserID
 	r.rotatedCredentialVersion = expectedCredentialVersion
 	return r.session.ID, nil
-}
-
-type credentialVersionUserRepository struct {
-	repository.UserRepository
-	version int64
-	err     error
-	calls   int
-}
-
-func (r *credentialVersionUserRepository) GetCredentialVersion(context.Context, string) (int64, error) {
-	r.calls++
-	return r.version, r.err
 }

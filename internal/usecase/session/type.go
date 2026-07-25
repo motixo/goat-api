@@ -32,17 +32,20 @@ type DeleteSessionsInput struct {
 }
 
 type RotateInput struct {
-	UserID     string
-	OldJTI     string
-	CurrentJTI string
-	Device     string
-	IP         string
-	SessionTTL time.Duration
-	JTITTL     time.Duration
+	UserID            string
+	SessionID         string
+	OldJTI            string
+	CurrentJTI        string
+	CredentialVersion int64
+	Device            string
+	IP                string
+	SessionTTL        time.Duration
+	JTITTL            time.Duration
 }
 
 type ValidateInput struct {
-	UserID    string
-	SessionID string
-	JTI       string
+	UserID            string
+	SessionID         string
+	JTI               string
+	CredentialVersion int64
 }

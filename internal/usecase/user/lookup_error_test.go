@@ -48,7 +48,7 @@ func TestUserIDLookupUseCasesPreserveSemanticNotFoundAndSQLCause(t *testing.T) {
 		} {
 			t.Run(operation.name+"/"+variant.name, func(t *testing.T) {
 				repo := &lookupUserRepository{findByIDErr: variant.err}
-				usecase := NewUsecase(repo, nil, discardUserLogger{}, nil, nil, nil, nil)
+				usecase := NewUsecase(repo, nil, discardUserLogger{}, nil, nil)
 
 				err := operation.run(usecase)
 
@@ -93,7 +93,7 @@ func TestUserIDLookupUseCasesPreserveUnknownFailures(t *testing.T) {
 	} {
 		t.Run(operation.name, func(t *testing.T) {
 			repo := &lookupUserRepository{findByIDErr: lookupErr}
-			usecase := NewUsecase(repo, nil, discardUserLogger{}, nil, nil, nil, nil)
+			usecase := NewUsecase(repo, nil, discardUserLogger{}, nil, nil)
 
 			err := operation.run(usecase)
 
@@ -116,7 +116,7 @@ func TestGetUserSuccessfulLookupRemainsUnchanged(t *testing.T) {
 		Status:    valueobject.StatusActive,
 		CreatedAt: createdAt,
 	}}
-	usecase := NewUsecase(repo, nil, discardUserLogger{}, nil, nil, nil, nil)
+	usecase := NewUsecase(repo, nil, discardUserLogger{}, nil, nil)
 
 	output, err := usecase.GetUser(context.Background(), "user-1")
 

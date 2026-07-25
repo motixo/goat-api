@@ -41,7 +41,10 @@ func (r *RedisRateLimiter) Allow(
 	}
 
 	member := pkg.ULIDGenerator()
-	script := redisClinet.GetScript("rate_limit")
+	script, err := redisClinet.GetScript(redisClinet.ScriptRateLimit)
+	if err != nil {
+		return false, 0, 0, fmt.Errorf("resolve rate-limit script: %w", err)
+	}
 	result, err := script.Run(ctx, r.redis, []string{key},
 		limit,
 		windowMicro,

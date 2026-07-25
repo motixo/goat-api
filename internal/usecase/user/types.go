@@ -46,9 +46,10 @@ type UpdateRoleInput struct {
 }
 
 type UpdateStatusInput struct {
-	UserID  string
-	ActorID string
-	Status  valueobject.UserStatus
+	UserID    string
+	ActorID   string
+	ActorRole valueobject.UserRole
+	Status    valueobject.UserStatus
 }
 
 type ListFilter struct {
@@ -60,8 +61,9 @@ type ListFilter struct {
 }
 
 type GetListInput struct {
-	ActorID string
-	Filter  ListFilter
-	Offset  int
-	Limit   int
+	ActorID   string
+	ActorRole valueobject.UserRole
+	Filter    ListFilter
+	Offset    int
+	Limit     int
 }

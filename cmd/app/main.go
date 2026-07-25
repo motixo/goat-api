@@ -6,48 +6,34 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/motixo/goat-api/internal/config"
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Printf("application stopped with error: %v", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	cfg, err := config.Load()
 	if err != nil {
-		panic("failed to load config: " + err.Error())
+		return fmt.Errorf("load config: %w", err)
 	}
 
 	app, err := InitializeApp(cfg)
 	if err != nil {
-		panic("failed to initialize app: " + err.Error())
+		return fmt.Errorf("initialize app: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go func() {
-		if err := app.Server.Run(cfg.ServerPort); err != nil {
-			if err.Error() != "http: Server closed" {
-				panic("Server failed to run: " + err.Error())
-			}
-		}
-	}()
-
-	app.Cleaner.Start(ctx)
-
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer shutdownCancel()
-
-	// Shut down HTTP server (stop accepting new requests)
-	app.Server.Shutdown(shutdownCtx)
-
-	// Wait for background Event Handlers to complete
-	app.EventBus.Wait()
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	return app.Run(ctx)
 }

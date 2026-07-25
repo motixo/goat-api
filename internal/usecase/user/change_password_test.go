@@ -55,9 +55,6 @@ func TestChangePasswordSuccessCommitsVersionBeforeAtomicSessionCleanup(t *testin
 			passwordChangeSessionCleanupTimeout,
 		)
 	}
-	if len(fixture.cache.clearedUserIDs) != 0 {
-		t.Fatalf("authorization cache was cleared for password-only change: %v", fixture.cache.clearedUserIDs)
-	}
 	if fixture.userRepo.persistedPassword.Encoded() != passwordChangeNewHash {
 		t.Fatalf("persisted password = %q, want %q", fixture.userRepo.persistedPassword.Encoded(), passwordChangeNewHash)
 	}
@@ -66,7 +63,7 @@ func TestChangePasswordSuccessCommitsVersionBeforeAtomicSessionCleanup(t *testin
 	}
 }
 
-func TestChangePasswordIdempotentCleanupLeavesAuthorizationCacheAlone(t *testing.T) {
+func TestChangePasswordIdempotentSessionCleanupSucceeds(t *testing.T) {
 	fixture := newPasswordChangeFixture()
 
 	err := fixture.usecase.ChangePassword(context.Background(), passwordChangeInput())
@@ -81,9 +78,6 @@ func TestChangePasswordIdempotentCleanupLeavesAuthorizationCacheAlone(t *testing
 		"user.update_password",
 		"session.delete_all",
 	)
-	if len(fixture.cache.clearedUserIDs) != 0 {
-		t.Fatalf("authorization cache was cleared for password-only change: %v", fixture.cache.clearedUserIDs)
-	}
 }
 
 func TestChangePasswordIncorrectCurrentPasswordStopsBeforeDestructiveOperations(t *testing.T) {
@@ -183,32 +177,6 @@ func TestChangePasswordAtomicSessionCleanupTimeoutAfterCommitStillReturnsSuccess
 		passwordChangeCleanupStageSessionRevocation,
 		context.DeadlineExceeded,
 	)
-}
-
-func TestChangePasswordDoesNotInvalidateRoleStatusAuthorizationCache(t *testing.T) {
-	cacheErr := errors.New("redis cache invalidation failed")
-	fixture := newPasswordChangeFixture()
-	fixture.cache.clearErr = cacheErr
-
-	err := fixture.usecase.ChangePassword(context.Background(), passwordChangeInput())
-
-	if err != nil {
-		t.Fatalf("ChangePassword() error = %v with irrelevant cache failure configured", err)
-	}
-	assertPasswordChangeCalls(t, fixture,
-		"user.find",
-		"password.verify",
-		"password.hash",
-		"user.update_password",
-		"session.delete_all",
-	)
-	assertPasswordAndVersionChanged(t, fixture)
-	if len(fixture.cache.clearedUserIDs) != 0 {
-		t.Fatalf("authorization cache was cleared for password-only change: %v", fixture.cache.clearedUserIDs)
-	}
-	if len(fixture.metrics.stages) != 0 {
-		t.Fatalf("cleanup failure metrics = %v, want none", fixture.metrics.stages)
-	}
 }
 
 func TestChangePasswordDatabaseFailureDoesNotIncrementVersionOrStartRedisCleanup(t *testing.T) {
@@ -349,7 +317,6 @@ type passwordChangeFixture struct {
 	userRepo       *passwordChangeUserRepository
 	passwordHasher *passwordChangeHasher
 	sessionRepo    *passwordChangeSessionRepository
-	cache          *passwordChangeUserCache
 	logger         *passwordChangeLogRecorder
 	metrics        *passwordChangeCleanupMetrics
 	usecase        UseCase
@@ -375,7 +342,6 @@ func newPasswordChangeFixture() *passwordChangeFixture {
 		hash:         valueobject.PasswordFromHash(passwordChangeNewHash),
 	}
 	sessionRepo := &passwordChangeSessionRepository{recorder: recorder}
-	cache := &passwordChangeUserCache{recorder: recorder}
 	cleanupMetrics := &passwordChangeCleanupMetrics{}
 
 	return &passwordChangeFixture{
@@ -383,7 +349,6 @@ func newPasswordChangeFixture() *passwordChangeFixture {
 		userRepo:       userRepo,
 		passwordHasher: passwordHasher,
 		sessionRepo:    sessionRepo,
-		cache:          cache,
 		logger:         logRecorder,
 		metrics:        cleanupMetrics,
 		usecase: NewUsecase(
@@ -391,8 +356,6 @@ func newPasswordChangeFixture() *passwordChangeFixture {
 			passwordHasher,
 			passwordChangeLogger{recorder: logRecorder},
 			sessionRepo,
-			cache,
-			nil,
 			cleanupMetrics,
 		),
 	}
@@ -510,19 +473,6 @@ func (r *passwordChangeSessionRepository) DeleteAllByUser(ctx context.Context, u
 		return r.deleteAll(ctx, userID)
 	}
 	return r.deleteAllErr
-}
-
-type passwordChangeUserCache struct {
-	service.UserCacheService
-	recorder       *passwordChangeRecorder
-	clearErr       error
-	clearedUserIDs []string
-}
-
-func (c *passwordChangeUserCache) ClearCache(_ context.Context, userID string) error {
-	c.recorder.record("cache.clear")
-	c.clearedUserIDs = append(c.clearedUserIDs, userID)
-	return c.clearErr
 }
 
 type passwordChangeLogEntry struct {

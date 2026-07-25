@@ -10,6 +10,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+const (
+	minimumAccessTokenLifetime = time.Minute
+	maximumAccessTokenLifetime = 15 * time.Minute
+)
+
 // Config holds all application configuration
 type Config struct {
 	Env                    string        `envconfig:"ENV" default:"development"`
@@ -25,7 +30,7 @@ type Config struct {
 	RedisPort              string        `envconfig:"REDIS_PORT" default:"6379"`
 	RedisPassword          string        `envconfig:"REDIS_PASSWORD"`
 	RedisDB                int           `envconfig:"REDIS_DB" default:"0"`
-	JWTExpiration          time.Duration `envconfig:"JWT_EXPIRATION" default:"15m"`
+	JWTExpiration          time.Duration `envconfig:"JWT_EXPIRATION" default:"5m"`
 	RefreshTokenExpiration time.Duration `envconfig:"REFRESH_TOKEN_EXPIRATION" default:"168h"`
 	SessionExpiration      time.Duration `envconfig:"SESSION_EXPIRATION" default:"720h"`
 	GinMode                string        `envconfig:"GIN_MODE" default:"debug"`
@@ -75,6 +80,14 @@ func Load() (*Config, error) {
 func (c *Config) validate() error {
 	if c.Env != "development" && c.Env != "production" {
 		return fmt.Errorf("invalid ENV: must be 'development' or 'production'")
+	}
+	if c.JWTExpiration < minimumAccessTokenLifetime ||
+		c.JWTExpiration > maximumAccessTokenLifetime {
+		return fmt.Errorf(
+			"invalid JWT_EXPIRATION: must be between %s and %s",
+			minimumAccessTokenLifetime,
+			maximumAccessTokenLifetime,
+		)
 	}
 	return nil
 }

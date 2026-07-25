@@ -2,6 +2,9 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/motixo/goat-api/internal/config"
@@ -9,7 +12,7 @@ import (
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
-func SeedPermissions(db *sqlx.DB) error {
+func SeedPermissions(db *sqlx.DB) (err error) {
 
 	adminRole := int8(valueobject.RoleAdmin)
 	clientRole := int8(valueobject.RoleClient)
@@ -29,7 +32,15 @@ func SeedPermissions(db *sqlx.DB) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		if err == nil {
+			return
+		}
+		rollbackErr := tx.Rollback()
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			err = errors.Join(err, fmt.Errorf("rollback permission seed: %w", rollbackErr))
+		}
+	}()
 
 	insertStmt := `
     INSERT INTO permissions (id, role, action, created_at)
@@ -59,7 +70,8 @@ func SeedPermissions(db *sqlx.DB) error {
 		}
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	return err
 }
 
 func SeedAdminUser(db *sqlx.DB, passwordHasher service.PasswordHasher, cfg *config.Config) error {

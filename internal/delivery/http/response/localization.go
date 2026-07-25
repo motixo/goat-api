@@ -4,8 +4,13 @@ import (
 	"bytes"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"sort"
+	"strings"
 	"text/template"
+	"text/template/parse"
 
 	"golang.org/x/text/language"
 )
@@ -13,6 +18,8 @@ import (
 type TranslationKey string
 
 type TranslationParams map[string]any
+
+var errInvalidLocalizationAssets = errors.New("invalid HTTP problem localization assets")
 
 type locale string
 
@@ -100,6 +107,11 @@ var translationKeys = []TranslationKey{
 	DetailRateLimitExceeded,
 }
 
+var translationParameterDefinitions = map[TranslationKey][]string{
+	DetailInvalidUserRole:   {"Role"},
+	DetailRateLimitExceeded: {"RetryAfter"},
+}
+
 //go:embed translations/en.json
 var englishCatalogJSON []byte
 
@@ -117,7 +129,7 @@ var (
 		language.English,
 		language.Persian,
 	})
-	problemLocalizer = mustLoadLocalizer()
+	problemLocalizer, problemLocalizerErr = loadLocalizer(englishCatalogJSON, persianCatalogJSON)
 )
 
 func resolveLocale(acceptLanguage string) locale {
@@ -128,35 +140,279 @@ func resolveLocale(acceptLanguage string) locale {
 	return localeEnglish
 }
 
-func mustLoadLocalizer() localizer {
-	catalogs := map[locale]translationCatalog{
-		localeEnglish: mustLoadCatalog(localeEnglish, englishCatalogJSON),
-		localePersian: mustLoadCatalog(localePersian, persianCatalogJSON),
+// ValidateRuntimeAssets verifies the embedded HTTP problem catalogs without
+// exposing catalog messages in returned errors. Bootstrap calls this before
+// constructing any HTTP runtime resources.
+func ValidateRuntimeAssets() error {
+	if problemLocalizerErr != nil {
+		return fmt.Errorf("validate embedded HTTP problem translations: %w", problemLocalizerErr)
 	}
-	for _, key := range translationKeys {
-		if _, exists := catalogs[localeEnglish][key]; !exists {
-			panic(fmt.Sprintf("English problem translation %q is missing", key))
-		}
-	}
-	return localizer{catalogs: catalogs}
+	return nil
 }
 
-func mustLoadCatalog(catalogLocale locale, data []byte) translationCatalog {
-	var messages map[string]string
-	if err := json.Unmarshal(data, &messages); err != nil {
-		panic(fmt.Sprintf("decode %s problem translations: %v", catalogLocale, err))
+func loadLocalizer(englishData, persianData []byte) (localizer, error) {
+	if err := validateTranslationContract(); err != nil {
+		return localizer{}, err
 	}
 
+	englishCatalog, err := loadCatalog(localeEnglish, englishData)
+	if err != nil {
+		return localizer{}, err
+	}
+	persianCatalog, err := loadCatalog(localePersian, persianData)
+	if err != nil {
+		return localizer{}, err
+	}
+
+	for _, key := range translationKeys {
+		englishTemplate, exists := englishCatalog[key]
+		if !exists {
+			return localizer{}, localizationAssetError(
+				"English catalog is missing required key %q",
+				key,
+			)
+		}
+		if err := validateTemplateParameters(
+			localeEnglish,
+			key,
+			englishTemplate,
+			translationParameterDefinitions[key],
+		); err != nil {
+			return localizer{}, err
+		}
+	}
+
+	for key, persianTemplate := range persianCatalog {
+		englishTemplate, exists := englishCatalog[key]
+		if !exists {
+			return localizer{}, localizationAssetError(
+				"Persian catalog contains a key with no English definition",
+			)
+		}
+		englishParameters := templateParameters(englishTemplate)
+		if err := validateTemplateParameters(
+			localePersian,
+			key,
+			persianTemplate,
+			englishParameters,
+		); err != nil {
+			return localizer{}, err
+		}
+	}
+
+	return localizer{catalogs: map[locale]translationCatalog{
+		localeEnglish: englishCatalog,
+		localePersian: persianCatalog,
+	}}, nil
+}
+
+func validateTranslationContract() error {
+	seenKeys := make(map[TranslationKey]struct{}, len(translationKeys))
+	for _, key := range translationKeys {
+		if strings.TrimSpace(string(key)) == "" {
+			return localizationAssetError("required translation key is empty")
+		}
+		if _, duplicate := seenKeys[key]; duplicate {
+			return localizationAssetError("required translation key is registered more than once")
+		}
+		seenKeys[key] = struct{}{}
+	}
+
+	for key, parameters := range translationParameterDefinitions {
+		if _, required := seenKeys[key]; !required {
+			return localizationAssetError("parameter definition references an unregistered translation key")
+		}
+		seenParameters := make(map[string]struct{}, len(parameters))
+		for _, parameter := range parameters {
+			if strings.TrimSpace(parameter) == "" {
+				return localizationAssetError("translation parameter name is empty")
+			}
+			if _, duplicate := seenParameters[parameter]; duplicate {
+				return localizationAssetError("translation parameter is defined more than once")
+			}
+			seenParameters[parameter] = struct{}{}
+		}
+	}
+	return nil
+}
+
+func loadCatalog(catalogLocale locale, data []byte) (translationCatalog, error) {
+	messages, err := decodeCatalogMessages(catalogLocale, data)
+	if err != nil {
+		return nil, err
+	}
 	catalog := make(translationCatalog, len(messages))
-	for rawKey, message := range messages {
-		key := TranslationKey(rawKey)
-		parsed, err := template.New(rawKey).Option("missingkey=error").Parse(message)
+	for key, message := range messages {
+		parsed, err := template.New(string(key)).Option("missingkey=error").Parse(message)
 		if err != nil {
-			panic(fmt.Sprintf("parse %s problem translation %q: %v", catalogLocale, key, err))
+			return nil, localizationAssetError(
+				"%s catalog contains invalid template syntax for key %q",
+				catalogLocale,
+				key,
+			)
 		}
 		catalog[key] = parsed
 	}
-	return catalog
+	return catalog, nil
+}
+
+func decodeCatalogMessages(catalogLocale locale, data []byte) (map[TranslationKey]string, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, malformedCatalogError(catalogLocale)
+	}
+	opening, ok := token.(json.Delim)
+	if !ok || opening != '{' {
+		return nil, malformedCatalogError(catalogLocale)
+	}
+
+	messages := make(map[TranslationKey]string)
+	for decoder.More() {
+		token, err = decoder.Token()
+		if err != nil {
+			return nil, malformedCatalogError(catalogLocale)
+		}
+		rawKey, ok := token.(string)
+		if !ok {
+			return nil, malformedCatalogError(catalogLocale)
+		}
+		if strings.TrimSpace(rawKey) == "" {
+			return nil, localizationAssetError("%s catalog contains an empty translation key", catalogLocale)
+		}
+
+		key := TranslationKey(rawKey)
+		if _, duplicate := messages[key]; duplicate {
+			return nil, localizationAssetError("%s catalog contains a duplicate translation key", catalogLocale)
+		}
+
+		var message string
+		if err := decoder.Decode(&message); err != nil {
+			return nil, malformedCatalogError(catalogLocale)
+		}
+		if strings.TrimSpace(message) == "" {
+			return nil, localizationAssetError("%s catalog contains an empty translation", catalogLocale)
+		}
+		messages[key] = message
+	}
+
+	token, err = decoder.Token()
+	if err != nil {
+		return nil, malformedCatalogError(catalogLocale)
+	}
+	closing, ok := token.(json.Delim)
+	if !ok || closing != '}' {
+		return nil, malformedCatalogError(catalogLocale)
+	}
+
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return nil, malformedCatalogError(catalogLocale)
+	}
+	return messages, nil
+}
+
+func validateTemplateParameters(
+	catalogLocale locale,
+	key TranslationKey,
+	message *template.Template,
+	expected []string,
+) error {
+	actual := templateParameters(message)
+	if equalStringSets(actual, expected) {
+		return nil
+	}
+	return localizationAssetError(
+		"%s catalog has incompatible translation parameters for key %q",
+		catalogLocale,
+		key,
+	)
+}
+
+func templateParameters(message *template.Template) []string {
+	parameters := make(map[string]struct{})
+	for _, associated := range message.Templates() {
+		if associated.Tree != nil {
+			collectTemplateParameters(associated.Root, parameters)
+		}
+	}
+
+	result := make([]string, 0, len(parameters))
+	for parameter := range parameters {
+		result = append(result, parameter)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func collectTemplateParameters(node parse.Node, parameters map[string]struct{}) {
+	if node == nil {
+		return
+	}
+
+	switch current := node.(type) {
+	case *parse.ListNode:
+		for _, child := range current.Nodes {
+			collectTemplateParameters(child, parameters)
+		}
+	case *parse.ActionNode:
+		collectTemplateParameters(current.Pipe, parameters)
+	case *parse.IfNode:
+		collectBranchParameters(current.BranchNode, parameters)
+	case *parse.RangeNode:
+		collectBranchParameters(current.BranchNode, parameters)
+	case *parse.WithNode:
+		collectBranchParameters(current.BranchNode, parameters)
+	case *parse.TemplateNode:
+		collectTemplateParameters(current.Pipe, parameters)
+	case *parse.PipeNode:
+		for _, command := range current.Cmds {
+			collectTemplateParameters(command, parameters)
+		}
+	case *parse.CommandNode:
+		for _, argument := range current.Args {
+			collectTemplateParameters(argument, parameters)
+		}
+	case *parse.FieldNode:
+		if len(current.Ident) > 0 {
+			parameters[strings.Join(current.Ident, ".")] = struct{}{}
+		}
+	case *parse.ChainNode:
+		collectTemplateParameters(current.Node, parameters)
+		if len(current.Field) > 0 {
+			parameters[strings.Join(current.Field, ".")] = struct{}{}
+		}
+	}
+}
+
+func collectBranchParameters(branch parse.BranchNode, parameters map[string]struct{}) {
+	collectTemplateParameters(branch.Pipe, parameters)
+	collectTemplateParameters(branch.List, parameters)
+	collectTemplateParameters(branch.ElseList, parameters)
+}
+
+func equalStringSets(actual, expected []string) bool {
+	if len(actual) != len(expected) {
+		return false
+	}
+	expectedSet := make(map[string]struct{}, len(expected))
+	for _, value := range expected {
+		expectedSet[value] = struct{}{}
+	}
+	for _, value := range actual {
+		if _, exists := expectedSet[value]; !exists {
+			return false
+		}
+	}
+	return true
+}
+
+func malformedCatalogError(catalogLocale locale) error {
+	return localizationAssetError("%s catalog contains malformed JSON", catalogLocale)
+}
+
+func localizationAssetError(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", errInvalidLocalizationAssets, fmt.Sprintf(format, args...))
 }
 
 func (l localizer) translate(catalogLocale locale, key TranslationKey, params TranslationParams) string {

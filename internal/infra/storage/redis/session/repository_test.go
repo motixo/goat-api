@@ -33,4 +33,10 @@ func TestDeleteAllByUserRejectsEmptyUserIDBeforeRedis(t *testing.T) {
 	if err := repository.DeleteAllByUser(context.Background(), ""); err == nil {
 		t.Fatal("DeleteAllByUser() accepted an empty user ID")
 	}
+	if err := repository.BlockAndDeleteAllByUser(context.Background(), ""); err == nil {
+		t.Fatal("BlockAndDeleteAllByUser() accepted an empty user ID")
+	}
+	if err := repository.UnblockUser(context.Background(), ""); err == nil {
+		t.Fatal("UnblockUser() accepted an empty user ID")
+	}
 }

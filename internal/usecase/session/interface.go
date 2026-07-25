@@ -11,7 +11,3 @@ type UseCase interface {
 	RotateSessionJTI(ctx context.Context, input RotateInput) (string, error)
 	ValidateSession(ctx context.Context, input ValidateInput) (bool, error)
 }
-
-type CredentialVersionReader interface {
-	GetCredentialVersion(ctx context.Context, userID string) (int64, error)
-}

@@ -9,7 +9,11 @@ import (
 
 type SessionRepository interface {
 	Create(ctx context.Context, s *entity.Session) error
-	FindByJTI(ctx context.Context, jti string) (*entity.Session, error)
+	FindByJTI(
+		ctx context.Context,
+		jti, expectedUserID, expectedSessionID string,
+		expectedCredentialVersion int64,
+	) (*entity.Session, error)
 	// ListByUser treats a zero limit as unbounded for internal security workflows.
 	ListByUser(ctx context.Context, userID string, offset, limit int) ([]*entity.Session, int64, error)
 	Delete(ctx context.Context, sessionIDs []string) error
@@ -17,11 +21,18 @@ type SessionRepository interface {
 	// DeleteAllByUser atomically revokes every stored session proven to belong
 	// to the user.
 	DeleteAllByUser(ctx context.Context, userID string) error
+	// BlockAndDeleteAllByUser atomically blocks new access, advances the user's
+	// session generation, and revokes every indexed session proven to belong to
+	// the user.
+	BlockAndDeleteAllByUser(ctx context.Context, userID string) error
+	// UnblockUser permits new session creation from an existing access state
+	// without decreasing or reusing the user's current session generation.
+	UnblockUser(ctx context.Context, userID string) error
 	// DeleteOthersByUser returns false without mutation when currentSessionID is not owned by userID.
 	DeleteOthersByUser(ctx context.Context, userID, currentSessionID string) (bool, error)
 	RotateJTI(
 		ctx context.Context,
-		oldJTI, newJTI, expectedUserID string,
+		oldJTI, newJTI, expectedUserID, expectedSessionID string,
 		expectedCredentialVersion int64,
 		ip, device string,
 		expiresAt time.Time,

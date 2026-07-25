@@ -6,6 +6,7 @@ import (
 
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/usecase/auth"
+	"github.com/motixo/goat-api/internal/usecase/authorization"
 	"github.com/motixo/goat-api/internal/usecase/session"
 )
 
@@ -13,6 +14,35 @@ func MapError(err error) ProblemDescriptor {
 	var currentSessionInvalid *auth.CurrentSessionInvalidError
 
 	switch {
+	case errors.Is(err, domainErrors.ErrUserAccessBlocked),
+		errors.Is(err, authorization.ErrPrincipalSecurityStateChanged):
+		return ProblemDescriptor{
+			Type:      "/errors/unauthorized",
+			Status:    http.StatusUnauthorized,
+			TitleKey:  titleUnauthorized,
+			DetailKey: DetailTokenRevoked,
+		}
+	case errors.Is(err, authorization.ErrPrincipalInactive):
+		return ProblemDescriptor{
+			Type:      "/errors/unauthorized",
+			Status:    http.StatusUnauthorized,
+			TitleKey:  titleUnauthorized,
+			DetailKey: DetailAccountNotActivated,
+		}
+	case errors.Is(err, authorization.ErrPrincipalSuspended):
+		return ProblemDescriptor{
+			Type:      "/errors/unauthorized",
+			Status:    http.StatusUnauthorized,
+			TitleKey:  titleUnauthorized,
+			DetailKey: DetailAccountSuspended,
+		}
+	case errors.Is(err, authorization.ErrPermissionDenied):
+		return ProblemDescriptor{
+			Type:      "/errors/forbidden",
+			Status:    http.StatusForbidden,
+			TitleKey:  titleForbidden,
+			DetailKey: DetailInsufficientPermissions,
+		}
 	case errors.As(err, &currentSessionInvalid):
 		return ProblemDescriptor{
 			Type:      "/errors/unauthorized",
@@ -127,7 +157,9 @@ func MapError(err error) ProblemDescriptor {
 			TitleKey:  titleConflict,
 			DetailKey: detailPasswordSameAsCurrent,
 		}
-	case errors.Is(err, domainErrors.ErrPermissionAlreadyExists), errors.Is(err, domainErrors.ErrConflict):
+	case errors.Is(err, domainErrors.ErrInvalidUserStatusTransition),
+		errors.Is(err, domainErrors.ErrPermissionAlreadyExists),
+		errors.Is(err, domainErrors.ErrConflict):
 		return ProblemDescriptor{
 			Type:      "/errors/conflict",
 			Status:    http.StatusConflict,

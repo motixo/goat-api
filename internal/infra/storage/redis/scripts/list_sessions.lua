@@ -41,6 +41,7 @@ for _, sessionKey in ipairs(indexedSessionKeys) do
         "ip",
         "current_jti",
         "credential_version",
+        "session_generation",
         "created_at",
         "updated_at",
         "expires_at"
@@ -55,9 +56,10 @@ for _, sessionKey in ipairs(indexedSessionKeys) do
         local ip = fields[4]
         local currentJTI = fields[5]
         local credentialVersion = fields[6]
-        local createdAt = fields[7]
-        local updatedAt = fields[8]
-        local expiresAt = fields[9]
+        local sessionGeneration = fields[7]
+        local createdAt = fields[8]
+        local updatedAt = fields[9]
+        local expiresAt = fields[10]
         local hasSessionPrefix = string.sub(sessionKey, 1, string.len(sessionKeyPrefix)) == sessionKeyPrefix
         local complete = owner == expectedUserID
             and hasSessionPrefix
@@ -68,6 +70,8 @@ for _, sessionKey in ipairs(indexedSessionKeys) do
             and currentJTI ~= ""
             and credentialVersion
             and string.match(credentialVersion, "^[1-9]%d*$")
+            and sessionGeneration
+            and string.match(sessionGeneration, "^[1-9]%d*$")
             and isUnixTimestamp(createdAt)
             and isUnixTimestamp(updatedAt)
             and isUnixTimestamp(expiresAt)
@@ -80,6 +84,7 @@ for _, sessionKey in ipairs(indexedSessionKeys) do
                 result[#result + 1] = ip or ""
                 result[#result + 1] = currentJTI
                 result[#result + 1] = credentialVersion
+                result[#result + 1] = sessionGeneration
                 result[#result + 1] = createdAt
                 result[#result + 1] = updatedAt
                 result[#result + 1] = expiresAt
@@ -105,7 +110,10 @@ for _, candidate in ipairs(cleanup) do
         if candidate.jti then
             local jtiKey = "session:jti:" .. candidate.jti
             local mappedSessionKey = redis.pcall("GET", jtiKey)
-            if not mappedSessionKey.err and mappedSessionKey == candidate.sessionKey then
+            local mappedSessionKeyFailed = type(mappedSessionKey) == "table"
+                and mappedSessionKey.err
+            if not mappedSessionKeyFailed
+                and mappedSessionKey == candidate.sessionKey then
                 redis.call("DEL", jtiKey)
             end
         end

@@ -9,7 +9,6 @@ import (
 	"github.com/motixo/goat-api/internal/domain/entity"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
-	usercache "github.com/motixo/goat-api/internal/infra/cache/user"
 	redisSession "github.com/motixo/goat-api/internal/infra/storage/redis/session"
 	"github.com/motixo/goat-api/internal/pkg"
 	sessionUseCase "github.com/motixo/goat-api/internal/usecase/session"
@@ -33,14 +32,8 @@ func TestDeleteUserIntegrationCleansIndexedSessionsBeforeDeletingUser(t *testing
 			logger := discardUserLogger{}
 			userID := createCredentialVersionIntegrationUser(t, ctx, users, passwordHasher)
 			sessions := redisSession.NewRepository(redisClient, logger)
-			cache := usercache.NewCachedRepository(users, usercache.NewCache(redisClient), logger)
 
 			owned := makeDeleteUserIntegrationSessions(t, ctx, redisClient, sessions, userID, currentTest.sessionCount)
-			cacheKey := pkg.RedisKey("user", "id", userID)
-			t.Cleanup(func() { _ = redisClient.Del(context.Background(), cacheKey).Err() })
-			if _, err := cache.GetUserRole(ctx, userID); err != nil {
-				t.Fatalf("prime authorization cache: %v", err)
-			}
 
 			var foreignSessionID string
 			var foreignJTI string
@@ -69,7 +62,7 @@ func TestDeleteUserIntegrationCleansIndexedSessionsBeforeDeletingUser(t *testing
 				}
 			}
 
-			usecase := NewUsecase(users, nil, logger, sessions, cache, nil, nil)
+			usecase := NewUsecase(users, nil, logger, sessions, nil)
 			if err := usecase.DeleteUser(ctx, userID); err != nil {
 				t.Fatalf("DeleteUser() error = %v", err)
 			}
@@ -78,9 +71,6 @@ func TestDeleteUserIntegrationCleansIndexedSessionsBeforeDeletingUser(t *testing
 				t.Fatalf("FindByID(deleted user) error = %v, want ErrUserNotFound", err)
 			}
 			assertDeleteUserRedisKeysAbsent(t, ctx, redisClient, owned...)
-			if exists, err := redisClient.Exists(ctx, cacheKey).Result(); err != nil || exists != 0 {
-				t.Fatalf("authorization cache existence = (%d, %v), want (0, nil)", exists, err)
-			}
 			if currentTest.addInvalidMembers {
 				assertDeleteUserRedisKeysPresent(t, ctx, redisClient, foreignSessionID, foreignJTI)
 				targetIndex := pkg.RedisKey("session", "user", userID)
@@ -97,9 +87,8 @@ func TestDeleteUserIntegrationIsIdempotentAtTheSessionBoundary(t *testing.T) {
 	logger := discardUserLogger{}
 	userID := createCredentialVersionIntegrationUser(t, ctx, users, passwordHasher)
 	sessions := redisSession.NewRepository(redisClient, logger)
-	cache := usercache.NewCachedRepository(users, usercache.NewCache(redisClient), logger)
 	owned := makeDeleteUserIntegrationSessions(t, ctx, redisClient, sessions, userID, 1)
-	usecase := NewUsecase(users, nil, logger, sessions, cache, nil, nil)
+	usecase := NewUsecase(users, nil, logger, sessions, nil)
 
 	if err := usecase.DeleteUser(ctx, userID); err != nil {
 		t.Fatalf("DeleteUser(first) error = %v", err)
@@ -117,12 +106,11 @@ func TestDeleteUserIntegrationRedisCleanupFailureLeavesPostgreSQLUntouched(t *te
 	userID := createCredentialVersionIntegrationUser(t, ctx, users, passwordHasher)
 	sessions := redisSession.NewRepository(operationClient, logger)
 	owned := makeDeleteUserIntegrationSessions(t, ctx, operationClient, sessions, userID, 1)
-	cache := usercache.NewCachedRepository(users, usercache.NewCache(operationClient), logger)
 
 	if err := operationClient.Close(); err != nil {
 		t.Fatalf("close operation Redis client: %v", err)
 	}
-	err := NewUsecase(users, nil, logger, sessions, cache, nil, nil).DeleteUser(ctx, userID)
+	err := NewUsecase(users, nil, logger, sessions, nil).DeleteUser(ctx, userID)
 	if !stdErrors.Is(err, redis.ErrClosed) {
 		t.Fatalf("DeleteUser() error = %v, want redis.ErrClosed", err)
 	}
@@ -135,74 +123,33 @@ func TestDeleteUserIntegrationRedisCleanupFailureLeavesPostgreSQLUntouched(t *te
 	}
 }
 
-func TestDeleteUserIntegrationCacheFailureLeavesPostgreSQLUntouched(t *testing.T) {
-	ctx, users, passwordHasher, redisClient := newCredentialVersionIntegration(t)
-	logger := discardUserLogger{}
-	userID := createCredentialVersionIntegrationUser(t, ctx, users, passwordHasher)
-	sessions := redisSession.NewRepository(redisClient, logger)
-	owned := makeDeleteUserIntegrationSessions(t, ctx, redisClient, sessions, userID, 1)
-
-	workingCache := usercache.NewCachedRepository(users, usercache.NewCache(redisClient), logger)
-	cacheKey := pkg.RedisKey("user", "id", userID)
-	t.Cleanup(func() { _ = redisClient.Del(context.Background(), cacheKey).Err() })
-	if _, err := workingCache.GetUserRole(ctx, userID); err != nil {
-		t.Fatalf("prime authorization cache: %v", err)
-	}
-
-	failingCacheClient := newCredentialVersionRedisClient(t)
-	if err := failingCacheClient.Close(); err != nil {
-		t.Fatalf("close cache Redis client: %v", err)
-	}
-	failingCache := usercache.NewCachedRepository(users, usercache.NewCache(failingCacheClient), logger)
-	err := NewUsecase(users, nil, logger, sessions, failingCache, nil, nil).DeleteUser(ctx, userID)
-	if !stdErrors.Is(err, redis.ErrClosed) {
-		t.Fatalf("DeleteUser() error = %v, want redis.ErrClosed", err)
-	}
-
-	assertDeleteUserIntegrationUserExists(t, ctx, users, userID)
-	assertDeleteUserRedisKeysAbsent(t, ctx, redisClient, owned...)
-	if exists, err := redisClient.Exists(ctx, cacheKey).Result(); err != nil || exists != 1 {
-		t.Fatalf("authorization cache existence = (%d, %v), want (1, nil)", exists, err)
-	}
-}
-
 func TestDeleteUserIntegrationPostgreSQLFailureOccursAfterCleanup(t *testing.T) {
 	ctx, users, passwordHasher, redisClient := newCredentialVersionIntegration(t)
 	logger := discardUserLogger{}
 	userID := createCredentialVersionIntegrationUser(t, ctx, users, passwordHasher)
 	sessions := redisSession.NewRepository(redisClient, logger)
 	owned := makeDeleteUserIntegrationSessions(t, ctx, redisClient, sessions, userID, 1)
-	cache := usercache.NewCachedRepository(users, usercache.NewCache(redisClient), logger)
-	cacheKey := pkg.RedisKey("user", "id", userID)
-	t.Cleanup(func() { _ = redisClient.Del(context.Background(), cacheKey).Err() })
-	if _, err := cache.GetUserRole(ctx, userID); err != nil {
-		t.Fatalf("prime authorization cache: %v", err)
-	}
 
 	deleteErr := stdErrors.New("postgres delete failed")
 	failingUsers := &deleteUserFailingRepository{
 		UserRepository: users,
 		deleteErr:      deleteErr,
 	}
-	err := NewUsecase(failingUsers, nil, logger, sessions, cache, nil, nil).DeleteUser(ctx, userID)
+	err := NewUsecase(failingUsers, nil, logger, sessions, nil).DeleteUser(ctx, userID)
 	if !stdErrors.Is(err, deleteErr) {
 		t.Fatalf("DeleteUser() error = %v, want PostgreSQL deletion error", err)
 	}
 
 	assertDeleteUserIntegrationUserExists(t, ctx, users, userID)
 	assertDeleteUserRedisKeysAbsent(t, ctx, redisClient, owned...)
-	if exists, err := redisClient.Exists(ctx, cacheKey).Result(); err != nil || exists != 0 {
-		t.Fatalf("authorization cache existence = (%d, %v), want (0, nil)", exists, err)
-	}
 }
 
-func TestDeleteUserIntegrationLateSessionIsUnusableAfterAuthoritativeDeletion(t *testing.T) {
+func TestDeleteUserIntegrationBlockPreventsLateSessionAndSnapshotAccess(t *testing.T) {
 	ctx, users, passwordHasher, redisClient := newCredentialVersionIntegration(t)
 	logger := discardUserLogger{}
 	userID := createCredentialVersionIntegrationUser(t, ctx, users, passwordHasher)
 	sessions := redisSession.NewRepository(redisClient, logger)
 	initial := makeDeleteUserIntegrationSessions(t, ctx, redisClient, sessions, userID, 1)
-	cache := usercache.NewCachedRepository(users, usercache.NewCache(redisClient), logger)
 
 	deleteReached := make(chan struct{})
 	continueDelete := make(chan struct{})
@@ -213,7 +160,7 @@ func TestDeleteUserIntegrationLateSessionIsUnusableAfterAuthoritativeDeletion(t 
 	}
 	deleteDone := make(chan error, 1)
 	go func() {
-		deleteDone <- NewUsecase(gatedUsers, nil, logger, sessions, cache, nil, nil).
+		deleteDone <- NewUsecase(gatedUsers, nil, logger, sessions, nil).
 			DeleteUser(ctx, userID)
 	}()
 
@@ -226,10 +173,25 @@ func TestDeleteUserIntegrationLateSessionIsUnusableAfterAuthoritativeDeletion(t 
 
 	late := newPasswordChangeIntegrationSession(userID)
 	registerCredentialVersionSessionCleanup(t, redisClient, late)
-	if err := sessions.Create(ctx, late); err != nil {
-		t.Fatalf("create session after atomic cleanup: %v", err)
+	if err := sessions.Create(ctx, late); !stdErrors.Is(err, domainErrors.ErrUserAccessBlocked) {
+		t.Fatalf("create session after access block error = %v, want ErrUserAccessBlocked", err)
 	}
-	assertDeleteUserRedisKeysPresent(t, ctx, redisClient, late.ID, late.CurrentJTI)
+	assertDeleteUserRedisKeysAbsent(t, ctx, redisClient, late)
+
+	validation := sessionUseCase.NewUsecase(sessions, logger)
+	valid, err := validation.ValidateSession(ctx, sessionUseCase.ValidateInput{
+		UserID:            userID,
+		SessionID:         initial[0].ID,
+		JTI:               initial[0].CurrentJTI,
+		CredentialVersion: initial[0].CredentialVersion,
+	})
+	if !stdErrors.Is(err, domainErrors.ErrUserAccessBlocked) || valid {
+		t.Fatalf(
+			"ValidateSession(blocked deleted-user session) = (%v, %v), want (false, ErrUserAccessBlocked)",
+			valid,
+			err,
+		)
+	}
 	close(continueDelete)
 
 	select {
@@ -241,19 +203,20 @@ func TestDeleteUserIntegrationLateSessionIsUnusableAfterAuthoritativeDeletion(t 
 		t.Fatalf("wait for user deletion: %v", ctx.Err())
 	}
 
-	validation := sessionUseCase.NewUsecase(sessions, users, logger)
-	valid, err := validation.ValidateSession(ctx, sessionUseCase.ValidateInput{
-		UserID:    userID,
-		SessionID: late.ID,
-		JTI:       late.CurrentJTI,
-	})
-	if err != nil {
-		t.Fatalf("ValidateSession(late session) error = %v", err)
+	if blocked, err := redisClient.HGet(
+		ctx,
+		pkg.RedisKey("session", "access", userID),
+		"blocked",
+	).Result(); err != nil || blocked != "1" {
+		t.Fatalf("deleted-user access state = (%q, %v), want blocked", blocked, err)
 	}
-	if valid {
-		t.Fatal("late Redis session remained usable after authoritative user deletion")
+
+	afterDelete := newPasswordChangeIntegrationSession(userID)
+	registerCredentialVersionSessionCleanup(t, redisClient, afterDelete)
+	if err := sessions.Create(ctx, afterDelete); !stdErrors.Is(err, domainErrors.ErrUserAccessBlocked) {
+		t.Fatalf("create session after PostgreSQL deletion error = %v, want ErrUserAccessBlocked", err)
 	}
-	assertDeleteUserRedisKeysPresent(t, ctx, redisClient, late.ID, late.CurrentJTI)
+	assertDeleteUserRedisKeysAbsent(t, ctx, redisClient, afterDelete)
 }
 
 func makeDeleteUserIntegrationSessions(

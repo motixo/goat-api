@@ -3,76 +3,80 @@ package middleware
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/motixo/goat-api/internal/delivery/http/response"
-	"github.com/motixo/goat-api/internal/domain/entity"
-	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
-	"github.com/motixo/goat-api/internal/usecase/user"
+	"github.com/motixo/goat-api/internal/usecase/authorization"
 )
 
 type PermMiddleware struct {
-	userUC    user.UseCase
-	permCache service.PermCacheService
-	userCache service.UserCacheService
+	authorization authorization.UseCase
 }
 
-func NewPermMiddleware(userUC user.UseCase, permCache service.PermCacheService, userCache service.UserCacheService) *PermMiddleware {
-	return &PermMiddleware{
-		userUC:    userUC,
-		permCache: permCache,
-		userCache: userCache,
-	}
+func NewPermMiddleware(usecase authorization.UseCase) *PermMiddleware {
+	return &PermMiddleware{authorization: usecase}
 }
 
-func (m *PermMiddleware) Require(requiredPerm valueobject.Permission) gin.HandlerFunc {
+func (m *PermMiddleware) RequireSnapshot(
+	required valueobject.Permission,
+) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userIDVal, exists := c.Get(string(UserIDKey))
-		if !exists {
+		principal, ok := PrincipalFrom(c)
+		if !ok {
 			response.Unauthorized(c, response.DetailAuthenticationRequired)
 			c.Abort()
 			return
 		}
-		userID, ok := userIDVal.(string)
-		if !ok || userID == "" {
-			response.Unauthorized(c, response.DetailInvalidUserContext)
+		if !principal.Permissions().Has(required) {
+			response.WriteProblem(c, response.MapError(authorization.ErrPermissionDenied))
 			c.Abort()
 			return
 		}
-
-		roleID, err := m.userCache.GetUserRole(c.Request.Context(), userID)
-		if err != nil {
-			response.Internal(c)
-			c.Abort()
-			return
-		}
-		if roleID == valueobject.RoleUnknown {
-			response.Unauthorized(c, response.DetailContactSupport)
-			c.Abort()
-			return
-		}
-
-		perms, err := m.permCache.GetRolePermissions(c.Request.Context(), roleID)
-		if err != nil {
-			response.Internal(c)
-			c.Abort()
-			return
-		}
-
-		if !hasPermission(perms, requiredPerm) {
-			response.Forbidden(c, response.DetailInsufficientPermissions)
-			c.Abort()
-			return
-		}
-
 		c.Next()
 	}
 }
 
-func hasPermission(perms []*entity.Permission, required valueobject.Permission) bool {
-
-	for _, p := range perms {
-		if p.Action == required || p.Action == valueobject.PermFullAccess {
-			return true
+func (m *PermMiddleware) FreshIdentity() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		principal, ok := PrincipalFrom(c)
+		if !ok {
+			response.Unauthorized(c, response.DetailAuthenticationRequired)
+			c.Abort()
+			return
 		}
+		fresh, err := m.authorization.AuthorizeFreshIdentity(
+			c.Request.Context(),
+			principal,
+		)
+		if err != nil {
+			response.WriteProblem(c, response.MapError(err))
+			c.Abort()
+			return
+		}
+		SetPrincipal(c, fresh)
+		c.Next()
 	}
-	return false
+}
+
+func (m *PermMiddleware) RequireFreshAuthorization(
+	required valueobject.Permission,
+) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		principal, ok := PrincipalFrom(c)
+		if !ok {
+			response.Unauthorized(c, response.DetailAuthenticationRequired)
+			c.Abort()
+			return
+		}
+		fresh, err := m.authorization.AuthorizeFresh(
+			c.Request.Context(),
+			principal,
+			required,
+		)
+		if err != nil {
+			response.WriteProblem(c, response.MapError(err))
+			c.Abort()
+			return
+		}
+		SetPrincipal(c, fresh)
+		c.Next()
+	}
 }

@@ -6,7 +6,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/motixo/goat-api/internal/domain/entity"
-	"github.com/motixo/goat-api/internal/domain/event"
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 	"github.com/motixo/goat-api/internal/pkg"
@@ -14,19 +13,16 @@ import (
 
 type PermissionUseCase struct {
 	permissionRepo repository.PermissionRepository
-	publisher      event.Publisher
 	logger         pkg.Logger
 }
 
 func NewUsecase(
 	p repository.PermissionRepository,
-	publisher event.Publisher,
 	logger pkg.Logger,
 ) UseCase {
 	return &PermissionUseCase{
 		permissionRepo: p,
 		logger:         logger,
-		publisher:      publisher,
 	}
 }
 
@@ -42,10 +38,6 @@ func (us *PermissionUseCase) Create(ctx context.Context, input CreateInput) (Per
 		us.logger.Error("failed to create permission", "role", input.Role.String(), "action", input.Action, "error", err)
 		return PermissionOutput{}, err
 	}
-
-	us.publisher.Publish(ctx, event.PermissionUpdatedEvent{
-		Role: input.Role,
-	})
 
 	us.logger.Info("permission created successfully", "role", input.Role.String(), "action", input.Action)
 	return PermissionOutput{
@@ -102,14 +94,10 @@ func (us *PermissionUseCase) GetPermissionsByRole(ctx context.Context, role valu
 
 func (us *PermissionUseCase) Delete(ctx context.Context, permissionID string) error {
 	us.logger.Info("delete permission attempt", "permission_id", permissionID)
-	roleID, err := us.permissionRepo.Delete(ctx, permissionID)
-	if err != nil {
+	if err := us.permissionRepo.Delete(ctx, permissionID); err != nil {
 		us.logger.Error("failed to create permission", "permission_id", permissionID, "error", err)
 		return err
 	}
-	us.publisher.Publish(ctx, event.PermissionUpdatedEvent{
-		Role: valueobject.UserRole(roleID),
-	})
 
 	us.logger.Info("permission deleted successfully", "permission_id", permissionID)
 	return nil

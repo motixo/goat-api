@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/motixo/goat-api/internal/domain/entity"
 	"github.com/motixo/goat-api/internal/domain/errors"
-	"github.com/motixo/goat-api/internal/domain/event"
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
@@ -19,16 +18,15 @@ const (
 	passwordChangeCleanupStageSessionRevocation = "session_revocation"
 	passwordChangeSessionCleanupTimeout         = 2 * time.Second
 	userDeletionSessionCleanupTimeout           = 2 * time.Second
+	userStatusAccessStateTimeout                = 2 * time.Second
 )
 
 type UserUseCase struct {
-	userRepo                    repository.UserRepository
-	passwordHasher              service.PasswordHasher
-	userCache                   service.UserCacheService
-	sessionRepo                 repository.SessionRepository
-	publisher                   event.Publisher
-	logger                      pkg.Logger
-	passwordChangeCleanupMetric PasswordChangeCleanupMetrics
+	userRepo       repository.UserRepository
+	passwordHasher service.PasswordHasher
+	sessionRepo    repository.SessionRepository
+	logger         pkg.Logger
+	metrics        PasswordChangeCleanupMetrics
 }
 
 func NewUsecase(
@@ -36,24 +34,27 @@ func NewUsecase(
 	passwordHasher service.PasswordHasher,
 	logger pkg.Logger,
 	sessionRepo repository.SessionRepository,
-	userCache service.UserCacheService,
-	publisher event.Publisher,
-	passwordChangeCleanupMetric PasswordChangeCleanupMetrics,
+	metrics PasswordChangeCleanupMetrics,
 ) UseCase {
 	return &UserUseCase{
-		userRepo:                    r,
-		passwordHasher:              passwordHasher,
-		sessionRepo:                 sessionRepo,
-		userCache:                   userCache,
-		publisher:                   publisher,
-		logger:                      logger,
-		passwordChangeCleanupMetric: passwordChangeCleanupMetric,
+		userRepo:       r,
+		passwordHasher: passwordHasher,
+		sessionRepo:    sessionRepo,
+		logger:         logger,
+		metrics:        metrics,
 	}
 }
 
 func (us *UserUseCase) CreateUser(ctx context.Context, input CreateInput) (UserOutput, error) {
 
 	us.logger.Info("create user attempt", "email", input.Email)
+	if input.Status != valueobject.StatusInactive {
+		return UserOutput{}, invalidUserStatusTransition(
+			valueobject.StatusUnknown,
+			input.Status,
+		)
+	}
+
 	hashedPassword, err := us.passwordHasher.Hash(ctx, input.Password)
 	if err != nil {
 		us.logger.Error("failed to hash password", "email", input.Email, "error", err)
@@ -107,12 +108,7 @@ func (us *UserUseCase) GetUser(ctx context.Context, userID string) (UserOutput, 
 func (us *UserUseCase) GetUserslist(ctx context.Context, input GetListInput) ([]UserOutput, int64, error) {
 	us.logger.Info("Fetching users List")
 
-	actorRole, err := us.userCache.GetUserRole(ctx, input.ActorID)
-	if err != nil {
-		us.logger.Error("change user status faild", "target_id", input.ActorID, "error", err)
-		return []UserOutput{}, 0, err
-	}
-	allowedRoles := valueobject.VisibleRoles(actorRole)
+	allowedRoles := valueobject.VisibleRoles(input.ActorRole)
 	if len(allowedRoles) == 0 {
 		return []UserOutput{}, 0, nil
 	}
@@ -181,24 +177,18 @@ func (us *UserUseCase) DeleteUser(ctx context.Context, userID string) error {
 	}
 
 	cleanupCtx, cancelCleanup := context.WithTimeout(ctx, userDeletionSessionCleanupTimeout)
-	cleanupErr := us.sessionRepo.DeleteAllByUser(cleanupCtx, userID)
+	cleanupErr := us.sessionRepo.BlockAndDeleteAllByUser(cleanupCtx, userID)
 	cancelCleanup()
 	if cleanupErr != nil {
 		us.logger.Error("failed to revoke user sessions", "user_id", userID, "error", cleanupErr)
 		return fmt.Errorf("revoke sessions before user deletion: %w", cleanupErr)
 	}
 
-	if err := us.userCache.ClearCache(ctx, userID); err != nil {
-		us.logger.Error("failed to invalidate user cache before deletion", "user_id", userID, "error", err)
-		return fmt.Errorf("invalidate cache before user deletion: %w", err)
-	}
-
-	// PostgreSQL and Redis do not share a transaction. Delete durable user state
-	// only after session revocation and cache invalidation are known to succeed.
-	// A database failure can therefore leave an existing user logged out, but a
-	// known revocation failure is never reported as a successful user deletion.
-	// A session created after the atomic Redis cleanup can remain stored, but a
-	// successful user-row deletion makes it fail authoritative session validation.
+	// PostgreSQL and Redis do not share a transaction. The Redis access-state
+	// tombstone is installed before deleting durable user state, so a late login
+	// cannot create a usable session and snapshot routes fail closed. A database
+	// failure can therefore leave an existing user blocked, but a known Redis
+	// enforcement failure is never reported as a successful deletion.
 	if err := us.userRepo.Delete(ctx, userID); err != nil {
 		us.logger.Error("failed to delete user", "user_id", userID, "error", err)
 		return err
@@ -210,6 +200,23 @@ func (us *UserUseCase) DeleteUser(ctx context.Context, userID string) error {
 
 func (us *UserUseCase) UpdateUser(ctx context.Context, input UpdateInput) error {
 	us.logger.Info("update user attempt", "target_id", input.UserID)
+	if input.Status != valueobject.StatusUnknown {
+		current, err := us.userRepo.FindByID(ctx, input.UserID)
+		if err != nil {
+			us.logger.Error("failed to verify user status before update", "user_id", input.UserID, "error", err)
+			return err
+		}
+		if current == nil {
+			return errors.ErrUserNotFound
+		}
+		if !current.Status.IsKnown() {
+			return fmt.Errorf("current user status is invalid")
+		}
+		if current.Status != input.Status {
+			return invalidUserStatusTransition(current.Status, input.Status)
+		}
+	}
+
 	hashedPassword, err := us.passwordHasher.Hash(ctx, input.Password)
 	if err != nil {
 		us.logger.Error("failed to hash password", "user_id", input.UserID, "error", err)
@@ -220,8 +227,12 @@ func (us *UserUseCase) UpdateUser(ctx context.Context, input UpdateInput) error 
 		ID:       input.UserID,
 		Email:    input.Email,
 		Password: hashedPassword,
-		Status:   input.Status,
-		Role:     input.Role,
+		// Status changes are owned exclusively by ChangeStatus and its
+		// compare-and-set repository operation. The generic update may verify a
+		// supplied same-status value for API compatibility, but must never
+		// persist it.
+		Status: valueobject.StatusUnknown,
+		Role:   input.Role,
 	}
 
 	if err := us.userRepo.Update(ctx, &usr); err != nil {
@@ -286,9 +297,6 @@ func (us *UserUseCase) ChangePassword(ctx context.Context, input UpdatePassInput
 		return err
 	}
 
-	// The authorization cache is not invalidated here. Password changes do not
-	// alter the role or status used by authorization, and cached timestamps are
-	// not consulted for authorization decisions.
 	cleanupCtx, cancelCleanup := context.WithTimeout(ctx, passwordChangeSessionCleanupTimeout)
 	cleanupErr := us.sessionRepo.DeleteAllByUser(cleanupCtx, user.ID)
 	cancelCleanup()
@@ -325,8 +333,8 @@ func (us *UserUseCase) observePasswordChangeCleanupFailure(
 		"credential_change_committed", true,
 		"error", err,
 	)
-	if us.passwordChangeCleanupMetric != nil {
-		us.passwordChangeCleanupMetric.RecordPasswordChangeCleanupFailure(stage)
+	if us.metrics != nil {
+		us.metrics.RecordPasswordChangeCleanupFailure(stage)
 	}
 }
 
@@ -341,10 +349,6 @@ func (us *UserUseCase) ChangeRole(ctx context.Context, input UpdateRoleInput) er
 		return err
 	}
 
-	us.publisher.Publish(ctx, event.UserUpdatedEvent{
-		UserID: usr.ID,
-	})
-
 	us.logger.Info("user role changed successfully", "user_id:", input.UserID)
 	return nil
 }
@@ -352,37 +356,146 @@ func (us *UserUseCase) ChangeRole(ctx context.Context, input UpdateRoleInput) er
 func (us *UserUseCase) ChangeStatus(ctx context.Context, input UpdateStatusInput) error {
 	us.logger.Info("change status attempt", "target_id", input.UserID, "actor_id", input.ActorID)
 
-	actorRole, err := us.userCache.GetUserRole(ctx, input.ActorID)
+	target, err := us.userRepo.FindByID(ctx, input.UserID)
 	if err != nil {
 		us.logger.Error("change user status faild", "target_id", input.UserID, "actor_id", input.ActorID, "error", err)
 		return err
 	}
-
-	userRole, err := us.userCache.GetUserRole(ctx, input.UserID)
-	if err != nil {
-		us.logger.Error("change user status faild", "target_id", input.UserID, "actor_id", input.ActorID, "error", err)
-		return err
+	if target == nil {
+		return errors.ErrUserNotFound
 	}
 
-	if !actorRole.CanModifyTargetRole(userRole) {
+	if !input.ActorRole.CanModifyTargetRole(target.Role) {
 		us.logger.Error("user not permission to perform this action", "target_id", input.UserID, "actor_id", input.ActorID)
 		return errors.ErrForbidden
 	}
 
-	usr := &entity.User{
-		ID:     input.UserID,
-		Status: input.Status,
+	currentStatus := target.Status
+	if !currentStatus.IsKnown() {
+		return fmt.Errorf("current user status is invalid")
 	}
-	if err := us.userRepo.Update(ctx, usr); err != nil {
-		us.logger.Error("change user status faild", "user_id", input.UserID, "error", err)
+	if !currentStatus.CanTransitionTo(input.Status) {
+		return invalidUserStatusTransition(currentStatus, input.Status)
+	}
+	if currentStatus == input.Status {
+		us.logger.Info(
+			"user status already applied",
+			"user_id", input.UserID,
+			"status", currentStatus.String(),
+		)
+		return nil
+	}
+
+	var persistenceFailureMessage string
+	switch {
+	case currentStatus == valueobject.StatusInactive &&
+		input.Status == valueobject.StatusActive:
+		// An inactive user has never owned a session. First login initializes
+		// the Redis access state atomically with session creation, so activation
+		// itself has no Redis state to restore.
+		persistenceFailureMessage = "activate user failed"
+	case currentStatus == valueobject.StatusActive &&
+		input.Status == valueobject.StatusSuspended:
+		// Redis is the immediate request-time enforcement boundary. Blocking and
+		// generation advancement happen before PostgreSQL so a stale login or
+		// snapshot token cannot create or use a session after this operation
+		// linearizes. A later PostgreSQL failure intentionally leaves access
+		// blocked.
+		accessCtx, cancelAccess := context.WithTimeout(
+			ctx,
+			userStatusAccessStateTimeout,
+		)
+		err = us.sessionRepo.BlockAndDeleteAllByUser(accessCtx, input.UserID)
+		cancelAccess()
+		if err != nil {
+			us.logger.Error(
+				"failed to block user access before suspension",
+				"user_id", input.UserID,
+				"error", err,
+			)
+			return fmt.Errorf("block user access before suspension: %w", err)
+		}
+		persistenceFailureMessage = "failed to persist suspended status; user remains blocked"
+	case currentStatus == valueobject.StatusSuspended &&
+		input.Status == valueobject.StatusActive:
+		// PostgreSQL remains authoritatively suspended while Redis is unblocked.
+		// Suspension already removed old sessions and advanced the generation,
+		// and login/refresh check PostgreSQL before creating or rotating a
+		// session. A database failure therefore remains fail closed and can be
+		// retried by repeating this idempotent Redis operation.
+		accessCtx, cancelAccess := context.WithTimeout(
+			ctx,
+			userStatusAccessStateTimeout,
+		)
+		err = us.sessionRepo.UnblockUser(accessCtx, input.UserID)
+		cancelAccess()
+		if err != nil {
+			us.logger.Error(
+				"failed to unblock user before reactivation",
+				"user_id", input.UserID,
+				"error", err,
+			)
+			return fmt.Errorf("unblock user before reactivation: %w", err)
+		}
+		persistenceFailureMessage = "failed to persist active status after Redis unblock; PostgreSQL remains authoritative"
+	default:
+		return fmt.Errorf("allowed user status transition is unsupported")
+	}
+
+	result, err := us.userRepo.UpdateStatus(
+		ctx,
+		input.UserID,
+		currentStatus,
+		input.Status,
+	)
+	if err != nil {
+		us.logger.Error(
+			persistenceFailureMessage,
+			"user_id", input.UserID,
+			"error", err,
+		)
 		return err
 	}
 
-	us.publisher.Publish(ctx, event.UserUpdatedEvent{
-		UserID:    usr.ID,
-		UpdatedBy: input.ActorID,
-	})
+	switch result.Outcome {
+	case repository.UserStatusUpdateApplied:
+		if result.CurrentStatus != input.Status {
+			return fmt.Errorf("compare-and-set user status returned an invalid applied result")
+		}
+	case repository.UserStatusUpdateAlreadyApplied:
+		if result.CurrentStatus != input.Status {
+			return fmt.Errorf("compare-and-set user status returned an invalid idempotent result")
+		}
+		us.logger.Info(
+			"user status was applied by a concurrent request",
+			"user_id", input.UserID,
+			"status", input.Status.String(),
+		)
+		return nil
+	case repository.UserStatusUpdateNotFound:
+		return fmt.Errorf("compare-and-set user status: %w", errors.ErrUserNotFound)
+	case repository.UserStatusUpdateConflict:
+		if !result.CurrentStatus.IsKnown() ||
+			result.CurrentStatus == input.Status {
+			return fmt.Errorf("compare-and-set user status returned an invalid conflict result")
+		}
+		return invalidUserStatusTransition(result.CurrentStatus, input.Status)
+	default:
+		return fmt.Errorf("compare-and-set user status returned an invalid outcome")
+	}
 
 	us.logger.Info("user status changed successfully", "user_id", input.UserID)
 	return nil
+}
+
+func invalidUserStatusTransition(
+	current valueobject.UserStatus,
+	next valueobject.UserStatus,
+) error {
+	return fmt.Errorf(
+		"%w: %s to %s",
+		errors.ErrInvalidUserStatusTransition,
+		current,
+		next,
+	)
 }

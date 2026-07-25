@@ -5,203 +5,237 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	DomainError "github.com/motixo/goat-api/internal/domain/errors"
+	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
 type JWTManager struct {
 	secret []byte
+	now    func() time.Time
+}
+
+type tokenClaims struct {
+	UserID            string   `json:"user_id"`
+	SessionID         string   `json:"session_id"`
+	CredentialVersion int64    `json:"credential_version"`
+	TokenType         string   `json:"token_type"`
+	Role              string   `json:"role,omitempty"`
+	Permissions       []string `json:"permissions,omitempty"`
+	jwt.RegisteredClaims
 }
 
 func NewJWTManager(secret string) *JWTManager {
+	return newJWTManagerWithClock(secret, time.Now)
+}
+
+func newJWTManagerWithClock(secret string, now func() time.Time) *JWTManager {
+	if now == nil {
+		now = time.Now
+	}
 	return &JWTManager{
 		secret: []byte(secret),
+		now:    now,
 	}
 }
 
-func (j *JWTManager) GenerateAccessToken(userID, sessionID, jti string, duration time.Duration) (string, *valueobject.JWTClaims, error) {
-	expiresAt := time.Now().UTC().Add(duration)
+func (j *JWTManager) GenerateAccessToken(
+	identity valueobject.TokenIdentity,
+	snapshot valueobject.AuthorizationSnapshot,
+	duration time.Duration,
+) (string, *valueobject.JWTClaims, error) {
+	return j.generateToken(
+		identity,
+		valueobject.TokenTypeAccess,
+		snapshot,
+		duration,
+	)
+}
 
-	claimsVO, err := valueobject.NewJWTClaims(userID, sessionID, valueobject.TokenTypeAccess, jti, expiresAt)
+func (j *JWTManager) GenerateRefreshToken(
+	identity valueobject.TokenIdentity,
+	duration time.Duration,
+) (string, *valueobject.JWTClaims, error) {
+	return j.generateToken(
+		identity,
+		valueobject.TokenTypeRefresh,
+		valueobject.AuthorizationSnapshot{},
+		duration,
+	)
+}
+
+func (j *JWTManager) generateToken(
+	identity valueobject.TokenIdentity,
+	tokenType valueobject.TokenType,
+	snapshot valueobject.AuthorizationSnapshot,
+	duration time.Duration,
+) (string, *valueobject.JWTClaims, error) {
+	now := j.now().UTC()
+	claimsVO, err := valueobject.NewJWTClaims(
+		identity,
+		tokenType,
+		now.Add(duration),
+		now,
+		snapshot,
+	)
 	if err != nil {
 		return "", nil, err
 	}
 
-	jwtClaims := jwt.MapClaims{
-		"user_id":    claimsVO.UserID,
-		"token_type": string(claimsVO.TokenType),
-		"session_id": claimsVO.SessionID,
-		"jti":        claimsVO.JTI,
-		"iss":        claimsVO.Issuer,
-		"sub":        claimsVO.Subject,
-		"aud":        claimsVO.Audience,
-		"exp":        claimsVO.ExpiresAt.Unix(),
-		"iat":        claimsVO.IssuedAt.Unix(),
-		"nbf":        claimsVO.NotBefore.Unix(),
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwtClaims)
+	claims := tokenClaimsFromDomain(claimsVO)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signed, err := token.SignedString(j.secret)
 	if err != nil {
-		return "", nil, DomainError.ErrInternal
+		return "", nil, domainErrors.ErrInternal
 	}
-
 	return signed, claimsVO, nil
 }
 
-func (j *JWTManager) GenerateRefreshToken(userID, jti string, duration time.Duration) (string, *valueobject.JWTClaims, error) {
-	expiresAt := time.Now().UTC().Add(duration)
-
-	claimsVO, err := valueobject.NewJWTClaims(userID, "", valueobject.TokenTypeRefresh, jti, expiresAt)
-	if err != nil {
-		return "", nil, err
+func tokenClaimsFromDomain(claims *valueobject.JWTClaims) tokenClaims {
+	permissions := claims.Permissions.Values()
+	permissionClaims := make([]string, len(permissions))
+	for index := range permissions {
+		permissionClaims[index] = permissions[index].String()
 	}
 
-	jwtClaims := jwt.MapClaims{
-		"user_id":    claimsVO.UserID,
-		"token_type": string(claimsVO.TokenType),
-		"jti":        claimsVO.JTI,
-		"iss":        claimsVO.Issuer,
-		"sub":        claimsVO.Subject,
-		"aud":        claimsVO.Audience,
-		"exp":        claimsVO.ExpiresAt.Unix(),
-		"iat":        claimsVO.IssuedAt.Unix(),
-		"nbf":        claimsVO.NotBefore.Unix(),
+	role := ""
+	if claims.IsAccess() {
+		role = claims.Role.String()
 	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwtClaims)
-	signed, err := token.SignedString(j.secret)
-	if err != nil {
-		return "", nil, DomainError.ErrInternal
+	return tokenClaims{
+		UserID:            claims.UserID,
+		SessionID:         claims.SessionID,
+		CredentialVersion: claims.CredentialVersion,
+		TokenType:         string(claims.TokenType),
+		Role:              role,
+		Permissions:       permissionClaims,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    claims.Issuer,
+			Subject:   claims.Subject,
+			Audience:  jwt.ClaimStrings(claims.Audience),
+			ExpiresAt: jwt.NewNumericDate(claims.ExpiresAt),
+			NotBefore: jwt.NewNumericDate(claims.NotBefore),
+			IssuedAt:  jwt.NewNumericDate(claims.IssuedAt),
+			ID:        claims.JTI,
+		},
 	}
-
-	return signed, claimsVO, nil
 }
 
-func (j *JWTManager) ParseAndValidate(tokenStr string) (*valueobject.JWTClaims, error) {
-	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, jwt.ErrSignatureInvalid
-		}
-		return j.secret, nil
-	}, jwt.WithLeeway(5*time.Second))
-
+func (j *JWTManager) ParseAndValidate(tokenString string) (*valueobject.JWTClaims, error) {
+	claims := &tokenClaims{}
+	token, err := jwt.ParseWithClaims(
+		tokenString,
+		claims,
+		func(token *jwt.Token) (any, error) {
+			return j.secret, nil
+		},
+		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+		jwt.WithIssuer(valueobject.TokenIssuer),
+		jwt.WithAudience(valueobject.TokenAudience),
+		jwt.WithTimeFunc(j.now),
+	)
 	if err != nil {
-		switch {
-		case errors.Is(err, jwt.ErrTokenExpired):
-			return nil, DomainError.ErrTokenExpired
-		case errors.Is(err, jwt.ErrTokenMalformed),
-			errors.Is(err, jwt.ErrSignatureInvalid),
-			errors.Is(err, jwt.ErrTokenNotValidYet):
-			return nil, DomainError.ErrTokenInvalid
-		default:
-			return nil, DomainError.ErrTokenInvalid
-		}
+		return nil, classifyTokenError(err)
 	}
-
 	if !token.Valid {
-		return nil, DomainError.ErrTokenInvalid
+		return nil, domainErrors.ErrTokenInvalid
 	}
 
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		return nil, DomainError.ErrTokenInvalid
+	claimsVO, err := claims.toDomain()
+	if err != nil {
+		return nil, domainErrors.ErrTokenInvalid
+	}
+	if err := j.ValidateClaims(claimsVO); err != nil {
+		return nil, err
+	}
+	return claimsVO, nil
+}
+
+func (claims tokenClaims) toDomain() (*valueobject.JWTClaims, error) {
+	tokenType := valueobject.TokenType(claims.TokenType)
+	if claims.Subject != claims.TokenType ||
+		(tokenType != valueobject.TokenTypeAccess &&
+			tokenType != valueobject.TokenTypeRefresh) {
+		return nil, domainErrors.ErrTokenInvalid
+	}
+	if claims.ExpiresAt == nil || claims.IssuedAt == nil || claims.NotBefore == nil {
+		return nil, domainErrors.ErrTokenInvalid
 	}
 
-	userID, ok := claims["user_id"].(string)
-	if !ok || userID == "" {
-		return nil, DomainError.ErrTokenInvalid
-	}
-
-	jti, ok := claims["jti"].(string)
-	if !ok || jti == "" {
-		return nil, DomainError.ErrTokenInvalid
-	}
-
-	tokenTypeStr, ok := claims["token_type"].(string)
-	if !ok {
-		return nil, DomainError.ErrTokenInvalid
-	}
-	tokenType := valueobject.TokenType(tokenTypeStr)
-
-	var audience []string
-	if aud, ok := claims["aud"].([]interface{}); ok {
-		for _, a := range aud {
-			if s, ok := a.(string); ok {
-				audience = append(audience, s)
+	snapshot := valueobject.AuthorizationSnapshot{}
+	if tokenType == valueobject.TokenTypeAccess {
+		role, err := valueobject.ParseUserRole(claims.Role)
+		if err != nil {
+			return nil, domainErrors.ErrTokenInvalid
+		}
+		permissions := make([]valueobject.Permission, len(claims.Permissions))
+		for index := range claims.Permissions {
+			permission, err := valueobject.ParsePermission(claims.Permissions[index])
+			if err != nil {
+				return nil, domainErrors.ErrTokenInvalid
 			}
+			permissions[index] = permission
 		}
-	} else if audStr, ok := claims["aud"].(string); ok {
-		audience = []string{audStr}
-	} else {
-		return nil, DomainError.ErrTokenInvalid
-	}
-
-	issuer, _ := claims["iss"].(string)
-	if issuer != valueobject.TokenIssuer {
-		return nil, DomainError.ErrTokenInvalid
-	}
-
-	hasValidAud := false
-	for _, aud := range audience {
-		if aud == valueobject.TokenAudience {
-			hasValidAud = true
-			break
+		permissionSet, err := valueobject.NewPermissionSet(permissions)
+		if err != nil {
+			return nil, domainErrors.ErrTokenInvalid
 		}
-	}
-	if !hasValidAud {
-		return nil, DomainError.ErrTokenInvalid
-	}
-
-	exp, ok := claims["exp"].(float64)
-	if !ok {
-		return nil, DomainError.ErrTokenInvalid
-	}
-	iat, ok := claims["iat"].(float64)
-	if !ok {
-		return nil, DomainError.ErrTokenInvalid
-	}
-	nbf, ok := claims["nbf"].(float64)
-	if !ok {
-		return nil, DomainError.ErrTokenInvalid
+		snapshot = valueobject.AuthorizationSnapshot{
+			Role:        role,
+			Permissions: permissionSet,
+		}
+	} else if claims.Role != "" || len(claims.Permissions) != 0 {
+		return nil, domainErrors.ErrTokenInvalid
 	}
 
-	sessionID, _ := claims["session_id"].(string)
+	return valueobject.NewJWTClaims(
+		valueobject.TokenIdentity{
+			UserID:            claims.UserID,
+			SessionID:         claims.SessionID,
+			JTI:               claims.ID,
+			CredentialVersion: claims.CredentialVersion,
+		},
+		tokenType,
+		claims.ExpiresAt.Time,
+		claims.IssuedAt.Time,
+		snapshot,
+	)
+}
 
-	return &valueobject.JWTClaims{
-		UserID:    userID,
-		SessionID: sessionID,
-		TokenType: tokenType,
-		JTI:       jti,
-		Issuer:    issuer,
-		Subject:   tokenTypeStr,
-		Audience:  audience,
-		ExpiresAt: time.Unix(int64(exp), 0),
-		IssuedAt:  time.Unix(int64(iat), 0),
-		NotBefore: time.Unix(int64(nbf), 0),
-	}, nil
+func classifyTokenError(err error) error {
+	switch {
+	case errors.Is(err, jwt.ErrTokenExpired):
+		return domainErrors.ErrTokenExpired
+	case errors.Is(err, jwt.ErrTokenMalformed),
+		errors.Is(err, jwt.ErrSignatureInvalid),
+		errors.Is(err, jwt.ErrTokenNotValidYet):
+		return domainErrors.ErrTokenInvalid
+	default:
+		return domainErrors.ErrTokenInvalid
+	}
 }
 
 func (j *JWTManager) ValidateClaims(claims *valueobject.JWTClaims) error {
-	now := time.Now()
-
+	if claims == nil {
+		return domainErrors.ErrTokenInvalid
+	}
+	now := j.now()
 	if now.Before(claims.NotBefore) {
-		return DomainError.ErrTokenInvalid
+		return domainErrors.ErrTokenInvalid
 	}
-
-	if now.After(claims.ExpiresAt) {
-		return DomainError.ErrTokenExpired
+	if !now.Before(claims.ExpiresAt) {
+		return domainErrors.ErrTokenExpired
 	}
-
-	if claims.UserID == "" || claims.JTI == "" {
-		return DomainError.ErrTokenInvalid
+	if claims.UserID == "" ||
+		claims.SessionID == "" ||
+		claims.JTI == "" ||
+		claims.CredentialVersion <= 0 {
+		return domainErrors.ErrTokenInvalid
 	}
-
-	if claims.IsAccess() {
-		if claims.SessionID == "" {
-			return DomainError.ErrTokenInvalid
-		}
+	if claims.IsAccess() && claims.Role == valueobject.RoleUnknown {
+		return domainErrors.ErrTokenInvalid
 	}
-
+	if !claims.IsAccess() && !claims.IsRefresh() {
+		return domainErrors.ErrTokenInvalid
+	}
 	return nil
 }

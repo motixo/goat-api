@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	stdErrors "errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,15 +13,16 @@ import (
 	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 	"github.com/motixo/goat-api/internal/pkg"
+	"github.com/motixo/goat-api/internal/usecase/authorization"
 	"github.com/motixo/goat-api/internal/usecase/session"
 )
 
 type AuthUseCase struct {
 	userRepo       repository.UserRepository
+	securityStates authorization.SecurityStateReader
 	sessionUC      session.UseCase
 	passwordHasher service.PasswordHasher
 	jwtService     service.JWTService
-	userCache      service.UserCacheService
 	logger         pkg.Logger
 	accessTTL      time.Duration
 	refreshTTL     time.Duration
@@ -29,10 +31,10 @@ type AuthUseCase struct {
 
 func NewUsecase(
 	userRepo repository.UserRepository,
+	securityStates authorization.SecurityStateReader,
 	sessionUC session.UseCase,
 	passwordHasher service.PasswordHasher,
 	jwtService service.JWTService,
-	userCache service.UserCacheService,
 	logger pkg.Logger,
 	accessTTL AccessTTL,
 	refreshTTL RefreshTTL,
@@ -41,10 +43,10 @@ func NewUsecase(
 ) UseCase {
 	return &AuthUseCase{
 		userRepo:       userRepo,
+		securityStates: securityStates,
 		sessionUC:      sessionUC,
 		passwordHasher: passwordHasher,
 		jwtService:     jwtService,
-		userCache:      userCache,
 		logger:         logger,
 		accessTTL:      time.Duration(accessTTL),
 		refreshTTL:     time.Duration(refreshTTL),
@@ -64,7 +66,7 @@ func (us *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (UserOut
 		ID:                uuid.New().String(),
 		Email:             input.Email,
 		Password:          hashedPassword,
-		Status:            valueobject.StatusActive,
+		Status:            valueobject.StatusInactive,
 		Role:              valueobject.RoleClient,
 		CredentialVersion: entity.InitialCredentialVersion,
 		CreatedAt:         time.Now().UTC(),
@@ -99,9 +101,9 @@ func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput
 		return LoginOutput{}, domainErrors.ErrInvalidCredentials
 	}
 
-	if userEntity.Status != valueobject.StatusActive {
-		us.logger.Warn("login failed: user account suspended", "email", input.Email)
-		return LoginOutput{}, domainErrors.ErrAccountSuspended
+	if err := authenticationStatusError(userEntity.Status); err != nil {
+		us.logger.Warn("login failed: user account unavailable", "email", input.Email)
+		return LoginOutput{}, err
 	}
 
 	if !us.passwordHasher.Verify(ctx, input.Password, userEntity.Password) {
@@ -109,19 +111,43 @@ func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput
 		return LoginOutput{}, domainErrors.ErrInvalidCredentials
 	}
 
+	securityState, err := us.securityStates.GetSecurityState(ctx, userEntity.ID)
+	if err != nil {
+		if stdErrors.Is(err, domainErrors.ErrUserNotFound) {
+			return LoginOutput{}, domainErrors.ErrInvalidCredentials
+		}
+		return LoginOutput{}, err
+	}
+	if securityState.UserID != userEntity.ID ||
+		securityState.CredentialVersion != userEntity.CredentialVersion {
+		return LoginOutput{}, domainErrors.ErrInvalidCredentials
+	}
+	if err := authenticationStatusError(securityState.Status); err != nil {
+		return LoginOutput{}, err
+	}
+
 	refreshJTI := pkg.ULIDGenerator()
-	refresh, refreshClaims, err := us.jwtService.GenerateRefreshToken(userEntity.ID, refreshJTI, us.refreshTTL)
+	sessionID := pkg.ULIDGenerator()
+	tokenIdentity := valueobject.TokenIdentity{
+		UserID:            securityState.UserID,
+		SessionID:         sessionID,
+		JTI:               refreshJTI,
+		CredentialVersion: securityState.CredentialVersion,
+	}
+	refresh, refreshClaims, err := us.jwtService.GenerateRefreshToken(
+		tokenIdentity,
+		us.refreshTTL,
+	)
 	if err != nil {
 		us.logger.Error("failed to create refresh token", "userID", userEntity.ID, "error", err)
 		return LoginOutput{}, err
 	}
 
-	sessionID := pkg.ULIDGenerator()
 	sessionInput := session.CreateInput{
 		ID:                sessionID,
-		UserID:            userEntity.ID,
+		UserID:            securityState.UserID,
 		CurrentJTI:        refreshJTI,
-		CredentialVersion: userEntity.CredentialVersion,
+		CredentialVersion: securityState.CredentialVersion,
 		IP:                input.IP,
 		Device:            input.Device,
 		JTITTL:            us.refreshTTL,
@@ -129,10 +155,20 @@ func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput
 	}
 
 	if err := us.sessionUC.CreateSession(ctx, sessionInput); err != nil {
+		if stdErrors.Is(err, domainErrors.ErrUserAccessBlocked) {
+			return LoginOutput{}, domainErrors.ErrAccountSuspended
+		}
 		return LoginOutput{}, err
 	}
 
-	access, accessClaims, err := us.jwtService.GenerateAccessToken(userEntity.ID, sessionID, refreshJTI, us.accessTTL)
+	access, accessClaims, err := us.jwtService.GenerateAccessToken(
+		tokenIdentity,
+		valueobject.AuthorizationSnapshot{
+			Role:        securityState.Role,
+			Permissions: securityState.Permissions,
+		},
+		us.accessTTL,
+	)
 	if err != nil {
 		us.logger.Error("failed to create access token", "userID", userEntity.ID, "error", err)
 		if cleanupErr := us.sessionUC.DeleteSessions(ctx, session.DeleteSessionsInput{
@@ -154,11 +190,24 @@ func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput
 		User: UserOutput{
 			ID:        userEntity.ID,
 			Email:     userEntity.Email,
-			Role:      userEntity.Role.String(),
-			Status:    userEntity.Status.String(),
+			Role:      securityState.Role.String(),
+			Status:    securityState.Status.String(),
 			CreatedAt: userEntity.CreatedAt,
 		},
 	}, nil
+}
+
+func authenticationStatusError(status valueobject.UserStatus) error {
+	switch status {
+	case valueobject.StatusInactive:
+		return authorization.ErrPrincipalInactive
+	case valueobject.StatusSuspended:
+		return domainErrors.ErrAccountSuspended
+	case valueobject.StatusActive:
+		return nil
+	default:
+		return fmt.Errorf("authoritative user status is invalid")
+	}
 }
 
 func (us *AuthUseCase) Logout(ctx context.Context, sessionID, userID string) error {
@@ -194,42 +243,86 @@ func (us *AuthUseCase) Refresh(ctx context.Context, input RefreshInput) (Refresh
 		return RefreshOutput{}, domainErrors.ErrUnauthorized
 	}
 
-	role, err := us.userCache.GetUserStatus(ctx, claims.UserID)
+	valid, err := us.sessionUC.ValidateSession(ctx, session.ValidateInput{
+		UserID:            claims.UserID,
+		SessionID:         claims.SessionID,
+		JTI:               claims.JTI,
+		CredentialVersion: claims.CredentialVersion,
+	})
 	if err != nil {
-		us.logger.Error("failed to fetch user status", "userID", claims.UserID)
+		us.logger.Error("failed to validate refresh session", "userID", claims.UserID, "error", err)
+		if stdErrors.Is(err, domainErrors.ErrUserAccessBlocked) {
+			return RefreshOutput{}, domainErrors.ErrAccountSuspended
+		}
 		return RefreshOutput{}, err
 	}
-	if role == valueobject.StatusSuspended {
-		return RefreshOutput{}, domainErrors.ErrAccountSuspended
+	if !valid {
+		return RefreshOutput{}, domainErrors.ErrUnauthorized
+	}
+
+	securityState, err := us.securityStates.GetSecurityState(ctx, claims.UserID)
+	if err != nil {
+		return RefreshOutput{}, err
+	}
+	if securityState.UserID != claims.UserID ||
+		securityState.CredentialVersion != claims.CredentialVersion {
+		return RefreshOutput{}, domainErrors.ErrUnauthorized
+	}
+	if err := authenticationStatusError(securityState.Status); err != nil {
+		return RefreshOutput{}, err
 	}
 	us.logger.Debug("refresh token requested", "userID", claims.UserID, "ip", input.IP, "device", input.Device)
 
 	refreshJTI := pkg.ULIDGenerator()
-	refresh, refreshClaims, err := us.jwtService.GenerateRefreshToken(claims.UserID, refreshJTI, us.refreshTTL)
+	tokenIdentity := valueobject.TokenIdentity{
+		UserID:            claims.UserID,
+		SessionID:         claims.SessionID,
+		JTI:               refreshJTI,
+		CredentialVersion: claims.CredentialVersion,
+	}
+	refresh, refreshClaims, err := us.jwtService.GenerateRefreshToken(
+		tokenIdentity,
+		us.refreshTTL,
+	)
 	if err != nil {
 		us.logger.Error("failed to create refresh token", "userID", claims.UserID, "error", err)
 		return RefreshOutput{}, err
 	}
 
 	rotateInput := session.RotateInput{
-		UserID:     claims.UserID,
-		OldJTI:     claims.JTI,
-		CurrentJTI: refreshJTI,
-		Device:     input.Device,
-		IP:         input.IP,
-		JTITTL:     us.refreshTTL,
-		SessionTTL: us.sessionTTL,
+		UserID:            claims.UserID,
+		SessionID:         claims.SessionID,
+		OldJTI:            claims.JTI,
+		CurrentJTI:        refreshJTI,
+		CredentialVersion: claims.CredentialVersion,
+		Device:            input.Device,
+		IP:                input.IP,
+		JTITTL:            us.refreshTTL,
+		SessionTTL:        us.sessionTTL,
+	}
+
+	access, accessClaims, err := us.jwtService.GenerateAccessToken(
+		tokenIdentity,
+		valueobject.AuthorizationSnapshot{
+			Role:        securityState.Role,
+			Permissions: securityState.Permissions,
+		},
+		us.accessTTL,
+	)
+	if err != nil {
+		us.logger.Error("failed to create access token", "userID", claims.UserID, "error", err)
+		return RefreshOutput{}, err
 	}
 
 	sessionID, err := us.sessionUC.RotateSessionJTI(ctx, rotateInput)
 	if err != nil {
+		if stdErrors.Is(err, domainErrors.ErrUserAccessBlocked) {
+			return RefreshOutput{}, domainErrors.ErrAccountSuspended
+		}
 		return RefreshOutput{}, err
 	}
-
-	access, accessClaims, err := us.jwtService.GenerateAccessToken(claims.UserID, sessionID, refreshJTI, us.accessTTL)
-	if err != nil {
-		us.logger.Error("failed to create access token", "userID", claims.UserID, "error", err)
-		return RefreshOutput{}, err
+	if sessionID != claims.SessionID {
+		return RefreshOutput{}, domainErrors.ErrUnauthorized
 	}
 
 	us.logger.Info("user refresh token successful", "userID", claims.UserID, "oldJTI", claims.JTI, "newJTI", refreshJTI)

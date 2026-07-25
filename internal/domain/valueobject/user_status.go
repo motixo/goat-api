@@ -33,6 +33,35 @@ func (r UserStatus) String() string {
 	return s
 }
 
+// IsKnown reports whether the status is one of the defined account states.
+func (r UserStatus) IsKnown() bool {
+	_, ok := statusToString[r]
+	return ok
+}
+
+// CanTransitionTo defines the User account-status state machine. Reapplying a
+// known status is accepted so callers can safely retry an interrupted
+// cross-store status workflow.
+func (r UserStatus) CanTransitionTo(next UserStatus) bool {
+	if !r.IsKnown() || !next.IsKnown() {
+		return false
+	}
+	if r == next {
+		return true
+	}
+
+	switch r {
+	case StatusInactive:
+		return next == StatusActive
+	case StatusActive:
+		return next == StatusSuspended
+	case StatusSuspended:
+		return next == StatusActive
+	default:
+		return false
+	}
+}
+
 func ParseUserStatus(s string) (UserStatus, error) {
 	r, ok := stringToStatus[s]
 	if !ok {

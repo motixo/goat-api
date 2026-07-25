@@ -27,7 +27,7 @@ func TestUserEmailWriteUseCasesPreserveSemanticConflictAndPostgresCause(t *testi
 				_, err := usecase.CreateUser(context.Background(), CreateInput{
 					Email:    "duplicate@example.com",
 					Password: "Password1!",
-					Status:   valueobject.StatusActive,
+					Status:   valueobject.StatusInactive,
 					Role:     valueobject.RoleClient,
 				})
 				return err
@@ -59,13 +59,15 @@ func TestUserEmailWriteUseCasesPreserveSemanticConflictAndPostgresCause(t *testi
 			repo := &emailConflictUserRepository{
 				createErr: persistenceErr,
 				updateErr: persistenceErr,
+				user: &entity.User{
+					ID:     "user-1",
+					Status: valueobject.StatusActive,
+				},
 			}
 			usecase := NewUsecase(
 				repo,
 				emailConflictPasswordHasher{},
 				discardUserLogger{},
-				nil,
-				nil,
 				nil,
 				nil,
 			)
@@ -89,6 +91,7 @@ type emailConflictUserRepository struct {
 	repository.UserRepository
 	createErr error
 	updateErr error
+	user      *entity.User
 }
 
 func (r *emailConflictUserRepository) Create(context.Context, *entity.User) error {
@@ -97,6 +100,13 @@ func (r *emailConflictUserRepository) Create(context.Context, *entity.User) erro
 
 func (r *emailConflictUserRepository) Update(context.Context, *entity.User) error {
 	return r.updateErr
+}
+
+func (r *emailConflictUserRepository) FindByID(
+	context.Context,
+	string,
+) (*entity.User, error) {
+	return r.user, nil
 }
 
 type emailConflictPasswordHasher struct {

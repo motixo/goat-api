@@ -8,20 +8,18 @@ import (
 	"time"
 
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
-	"github.com/motixo/goat-api/internal/domain/event"
 	"github.com/motixo/goat-api/internal/domain/repository"
-	"github.com/motixo/goat-api/internal/domain/service"
 )
 
 const expectedUserDeletionSessionCleanupTimeout = 2 * time.Second
 
-func TestDeleteUserUsesAtomicCleanupBeforeCacheAndDatabase(t *testing.T) {
+func TestDeleteUserUsesAtomicCleanupBeforeDatabase(t *testing.T) {
 	fixture := newDeletionFixture()
 
 	if err := fixture.usecase.DeleteUser(context.Background(), "user-1"); err != nil {
 		t.Fatalf("DeleteUser() error = %v", err)
 	}
-	wantCallOrder := []string{"user.exists", "session.delete_all", "cache.clear", "user.delete"}
+	wantCallOrder := []string{"user.exists", "session.block_delete_all", "user.delete"}
 	if !reflect.DeepEqual(fixture.recorder.calls, wantCallOrder) {
 		t.Fatalf("call order = %v, want %v", fixture.recorder.calls, wantCallOrder)
 	}
@@ -38,12 +36,6 @@ func TestDeleteUserUsesAtomicCleanupBeforeCacheAndDatabase(t *testing.T) {
 			cleanupBudget,
 			expectedUserDeletionSessionCleanupTimeout,
 		)
-	}
-	if !reflect.DeepEqual(fixture.cache.clearedUserIDs, []string{"user-1"}) {
-		t.Fatalf("cleared user IDs = %v, want [user-1]", fixture.cache.clearedUserIDs)
-	}
-	if fixture.publisher.publishCalls != 0 {
-		t.Fatalf("publisher calls = %d, want 0", fixture.publisher.publishCalls)
 	}
 }
 
@@ -72,7 +64,7 @@ func TestDeleteUserExistenceLookupFailureStopsBeforeDestructiveChanges(t *testin
 	assertDeletionCalls(t, fixture, "user.exists")
 }
 
-func TestDeleteUserAtomicSessionCleanupFailureStopsBeforeCacheAndDatabase(t *testing.T) {
+func TestDeleteUserAtomicSessionCleanupFailureStopsBeforeDatabase(t *testing.T) {
 	cleanupErr := stdErrors.New("redis cleanup failed")
 	fixture := newDeletionFixture()
 	fixture.sessionRepo.deleteAllErr = cleanupErr
@@ -82,10 +74,10 @@ func TestDeleteUserAtomicSessionCleanupFailureStopsBeforeCacheAndDatabase(t *tes
 	if !stdErrors.Is(err, cleanupErr) {
 		t.Fatalf("DeleteUser() error = %v, want wrapped cleanup error", err)
 	}
-	assertDeletionCalls(t, fixture, "user.exists", "session.delete_all")
+	assertDeletionCalls(t, fixture, "user.exists", "session.block_delete_all")
 }
 
-func TestDeleteUserAtomicSessionCleanupTimeoutStopsBeforeCacheAndDatabase(t *testing.T) {
+func TestDeleteUserAtomicSessionCleanupTimeoutStopsBeforeDatabase(t *testing.T) {
 	fixture := newDeletionFixture()
 	fixture.sessionRepo.waitForContext = true
 
@@ -96,20 +88,7 @@ func TestDeleteUserAtomicSessionCleanupTimeoutStopsBeforeCacheAndDatabase(t *tes
 	if !stdErrors.Is(err, context.Canceled) {
 		t.Fatalf("DeleteUser() error = %v, want wrapped context cancellation", err)
 	}
-	assertDeletionCalls(t, fixture, "user.exists", "session.delete_all")
-}
-
-func TestDeleteUserCacheInvalidationFailureStopsDatabaseDeletion(t *testing.T) {
-	cacheErr := stdErrors.New("redis cache delete failed")
-	fixture := newDeletionFixture()
-	fixture.cache.clearErr = cacheErr
-
-	err := fixture.usecase.DeleteUser(context.Background(), "user-1")
-
-	if !stdErrors.Is(err, cacheErr) {
-		t.Fatalf("DeleteUser() error = %v, want wrapped cache error", err)
-	}
-	assertDeletionCalls(t, fixture, "user.exists", "session.delete_all", "cache.clear")
+	assertDeletionCalls(t, fixture, "user.exists", "session.block_delete_all")
 }
 
 func TestDeleteUserDatabaseFailureAfterRevocationIsReturned(t *testing.T) {
@@ -122,7 +101,7 @@ func TestDeleteUserDatabaseFailureAfterRevocationIsReturned(t *testing.T) {
 	if !stdErrors.Is(err, databaseErr) {
 		t.Fatalf("DeleteUser() error = %v, want database error", err)
 	}
-	assertDeletionCalls(t, fixture, "user.exists", "session.delete_all", "cache.clear", "user.delete")
+	assertDeletionCalls(t, fixture, "user.exists", "session.block_delete_all", "user.delete")
 	if fixture.sessionRepo.deletedUserID != "user-1" {
 		t.Fatalf("atomic cleanup user ID = %q, want user-1", fixture.sessionRepo.deletedUserID)
 	}
@@ -139,8 +118,6 @@ type deletionFixture struct {
 	recorder    *deletionRecorder
 	userRepo    *deletionUserRepository
 	sessionRepo *deletionSessionRepository
-	cache       *deletionUserCache
-	publisher   *deletionPublisher
 	usecase     UseCase
 }
 
@@ -148,22 +125,16 @@ func newDeletionFixture() *deletionFixture {
 	recorder := &deletionRecorder{}
 	userRepo := &deletionUserRepository{recorder: recorder, exists: true}
 	sessionRepo := &deletionSessionRepository{recorder: recorder}
-	cache := &deletionUserCache{recorder: recorder}
-	publisher := &deletionPublisher{recorder: recorder}
 
 	return &deletionFixture{
 		recorder:    recorder,
 		userRepo:    userRepo,
 		sessionRepo: sessionRepo,
-		cache:       cache,
-		publisher:   publisher,
 		usecase: NewUsecase(
 			userRepo,
 			nil,
 			discardUserLogger{},
 			sessionRepo,
-			cache,
-			publisher,
 			nil,
 		),
 	}
@@ -205,8 +176,11 @@ type deletionSessionRepository struct {
 	waitForContext bool
 }
 
-func (r *deletionSessionRepository) DeleteAllByUser(ctx context.Context, userID string) error {
-	r.recorder.record("session.delete_all")
+func (r *deletionSessionRepository) BlockAndDeleteAllByUser(
+	ctx context.Context,
+	userID string,
+) error {
+	r.recorder.record("session.block_delete_all")
 	r.deletedUserID = userID
 	r.deadline, r.hasDeadline = ctx.Deadline()
 	if r.waitForContext {
@@ -214,31 +188,6 @@ func (r *deletionSessionRepository) DeleteAllByUser(ctx context.Context, userID 
 		return ctx.Err()
 	}
 	return r.deleteAllErr
-}
-
-type deletionUserCache struct {
-	service.UserCacheService
-	recorder       *deletionRecorder
-	clearErr       error
-	clearedUserIDs []string
-}
-
-func (c *deletionUserCache) ClearCache(_ context.Context, userID string) error {
-	c.recorder.record("cache.clear")
-	c.clearedUserIDs = append(c.clearedUserIDs, userID)
-	return c.clearErr
-}
-
-type deletionPublisher struct {
-	event.Publisher
-	recorder     *deletionRecorder
-	publishCalls int
-}
-
-func (p *deletionPublisher) Publish(context.Context, any) error {
-	p.recorder.record("publisher.publish")
-	p.publishCalls++
-	return nil
 }
 
 type discardUserLogger struct{}

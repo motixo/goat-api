@@ -44,7 +44,13 @@ func TestCredentialVersionRoundTripAndRotation(t *testing.T) {
 		t.Fatalf("stored credential version = %q, want %d", storedVersion, current.CredentialVersion)
 	}
 
-	found, err := repository.FindByJTI(ctx, current.CurrentJTI)
+	found, err := repository.FindByJTI(
+		ctx,
+		current.CurrentJTI,
+		current.UserID,
+		current.ID,
+		current.CredentialVersion,
+	)
 	if err != nil {
 		t.Fatalf("FindByJTI() error = %v", err)
 	}
@@ -65,6 +71,7 @@ func TestCredentialVersionRoundTripAndRotation(t *testing.T) {
 		current.CurrentJTI,
 		rejectedJTI,
 		current.UserID,
+		current.ID,
 		current.CredentialVersion+1,
 		current.IP,
 		current.Device,
@@ -91,6 +98,7 @@ func TestCredentialVersionRoundTripAndRotation(t *testing.T) {
 		current.CurrentJTI,
 		newJTI,
 		current.UserID,
+		current.ID,
 		current.CredentialVersion,
 		current.IP,
 		current.Device,
@@ -104,14 +112,26 @@ func TestCredentialVersionRoundTripAndRotation(t *testing.T) {
 	if rotatedID != current.ID {
 		t.Fatalf("rotated session ID = %q, want %q", rotatedID, current.ID)
 	}
-	rotated, err := repository.FindByJTI(ctx, newJTI)
+	rotated, err := repository.FindByJTI(
+		ctx,
+		newJTI,
+		current.UserID,
+		current.ID,
+		current.CredentialVersion,
+	)
 	if err != nil {
 		t.Fatalf("FindByJTI(rotated) error = %v", err)
 	}
 	if rotated == nil || rotated.CredentialVersion != current.CredentialVersion {
 		t.Fatalf("rotated session = %#v, want credential version %d", rotated, current.CredentialVersion)
 	}
-	old, err := repository.FindByJTI(ctx, current.CurrentJTI)
+	old, err := repository.FindByJTI(
+		ctx,
+		current.CurrentJTI,
+		current.UserID,
+		current.ID,
+		current.CredentialVersion,
+	)
 	if err != nil {
 		t.Fatalf("FindByJTI(old) error = %v", err)
 	}
@@ -478,13 +498,14 @@ func createRedisSessions(t *testing.T, ctx context.Context, repository *Reposito
 
 func registerRedisSessionCleanup(t *testing.T, client *redis.Client, sessions ...*entity.Session) {
 	t.Helper()
-	keys := make([]string, 0, len(sessions)*3)
-	seen := make(map[string]struct{}, len(sessions)*3)
+	keys := make([]string, 0, len(sessions)*4)
+	seen := make(map[string]struct{}, len(sessions)*4)
 	for _, current := range sessions {
 		for _, key := range []string{
 			pkg.RedisKey("session", "id", current.ID),
 			pkg.RedisKey("session", "jti", current.CurrentJTI),
 			pkg.RedisKey("session", "user", current.UserID),
+			pkg.RedisKey("session", "access", current.UserID),
 		} {
 			if _, exists := seen[key]; exists {
 				continue
@@ -563,6 +584,14 @@ func assertRedisSessionPresent(t *testing.T, ctx context.Context, client *redis.
 	}
 	if err := client.ZScore(ctx, pkg.RedisKey("session", "user", session.UserID), pkg.RedisKey("session", "id", session.ID)).Err(); err != nil {
 		t.Fatalf("session %q missing from user index: %v", session.ID, err)
+	}
+	generation, err := client.HGet(
+		ctx,
+		pkg.RedisKey("session", "id", session.ID),
+		"session_generation",
+	).Int64()
+	if err != nil || generation <= 0 {
+		t.Fatalf("session %q generation = (%d, %v), want positive", session.ID, generation, err)
 	}
 }
 

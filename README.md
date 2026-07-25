@@ -35,8 +35,20 @@ GOAT API is a **production-ready**, **secure**, and **scalable** backend applica
 
 
 ### Authentication & Security
-- **JWT Authentication**: Access tokens + Refresh tokens
-- **Session Management**: Real-time session tracking and revocation through Redis blacklisting and JTI rotation.
+- **JWT Authentication**: 5-minute access tokens carry a bounded, signed role
+  and permission snapshot; refresh tokens never carry authorization data.
+- **Session Management**: Redis atomically validates the session, JTI, user
+  access state, credential version snapshot, and session generation. Suspension
+  blocks the user and revokes every indexed session before PostgreSQL records
+  the suspended status.
+- **Hybrid Authorization**: Low-risk routes may use the signed role and
+  permission snapshot until access-token expiry. Self-security routes re-check
+  current identity in PostgreSQL without requiring unrelated permissions.
+  Administrative and other sensitive routes re-check current identity, role,
+  and permissions in PostgreSQL. Suspension and session revocation are
+  immediate at the Redis validation boundary; role, permission, and
+  non-suspension status changes may retain the bounded access-token stale
+  window on snapshot routes.
 - **Argon2id Password Hashing**: With configurable pepper for enhanced security
 - **ULID Generation**: Lexicographically sortable unique identifiers
 - **RBAC**: Fine-grained permissions (e.g., `user:read`, `user:delete`) managed via middleware.

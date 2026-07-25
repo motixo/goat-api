@@ -19,8 +19,8 @@ func TestSignupPreservesSemanticEmailConflictAndPostgresCause(t *testing.T) {
 	usecase := NewUsecase(
 		&signupUserRepository{createErr: persistenceErr},
 		nil,
-		signupPasswordHasher{},
 		nil,
+		signupPasswordHasher{},
 		nil,
 		discardAuthLogger{},
 		0,
@@ -44,12 +44,49 @@ func TestSignupPreservesSemanticEmailConflictAndPostgresCause(t *testing.T) {
 	}
 }
 
+func TestSignupCreatesInactiveUserWithoutSessionOrToken(t *testing.T) {
+	repository := &signupUserRepository{}
+	usecase := NewUsecase(
+		repository,
+		nil,
+		nil,
+		signupPasswordHasher{},
+		nil,
+		discardAuthLogger{},
+		0,
+		0,
+		0,
+	)
+
+	output, err := usecase.Signup(context.Background(), RegisterInput{
+		Email:    "new@example.com",
+		Password: "Password1!",
+	})
+	if err != nil {
+		t.Fatalf("Signup() error = %v", err)
+	}
+	if repository.created == nil {
+		t.Fatal("Signup() did not persist a user")
+	}
+	if repository.created.Status != valueobject.StatusInactive {
+		t.Fatalf(
+			"persisted status = %s, want inactive",
+			repository.created.Status,
+		)
+	}
+	if output.Status != valueobject.StatusInactive.String() {
+		t.Fatalf("output status = %q, want inactive", output.Status)
+	}
+}
+
 type signupUserRepository struct {
 	repository.UserRepository
 	createErr error
+	created   *entity.User
 }
 
-func (r *signupUserRepository) Create(context.Context, *entity.User) error {
+func (r *signupUserRepository) Create(_ context.Context, user *entity.User) error {
+	r.created = user
 	return r.createErr
 }
 

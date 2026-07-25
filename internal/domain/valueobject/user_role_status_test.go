@@ -72,6 +72,39 @@ func TestParseUserStatusRejectsUnknownAndCaseVariants(t *testing.T) {
 	}
 }
 
+func TestUserStatusTransitionMatrix(t *testing.T) {
+	statuses := []UserStatus{
+		StatusUnknown,
+		StatusInactive,
+		StatusActive,
+		StatusSuspended,
+		UserStatus(255),
+	}
+	allowed := map[[2]UserStatus]bool{
+		{StatusInactive, StatusInactive}:   true,
+		{StatusInactive, StatusActive}:     true,
+		{StatusActive, StatusActive}:       true,
+		{StatusActive, StatusSuspended}:    true,
+		{StatusSuspended, StatusSuspended}: true,
+		{StatusSuspended, StatusActive}:    true,
+	}
+
+	for _, current := range statuses {
+		for _, next := range statuses {
+			want := allowed[[2]UserStatus{current, next}]
+			if got := current.CanTransitionTo(next); got != want {
+				t.Errorf(
+					"%s.CanTransitionTo(%s) = %t, want %t",
+					current,
+					next,
+					got,
+					want,
+				)
+			}
+		}
+	}
+}
+
 func TestUserRoleAndStatusDoNotImplementJSONUnmarshaler(t *testing.T) {
 	jsonUnmarshaler := reflect.TypeOf((*json.Unmarshaler)(nil)).Elem()
 	types := []reflect.Type{

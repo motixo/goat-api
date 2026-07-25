@@ -8,7 +8,6 @@ import (
 
 	"github.com/motixo/goat-api/internal/domain/entity"
 	"github.com/motixo/goat-api/internal/domain/repository"
-	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
@@ -24,11 +23,11 @@ func TestGetUsersListAppliesAuthorizationScopeBeforeRepositoryPagination(t *test
 		}},
 		total: 1,
 	}
-	cache := &fixedUserRoleCache{role: valueobject.RoleOperator}
-	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, cache, nil, nil)
+	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, nil)
 
 	output, total, err := usecase.GetUserslist(context.Background(), GetListInput{
-		ActorID: "operator-1",
+		ActorID:   "operator-1",
+		ActorRole: valueobject.RoleOperator,
 		Filter: ListFilter{
 			Roles:    []valueobject.UserRole{valueobject.RoleAdmin, valueobject.RoleClient},
 			Statuses: []valueobject.UserStatus{valueobject.StatusActive},
@@ -72,13 +71,13 @@ func TestGetUsersListAppliesAuthorizationScopeBeforeRepositoryPagination(t *test
 
 func TestGetUsersListReturnsEmptyBeforeRepositoryWhenActorHasNoVisibleRoles(t *testing.T) {
 	repo := &recordingUserListRepository{}
-	cache := &fixedUserRoleCache{role: valueobject.RoleClient}
-	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, cache, nil, nil)
+	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, nil)
 
 	output, total, err := usecase.GetUserslist(context.Background(), GetListInput{
-		ActorID: "client-1",
-		Offset:  10,
-		Limit:   10,
+		ActorID:   "client-1",
+		ActorRole: valueobject.RoleClient,
+		Offset:    10,
+		Limit:     10,
 	})
 	if err != nil {
 		t.Fatalf("GetUserslist() error = %v", err)
@@ -93,11 +92,11 @@ func TestGetUsersListReturnsEmptyBeforeRepositoryWhenActorHasNoVisibleRoles(t *t
 
 func TestGetUsersListReturnsEmptyBeforeRepositoryWhenRequestedRolesAreOutsideScope(t *testing.T) {
 	repo := &recordingUserListRepository{}
-	cache := &fixedUserRoleCache{role: valueobject.RoleOperator}
-	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, cache, nil, nil)
+	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, nil)
 
 	output, total, err := usecase.GetUserslist(context.Background(), GetListInput{
-		ActorID: "operator-1",
+		ActorID:   "operator-1",
+		ActorRole: valueobject.RoleOperator,
 		Filter: ListFilter{
 			Roles: []valueobject.UserRole{valueobject.RoleAdmin},
 		},
@@ -117,20 +116,17 @@ func TestGetUsersListReturnsEmptyBeforeRepositoryWhenRequestedRolesAreOutsideSco
 
 func TestGetUsersListAuthorizesBeforeReturningAnUnmatchableFilter(t *testing.T) {
 	repo := &recordingUserListRepository{}
-	cache := &fixedUserRoleCache{role: valueobject.RoleOperator}
-	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, cache, nil, nil)
+	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, nil)
 
 	output, total, err := usecase.GetUserslist(context.Background(), GetListInput{
-		ActorID: "operator-1",
-		Filter:  ListFilter{MatchNone: true},
-		Offset:  10,
-		Limit:   10,
+		ActorID:   "operator-1",
+		ActorRole: valueobject.RoleOperator,
+		Filter:    ListFilter{MatchNone: true},
+		Offset:    10,
+		Limit:     10,
 	})
 	if err != nil {
 		t.Fatalf("GetUserslist() error = %v", err)
-	}
-	if !cache.called {
-		t.Fatal("authorization role was not loaded before evaluating the filter")
 	}
 	if repo.called {
 		t.Fatal("repository List was called for a filter that cannot match a user")
@@ -157,18 +153,6 @@ func (r *recordingUserListRepository) List(_ context.Context, offset, limit int,
 	r.limit = limit
 	r.filter = filter
 	return r.users, r.total, r.err
-}
-
-type fixedUserRoleCache struct {
-	service.UserCacheService
-	role   valueobject.UserRole
-	err    error
-	called bool
-}
-
-func (c *fixedUserRoleCache) GetUserRole(context.Context, string) (valueobject.UserRole, error) {
-	c.called = true
-	return c.role, c.err
 }
 
 type discardUserListLogger struct{}

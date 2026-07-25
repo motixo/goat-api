@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/motixo/goat-api/internal/delivery/http/helper"
+	"github.com/motixo/goat-api/internal/delivery/http/middleware"
 	"github.com/motixo/goat-api/internal/delivery/http/response"
 	"github.com/motixo/goat-api/internal/pkg"
 	"github.com/motixo/goat-api/internal/usecase/user"
@@ -51,11 +52,12 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 	targetUserID := c.Param("id")
 
 	if targetUserID == "" {
-		targetUserID = c.GetString("user_id")
-		if targetUserID == "" {
+		principal, ok := middleware.PrincipalFrom(c)
+		if !ok {
 			response.Unauthorized(c, response.DetailAuthenticationContextMissing)
 			return
 		}
+		targetUserID = principal.UserID()
 	}
 	output, err := h.usecase.GetUser(c, targetUserID)
 	if err != nil {
@@ -72,15 +74,17 @@ func (h *UserHandler) GetUserList(c *gin.Context) {
 		response.BadRequest(c, response.DetailInvalidPaginationParams)
 		return
 	}
-	input.PaginationInput.Validate()
+	input.Validate()
 
-	actorID := c.GetString("user_id")
-	if actorID == "" {
+	principal, ok := middleware.PrincipalFrom(c)
+	if !ok {
 		response.Unauthorized(c, response.DetailAuthenticationContextMissing)
 		return
 	}
 
-	output, total, err := h.usecase.GetUserslist(c, input.toInput(actorID))
+	usecaseInput := input.toInput(principal.UserID())
+	usecaseInput.ActorRole = principal.Role()
+	output, total, err := h.usecase.GetUserslist(c, usecaseInput)
 	if err != nil {
 		response.WriteProblem(c, response.MapError(err))
 		return
@@ -95,11 +99,12 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 	targetUserID := c.Param("id")
 
 	if targetUserID == "" {
-		targetUserID = c.GetString("user_id")
-		if targetUserID == "" {
+		principal, ok := middleware.PrincipalFrom(c)
+		if !ok {
 			response.Internal(c)
 			return
 		}
+		targetUserID = principal.UserID()
 	}
 
 	if err := h.usecase.DeleteUser(c, targetUserID); err != nil {
@@ -146,14 +151,14 @@ func (h *UserHandler) ChangeEmail(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetString("user_id")
-	if userID == "" {
+	principal, ok := middleware.PrincipalFrom(c)
+	if !ok {
 		response.Unauthorized(c, response.DetailAuthenticationContextMissing)
 		return
 	}
 
 	if err := h.usecase.ChangeEmail(c, user.UpdateEmailInput{
-		UserID: userID,
+		UserID: principal.UserID(),
 		Email:  request.Email,
 	}); err != nil {
 		response.WriteProblem(c, response.MapError(err))
@@ -166,8 +171,8 @@ func (h *UserHandler) ChangeEmail(c *gin.Context) {
 func (h *UserHandler) ChangePassword(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
 
-	userID := c.GetString("user_id")
-	if userID == "" {
+	principal, ok := middleware.PrincipalFrom(c)
+	if !ok {
 		response.Unauthorized(c, response.DetailAuthenticationContextMissing)
 		return
 	}
@@ -180,7 +185,7 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 	}
 
 	if err := h.usecase.ChangePassword(c, user.UpdatePassInput{
-		UserID:      userID,
+		UserID:      principal.UserID(),
 		OldPassword: request.CurrentPassword,
 		NewPassword: request.NewPassword,
 	}); err != nil {
@@ -231,17 +236,19 @@ func (h *UserHandler) ChangeStatus(c *gin.Context) {
 		return
 	}
 
-	actorID := c.GetString("user_id")
-	input, err := request.toInput(targetUserID, actorID)
+	input, err := request.toInput(targetUserID, "")
 	if err != nil {
 		h.logger.Warn("invalid request payload", "endpoint", c.FullPath(), "ip", c.ClientIP())
 		response.BadRequest(c, response.DetailInvalidRequestPayload)
 		return
 	}
-	if actorID == "" {
+	principal, ok := middleware.PrincipalFrom(c)
+	if !ok {
 		response.Unauthorized(c, response.DetailAuthenticationContextMissing)
 		return
 	}
+	input.ActorID = principal.UserID()
+	input.ActorRole = principal.Role()
 
 	if err := h.usecase.ChangeStatus(c, input); err != nil {
 		response.WriteProblem(c, response.MapError(err))

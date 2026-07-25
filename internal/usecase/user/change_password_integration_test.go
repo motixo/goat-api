@@ -15,14 +15,13 @@ import (
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 	authInfra "github.com/motixo/goat-api/internal/infra/auth"
-	usercache "github.com/motixo/goat-api/internal/infra/cache/user"
 	postgresUser "github.com/motixo/goat-api/internal/infra/database/postgres/user"
 	redisSession "github.com/motixo/goat-api/internal/infra/storage/redis/session"
 	"github.com/motixo/goat-api/internal/pkg"
 	"github.com/redis/go-redis/v9"
 )
 
-func TestChangePasswordIntegrationCommitsCredentialsRevokesSessionsAndKeepsAuthorizationCache(t *testing.T) {
+func TestChangePasswordIntegrationCommitsCredentialsAndRevokesSessions(t *testing.T) {
 	dsn := os.Getenv("GOAT_POSTGRES_TEST_DSN")
 	redisAddress := os.Getenv("GOAT_REDIS_ADDR")
 	if dsn == "" || redisAddress == "" {
@@ -94,7 +93,7 @@ func TestChangePasswordIntegrationCommitsCredentialsRevokesSessionsAndKeepsAutho
 		newPasswordChangeIntegrationSession(userID),
 		newPasswordChangeIntegrationSession(userID),
 	}
-	redisKeys := []string{pkg.RedisKey("session", "user", userID), pkg.RedisKey("user", "id", userID)}
+	redisKeys := []string{pkg.RedisKey("session", "user", userID)}
 	for _, current := range sessions {
 		redisKeys = append(redisKeys,
 			pkg.RedisKey("session", "id", current.ID),
@@ -113,26 +112,11 @@ func TestChangePasswordIntegrationCommitsCredentialsRevokesSessionsAndKeepsAutho
 		}
 	}
 
-	authorizationCache := usercache.NewCachedRepository(
-		userRepository,
-		usercache.NewCache(redisClient),
-		logger,
-	)
-	if _, err := authorizationCache.GetUserRole(ctx, userID); err != nil {
-		t.Fatalf("prime user authorization cache: %v", err)
-	}
-	cacheKey := pkg.RedisKey("user", "id", userID)
-	if exists, err := redisClient.Exists(ctx, cacheKey).Result(); err != nil || exists != 1 {
-		t.Fatalf("primed cache existence = (%d, %v), want (1, nil)", exists, err)
-	}
-
 	usecase := NewUsecase(
 		userRepository,
 		passwordHasher,
 		logger,
 		sessionRepository,
-		authorizationCache,
-		nil,
 		nil,
 	)
 	err = usecase.ChangePassword(ctx, UpdatePassInput{
@@ -200,16 +184,6 @@ func TestChangePasswordIntegrationCommitsCredentialsRevokesSessionsAndKeepsAutho
 		if exists != 0 {
 			t.Fatalf("session %q retained %d Redis keys, want 0", current.ID, exists)
 		}
-	}
-	if exists, err := redisClient.Exists(ctx, cacheKey).Result(); err != nil || exists != 1 {
-		t.Fatalf("authorization cache existence = (%d, %v), want (1, nil)", exists, err)
-	}
-	role, err := authorizationCache.GetUserRole(ctx, userID)
-	if err != nil {
-		t.Fatalf("read unchanged authorization cache: %v", err)
-	}
-	if role != valueobject.RoleClient {
-		t.Fatalf("authorization role = %s, want client", role)
 	}
 }
 

@@ -5,22 +5,21 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/motixo/goat-api/internal/delivery/http/response"
+	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/service"
-	"github.com/motixo/goat-api/internal/domain/valueobject"
+	"github.com/motixo/goat-api/internal/usecase/authorization"
 	"github.com/motixo/goat-api/internal/usecase/session"
 )
 
 type AuthMiddleware struct {
 	sessionUC  session.UseCase
 	jwtService service.JWTService
-	userCache  service.UserCacheService
 }
 
-func NewAuthMiddleware(jwtService service.JWTService, sessionUC session.UseCase, userCache service.UserCacheService) *AuthMiddleware {
+func NewAuthMiddleware(jwtService service.JWTService, sessionUC session.UseCase) *AuthMiddleware {
 	return &AuthMiddleware{
 		jwtService: jwtService,
 		sessionUC:  sessionUC,
-		userCache:  userCache,
 	}
 }
 
@@ -47,9 +46,10 @@ func (m *AuthMiddleware) Required() gin.HandlerFunc {
 		}
 
 		isValid, err := m.sessionUC.ValidateSession(c.Request.Context(), session.ValidateInput{
-			UserID:    claims.UserID,
-			SessionID: claims.SessionID,
-			JTI:       claims.JTI,
+			UserID:            claims.UserID,
+			SessionID:         claims.SessionID,
+			JTI:               claims.JTI,
+			CredentialVersion: claims.CredentialVersion,
 		})
 		if err != nil {
 			response.WriteProblem(c, response.MapError(err))
@@ -62,30 +62,20 @@ func (m *AuthMiddleware) Required() gin.HandlerFunc {
 			return
 		}
 
-		userStatus, err := m.userCache.GetUserStatus(c.Request.Context(), claims.UserID)
+		principal, err := authorization.NewPrincipal(
+			claims.UserID,
+			claims.SessionID,
+			claims.CredentialVersion,
+			claims.Role,
+			claims.Permissions,
+		)
 		if err != nil {
-			response.Internal(c)
+			response.WriteProblem(c, response.MapError(domainErrors.ErrTokenInvalid))
 			c.Abort()
 			return
 		}
 
-		switch userStatus {
-		case valueobject.StatusInactive:
-			response.Unauthorized(c, response.DetailAccountNotActivated)
-			c.Abort()
-			return
-		case valueobject.StatusSuspended:
-			response.Unauthorized(c, response.DetailAccountSuspended)
-			c.Abort()
-			return
-		case valueobject.StatusUnknown:
-			response.Unauthorized(c, response.DetailContactSupport)
-			c.Abort()
-			return
-		}
-
-		c.Set(string(UserIDKey), claims.UserID)
-		c.Set(string(SessionIDKey), claims.SessionID)
+		SetPrincipal(c, principal)
 		c.Next()
 	}
 }

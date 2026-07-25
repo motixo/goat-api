@@ -228,6 +228,7 @@ func TestListByUserIndexLivesAsLongAsActiveSessions(t *testing.T) {
 			current.CurrentJTI,
 			newJTI,
 			current.UserID,
+			current.ID,
 			current.CredentialVersion,
 			current.IP,
 			current.Device,
@@ -327,7 +328,11 @@ func TestListByUserUsesOneRedisCommandAfterScriptLoad(t *testing.T) {
 	if err := client.Ping(ctx).Err(); err != nil {
 		t.Fatalf("ping counting Redis client: %v", err)
 	}
-	if err := redisStorage.GetScript("list_sessions").Load(ctx, client).Err(); err != nil {
+	script, err := redisStorage.GetScript(redisStorage.ScriptListSessions)
+	if err != nil {
+		t.Fatalf("resolve list script: %v", err)
+	}
+	if err := script.Load(ctx, client).Err(); err != nil {
 		t.Fatalf("load list script: %v", err)
 	}
 	counter.Reset()

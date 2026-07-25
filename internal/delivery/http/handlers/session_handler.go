@@ -3,6 +3,7 @@ package handlers
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/motixo/goat-api/internal/delivery/http/helper"
+	"github.com/motixo/goat-api/internal/delivery/http/middleware"
 	"github.com/motixo/goat-api/internal/delivery/http/response"
 	"github.com/motixo/goat-api/internal/pkg"
 	"github.com/motixo/goat-api/internal/usecase/session"
@@ -28,19 +29,19 @@ func (h *SessionHandler) GetAllUserSessions(c *gin.Context) {
 		return
 	}
 	input.Validate()
-	userID := c.GetString("user_id")
-	if userID == "" {
+	principal, ok := middleware.PrincipalFrom(c)
+	if !ok {
 		response.Unauthorized(c, response.DetailAuthenticationContextMissing)
 		return
 	}
 
-	sessionID := c.GetString("session_id")
-	if sessionID == "" {
-		response.Unauthorized(c, response.DetailAuthenticationContextMissing)
-		return
-	}
-
-	output, total, err := h.usecase.GetSessionsByUser(c, userID, sessionID, input.Offset(), input.Limit)
+	output, total, err := h.usecase.GetSessionsByUser(
+		c,
+		principal.UserID(),
+		principal.SessionID(),
+		input.Offset(),
+		input.Limit,
+	)
 	if err != nil {
 		response.WriteProblem(c, response.MapError(err))
 		return
@@ -63,19 +64,14 @@ func (h *SessionHandler) DeleteSessions(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetString("user_id")
-	if userID == "" {
-		response.Unauthorized(c, response.DetailAuthenticationContextMissing)
-		return
-	}
-	sessionID := c.GetString("session_id")
-	if sessionID == "" {
+	principal, ok := middleware.PrincipalFrom(c)
+	if !ok {
 		response.Unauthorized(c, response.DetailAuthenticationContextMissing)
 		return
 	}
 	input := session.DeleteSessionsInput{
-		UserID:         userID,
-		CurrentSession: sessionID,
+		UserID:         principal.UserID(),
+		CurrentSession: principal.SessionID(),
 		TargetSessions: request.SessionIDs,
 		RemoveOthers:   request.Others,
 	}

@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 	"github.com/motixo/goat-api/internal/delivery/http/handlers"
 	"github.com/motixo/goat-api/internal/delivery/http/middleware"
@@ -13,19 +15,42 @@ func RegisterAuthRoutes(
 	permMiddleware *middleware.PermMiddleware,
 	rl *middleware.RateLimitMiddleware,
 	rlConfig middleware.RateLimitConfig,
+	classifications *ClassificationRegistry,
 ) {
 	public := router.Group("/auth")
 	{
-		public.POST("/login", rl.Handler(rlConfig.Auth), authHandler.Login)
-		public.POST("/signup", rl.Handler(rlConfig.Auth), authHandler.Register)
-		public.POST("/refresh", rl.Handler(rlConfig.Private), authHandler.Refresh)
+		classifications.Public(
+			public,
+			http.MethodPost,
+			"/login",
+			rl.Handler(rlConfig.Auth),
+			authHandler.Login,
+		)
+		classifications.Public(
+			public,
+			http.MethodPost,
+			"/signup",
+			rl.Handler(rlConfig.Auth),
+			authHandler.Register,
+		)
+		classifications.Public(
+			public,
+			http.MethodPost,
+			"/refresh",
+			rl.Handler(rlConfig.Private),
+			authHandler.Refresh,
+		)
 	}
 
 	private := router.Group("/auth")
-	private.Use(authMiddleware.Required())
 	{
-		private.POST("/logout",
-			authHandler.Logout)
+		classifications.FreshIdentity(
+			private,
+			http.MethodPost,
+			"/logout",
+			authMiddleware.Required(),
+			permMiddleware.FreshIdentity(),
+			authHandler.Logout,
+		)
 	}
-
 }

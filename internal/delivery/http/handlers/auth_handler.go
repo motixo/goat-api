@@ -3,6 +3,7 @@ package handlers
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/motixo/goat-api/internal/delivery/http/helper"
+	"github.com/motixo/goat-api/internal/delivery/http/middleware"
 	"github.com/motixo/goat-api/internal/delivery/http/response"
 	"github.com/motixo/goat-api/internal/pkg"
 	"github.com/motixo/goat-api/internal/usecase/auth"
@@ -92,19 +93,17 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 
 func (h *AuthHandler) Logout(c *gin.Context) {
 	helper.LogRequest(h.logger, c)
-	userID := c.GetString("user_id")
-	if userID == "" {
+	principal, ok := middleware.PrincipalFrom(c)
+	if !ok {
 		response.Unauthorized(c, response.DetailAuthenticationContextMissing)
 		return
 	}
 
-	sessionID := c.GetString("session_id")
-	if sessionID == "" {
-		response.Unauthorized(c, response.DetailAuthenticationContextMissing)
-		return
-	}
-
-	if err := h.usecase.Logout(c.Request.Context(), sessionID, userID); err != nil {
+	if err := h.usecase.Logout(
+		c.Request.Context(),
+		principal.SessionID(),
+		principal.UserID(),
+	); err != nil {
 		response.WriteProblem(c, response.MapError(err))
 		return
 	}

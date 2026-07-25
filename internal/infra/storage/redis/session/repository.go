@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/motixo/goat-api/internal/domain/entity"
+	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
 	redisClinet "github.com/motixo/goat-api/internal/infra/storage/redis"
 	"github.com/motixo/goat-api/internal/pkg"
@@ -37,6 +38,7 @@ func (r *Repository) Create(ctx context.Context, s *entity.Session) error {
 	sessionkey := pkg.RedisKey("session", "id", s.ID)
 	jtiKey := pkg.RedisKey("session", "jti", s.CurrentJTI)
 	userkey := pkg.RedisKey("session", "user", s.UserID)
+	accessKey := pkg.RedisKey("session", "access", s.UserID)
 
 	argv := []interface{}{
 		"id", s.ID,
@@ -52,26 +54,69 @@ func (r *Repository) Create(ctx context.Context, s *entity.Session) error {
 		s.JTITTLSeconds,
 	}
 
-	script := redisClinet.GetScript("create_session")
-	_, err := script.Run(ctx, r.client, []string{sessionkey, jtiKey, userkey}, argv...).Result()
-	return err
+	script, err := redisClinet.GetScript(redisClinet.ScriptCreateSession)
+	if err != nil {
+		return fmt.Errorf("resolve create-session script: %w", err)
+	}
+	generation, err := script.Run(
+		ctx,
+		r.client,
+		[]string{sessionkey, jtiKey, userkey, accessKey},
+		argv...,
+	).Int64()
+	if err != nil {
+		return err
+	}
+	if generation == -1 {
+		return domainErrors.ErrUserAccessBlocked
+	}
+	if generation <= 0 {
+		return fmt.Errorf("create session returned invalid generation")
+	}
+	s.SessionGeneration = generation
+	return nil
 }
 
-func (r *Repository) FindByJTI(ctx context.Context, jti string) (*entity.Session, error) {
-	if jti == "" {
+func (r *Repository) FindByJTI(
+	ctx context.Context,
+	jti, expectedUserID, expectedSessionID string,
+	expectedCredentialVersion int64,
+) (*entity.Session, error) {
+	if jti == "" ||
+		expectedUserID == "" ||
+		expectedSessionID == "" ||
+		expectedCredentialVersion <= 0 {
 		return nil, nil
 	}
 
 	jtiKey := pkg.RedisKey("session", "jti", jti)
-	script := redisClinet.GetScript("get_session_by_jti")
-	result, err := script.Run(ctx, r.client, []string{jtiKey}, jti).Slice()
+	accessKey := pkg.RedisKey("session", "access", expectedUserID)
+	script, err := redisClinet.GetScript(redisClinet.ScriptGetSessionByJTI)
+	if err != nil {
+		return nil, fmt.Errorf("resolve session-by-JTI script: %w", err)
+	}
+	result, err := script.Run(
+		ctx,
+		r.client,
+		[]string{jtiKey, accessKey},
+		jti,
+		expectedUserID,
+		expectedSessionID,
+		expectedCredentialVersion,
+	).Slice()
 	if errors.Is(err, redis.Nil) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if len(result) != 4 {
+	if len(result) == 1 {
+		status, ok := result[0].(int64)
+		if ok && status == -1 {
+			return nil, domainErrors.ErrUserAccessBlocked
+		}
+	}
+	if len(result) != 5 {
 		return nil, fmt.Errorf("unexpected Redis session field count: %d", len(result))
 	}
 
@@ -87,12 +132,17 @@ func (r *Repository) FindByJTI(ctx context.Context, jti string) (*entity.Session
 	if err != nil || credentialVersion <= 0 {
 		return nil, fmt.Errorf("parse session credential version")
 	}
+	sessionGeneration, err := strconv.ParseInt(fields[4], 10, 64)
+	if err != nil || sessionGeneration <= 0 {
+		return nil, fmt.Errorf("parse session generation")
+	}
 
 	return &entity.Session{
 		ID:                fields[0],
 		UserID:            fields[1],
 		CurrentJTI:        fields[2],
 		CredentialVersion: credentialVersion,
+		SessionGeneration: sessionGeneration,
 	}, nil
 }
 
@@ -105,7 +155,10 @@ func (r *Repository) ListByUser(ctx context.Context, userID string, offset, limi
 	}
 
 	userKey := pkg.RedisKey("session", "user", userID)
-	script := redisClinet.GetScript("list_sessions")
+	script, err := redisClinet.GetScript(redisClinet.ScriptListSessions)
+	if err != nil {
+		return nil, 0, fmt.Errorf("resolve list-sessions script: %w", err)
+	}
 	result, err := script.Run(ctx, r.client, []string{userKey}, userID, offset, limit).Slice()
 	if err != nil {
 		return nil, 0, err
@@ -113,7 +166,7 @@ func (r *Repository) ListByUser(ctx context.Context, userID string, offset, limi
 	return decodeSessionList(result)
 }
 
-const sessionListFieldCount = 9
+const sessionListFieldCount = 10
 
 func decodeSessionList(result []any) ([]*entity.Session, int64, error) {
 	if len(result) == 0 {
@@ -142,15 +195,19 @@ func decodeSessionList(result []any) ([]*entity.Session, int64, error) {
 		if err != nil || credentialVersion <= 0 {
 			return nil, 0, fmt.Errorf("parse session credential_version")
 		}
-		createdAt, err := strconv.ParseInt(fields[6], 10, 64)
+		sessionGeneration, err := strconv.ParseInt(fields[6], 10, 64)
+		if err != nil || sessionGeneration <= 0 {
+			return nil, 0, fmt.Errorf("parse session session_generation")
+		}
+		createdAt, err := strconv.ParseInt(fields[7], 10, 64)
 		if err != nil {
 			return nil, 0, fmt.Errorf("parse session created_at: %w", err)
 		}
-		updatedAt, err := strconv.ParseInt(fields[7], 10, 64)
+		updatedAt, err := strconv.ParseInt(fields[8], 10, 64)
 		if err != nil {
 			return nil, 0, fmt.Errorf("parse session updated_at: %w", err)
 		}
-		expiresAt, err := strconv.ParseInt(fields[8], 10, 64)
+		expiresAt, err := strconv.ParseInt(fields[9], 10, 64)
 		if err != nil {
 			return nil, 0, fmt.Errorf("parse session expires_at: %w", err)
 		}
@@ -162,6 +219,7 @@ func decodeSessionList(result []any) ([]*entity.Session, int64, error) {
 			IP:                fields[3],
 			CurrentJTI:        fields[4],
 			CredentialVersion: credentialVersion,
+			SessionGeneration: sessionGeneration,
 			CreatedAt:         time.Unix(createdAt, 0).UTC(),
 			UpdatedAt:         time.Unix(updatedAt, 0).UTC(),
 			ExpiresAt:         time.Unix(expiresAt, 0).UTC(),
@@ -174,7 +232,7 @@ func decodeSessionList(result []any) ([]*entity.Session, int64, error) {
 
 func (r *Repository) RotateJTI(
 	ctx context.Context,
-	oldJTI, newJTI, expectedUserID string,
+	oldJTI, newJTI, expectedUserID, expectedSessionID string,
 	expectedCredentialVersion int64,
 	ip, device string,
 	expiresAt time.Time,
@@ -183,12 +241,14 @@ func (r *Repository) RotateJTI(
 
 	oldJTIKey := pkg.RedisKey("session", "jti", oldJTI)
 	newJTIKey := pkg.RedisKey("session", "jti", newJTI)
+	accessKey := pkg.RedisKey("session", "access", expectedUserID)
 
 	updatedAt := time.Now().UTC().Unix()
 
 	argv := []interface{}{
 		newJTI,
 		expectedUserID,
+		expectedSessionID,
 		expectedCredentialVersion,
 		ip,
 		device,
@@ -198,19 +258,46 @@ func (r *Repository) RotateJTI(
 		sessionTTL,
 	}
 
-	script := redisClinet.GetScript("rotate_jti")
-	res, err := script.Run(ctx, r.client, []string{oldJTIKey, newJTIKey}, argv...).Result()
+	script, err := redisClinet.GetScript(redisClinet.ScriptRotateJTI)
+	if err != nil {
+		return "", fmt.Errorf("resolve rotate-JTI script: %w", err)
+	}
+	res, err := script.Run(
+		ctx,
+		r.client,
+		[]string{oldJTIKey, newJTIKey, accessKey},
+		argv...,
+	).Slice()
+	if errors.Is(err, redis.Nil) {
+		return "", nil
+	}
 	if err != nil {
 		return "", fmt.Errorf("failed to rotate JTI: %w", err)
 	}
-
-	sessionID, ok := res.(string)
-	if !ok {
-		return "", fmt.Errorf("unexpected type returned from Redis: %T", res)
+	if len(res) == 1 {
+		status, ok := res[0].(int64)
+		if !ok {
+			return "", fmt.Errorf("unexpected Redis rotation status type: %T", res[0])
+		}
+		switch status {
+		case -1:
+			return "", domainErrors.ErrUserAccessBlocked
+		case 0:
+			return "", domainErrors.ErrUnauthorized
+		}
 	}
-
-	rawID := extractSessionIDFromKey(sessionID)
-	return rawID, nil
+	if len(res) != 2 {
+		return "", fmt.Errorf("unexpected Redis rotation result length: %d", len(res))
+	}
+	status, ok := res[0].(int64)
+	if !ok || status != 1 {
+		return "", fmt.Errorf("unexpected Redis rotation status: %v", res[0])
+	}
+	sessionID, ok := res[1].(string)
+	if !ok || sessionID == "" {
+		return "", fmt.Errorf("unexpected Redis session ID type: %T", res[1])
+	}
+	return extractSessionIDFromKey(sessionID), nil
 }
 
 func (r *Repository) Delete(ctx context.Context, sessionIDs []string) error {
@@ -223,8 +310,11 @@ func (r *Repository) Delete(ctx context.Context, sessionIDs []string) error {
 		sessionKeys = append(sessionKeys, pkg.RedisKey("session", "id", sessionID))
 	}
 
-	script := redisClinet.GetScript("delete_session")
-	_, err := script.Run(ctx, r.client, sessionKeys).Result()
+	script, err := redisClinet.GetScript(redisClinet.ScriptDeleteSession)
+	if err != nil {
+		return fmt.Errorf("resolve delete-session script: %w", err)
+	}
+	_, err = script.Run(ctx, r.client, sessionKeys).Result()
 	return err
 }
 
@@ -238,7 +328,10 @@ func (r *Repository) DeleteByUser(ctx context.Context, userID string, sessionIDs
 		sessionKeys = append(sessionKeys, pkg.RedisKey("session", "id", sessionID))
 	}
 
-	script := redisClinet.GetScript("delete_owned_sessions")
+	script, err := redisClinet.GetScript(redisClinet.ScriptDeleteOwnedSessions)
+	if err != nil {
+		return false, fmt.Errorf("resolve delete-owned-sessions script: %w", err)
+	}
 	deleted, err := script.Run(ctx, r.client, sessionKeys, userID).Int64()
 	if err != nil {
 		return false, err
@@ -252,8 +345,11 @@ func (r *Repository) DeleteAllByUser(ctx context.Context, userID string) error {
 	}
 
 	userKey := pkg.RedisKey("session", "user", userID)
-	script := redisClinet.GetScript("delete_other_sessions")
-	_, err := script.Run(
+	script, err := redisClinet.GetScript(redisClinet.ScriptDeleteOtherSessions)
+	if err != nil {
+		return fmt.Errorf("resolve delete-all-sessions script: %w", err)
+	}
+	_, err = script.Run(
 		ctx,
 		r.client,
 		[]string{userKey},
@@ -263,11 +359,52 @@ func (r *Repository) DeleteAllByUser(ctx context.Context, userID string) error {
 	return err
 }
 
+func (r *Repository) BlockAndDeleteAllByUser(
+	ctx context.Context,
+	userID string,
+) error {
+	if userID == "" {
+		return fmt.Errorf("user ID is required")
+	}
+
+	userKey := pkg.RedisKey("session", "user", userID)
+	accessKey := pkg.RedisKey("session", "access", userID)
+	script, err := redisClinet.GetScript(redisClinet.ScriptDeleteOtherSessions)
+	if err != nil {
+		return fmt.Errorf("resolve block-and-delete-all-sessions script: %w", err)
+	}
+	_, err = script.Run(
+		ctx,
+		r.client,
+		[]string{userKey, accessKey},
+		userID,
+		"block_all",
+	).Result()
+	return err
+}
+
+func (r *Repository) UnblockUser(ctx context.Context, userID string) error {
+	if userID == "" {
+		return fmt.Errorf("user ID is required")
+	}
+
+	accessKey := pkg.RedisKey("session", "access", userID)
+	script, err := redisClinet.GetScript(redisClinet.ScriptUnblockUser)
+	if err != nil {
+		return fmt.Errorf("resolve unblock-user script: %w", err)
+	}
+	_, err = script.Run(ctx, r.client, []string{accessKey}).Result()
+	return err
+}
+
 func (r *Repository) DeleteOthersByUser(ctx context.Context, userID, currentSessionID string) (bool, error) {
 	userKey := pkg.RedisKey("session", "user", userID)
 	currentSessionKey := pkg.RedisKey("session", "id", currentSessionID)
 
-	script := redisClinet.GetScript("delete_other_sessions")
+	script, err := redisClinet.GetScript(redisClinet.ScriptDeleteOtherSessions)
+	if err != nil {
+		return false, fmt.Errorf("resolve delete-other-sessions script: %w", err)
+	}
 	deleted, err := script.Run(
 		ctx,
 		r.client,
@@ -282,15 +419,18 @@ func (r *Repository) DeleteOthersByUser(ctx context.Context, userID, currentSess
 }
 
 func (r *Repository) DeleteOrphanSessions(ctx context.Context) error {
-	script := redisClinet.GetScript("clean_orphans")
+	script, err := redisClinet.GetScript(redisClinet.ScriptCleanOrphans)
+	if err != nil {
+		return fmt.Errorf("resolve clean-orphans script: %w", err)
+	}
 
 	iter := r.client.Scan(ctx, 0, "session:user:*", 0).Iterator()
 
 	for iter.Next(ctx) {
 		userKey := iter.Val()
-		res, err := script.Run(ctx, r.client, []string{userKey}).Result()
-		if err != nil {
-			r.logger.Error("remove orphan sessionkey feild", "error", err)
+		res, runErr := script.Run(ctx, r.client, []string{userKey}).Result()
+		if runErr != nil {
+			r.logger.Error("remove orphan sessionkey feild", "error", runErr)
 		}
 		if removed, ok := res.(int64); ok && removed > 0 {
 			r.logger.Info("orphan sessionkeys are removed", "count", removed)

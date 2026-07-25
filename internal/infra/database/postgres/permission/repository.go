@@ -71,13 +71,14 @@ func (r *Repository) GetByRoleID(ctx context.Context, role valueobject.UserRole)
 	return permissionRowsToDomain(rows), nil
 }
 
-func (r *Repository) Delete(ctx context.Context, permissionID string) (int8, error) {
-	var roleID int8
-	err := r.db.QueryRowxContext(ctx, "DELETE FROM permissions WHERE id = $1 RETURNING role", permissionID).Scan(&roleID)
-	if err != nil {
-		return 0, translatePermissionDeleteError(err)
-	}
-	return roleID, nil
+func (r *Repository) Delete(ctx context.Context, permissionID string) error {
+	var deletedRole int8
+	err := r.db.QueryRowxContext(
+		ctx,
+		"DELETE FROM permissions WHERE id = $1 RETURNING role",
+		permissionID,
+	).Scan(&deletedRole)
+	return translatePermissionDeleteError(err)
 }
 
 func translatePermissionCreateError(err error) error {

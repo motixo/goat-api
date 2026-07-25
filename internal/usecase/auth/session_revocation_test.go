@@ -13,12 +13,13 @@ import (
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
+	"github.com/motixo/goat-api/internal/usecase/authorization"
 	"github.com/motixo/goat-api/internal/usecase/session"
 )
 
 func TestLogoutScopesCurrentSessionRevocationToAuthenticatedUser(t *testing.T) {
 	sessions := &recordingAuthSessionUseCase{}
-	usecase := NewUsecase(nil, sessions, nil, nil, nil, discardAuthLogger{}, 0, 0, 0)
+	usecase := NewUsecase(nil, nil, sessions, nil, nil, discardAuthLogger{}, 0, 0, 0)
 
 	err := usecase.Logout(context.Background(), "01ARZ3NDEKTSV4RRFFQ69G5FAV", "user-1")
 
@@ -46,7 +47,7 @@ func TestLogoutClassifiesMissingCurrentSessionSemantically(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			sessions := &recordingAuthSessionUseCase{deleteErr: test.err}
-			usecase := NewUsecase(nil, sessions, nil, nil, nil, discardAuthLogger{}, 0, 0, 0)
+			usecase := NewUsecase(nil, nil, sessions, nil, nil, discardAuthLogger{}, 0, 0, 0)
 
 			err := usecase.Logout(context.Background(), "01ARZ3NDEKTSV4RRFFQ69G5FAV", "user-1")
 
@@ -74,19 +75,32 @@ func TestLoginAccessTokenFailureScopesCleanupToCreatedSessionOwner(t *testing.T)
 	sessions := &recordingAuthSessionUseCase{}
 	tokens := &authJWTService{accessErr: accessErr}
 	passwords := &authPasswordHasher{}
+	permissions, err := valueobject.NewPermissionSet([]valueobject.Permission{
+		valueobject.PermUserRead,
+	})
+	if err != nil {
+		t.Fatalf("build permission set: %v", err)
+	}
+	securityStates := &authSecurityStateReader{state: authorization.SecurityState{
+		UserID:            userEntity.ID,
+		Status:            valueobject.StatusActive,
+		Role:              valueobject.RoleClient,
+		CredentialVersion: userEntity.CredentialVersion,
+		Permissions:       permissions,
+	}}
 	usecase := NewUsecase(
 		users,
+		securityStates,
 		sessions,
 		passwords,
 		tokens,
-		nil,
 		discardAuthLogger{},
 		AccessTTL(time.Minute),
 		RefreshTTL(time.Hour),
 		SessionTTL(24*time.Hour),
 	)
 
-	_, err := usecase.Login(context.Background(), LoginInput{
+	_, err = usecase.Login(context.Background(), LoginInput{
 		Email:    userEntity.Email,
 		Password: "Password1!",
 	})
@@ -122,6 +136,20 @@ func (r *authUserRepository) FindByEmail(context.Context, string) (*entity.User,
 	return r.user, nil
 }
 
+type authSecurityStateReader struct {
+	state authorization.SecurityState
+	err   error
+	calls int
+}
+
+func (r *authSecurityStateReader) GetSecurityState(
+	context.Context,
+	string,
+) (authorization.SecurityState, error) {
+	r.calls++
+	return r.state, r.err
+}
+
 type recordingAuthSessionUseCase struct {
 	session.UseCase
 	createInput session.CreateInput
@@ -152,11 +180,18 @@ type authJWTService struct {
 	accessErr error
 }
 
-func (*authJWTService) GenerateRefreshToken(string, string, time.Duration) (string, *valueobject.JWTClaims, error) {
+func (*authJWTService) GenerateRefreshToken(
+	valueobject.TokenIdentity,
+	time.Duration,
+) (string, *valueobject.JWTClaims, error) {
 	return "refresh-token", &valueobject.JWTClaims{ExpiresAt: time.Now().Add(time.Hour)}, nil
 }
 
-func (s *authJWTService) GenerateAccessToken(string, string, string, time.Duration) (string, *valueobject.JWTClaims, error) {
+func (s *authJWTService) GenerateAccessToken(
+	valueobject.TokenIdentity,
+	valueobject.AuthorizationSnapshot,
+	time.Duration,
+) (string, *valueobject.JWTClaims, error) {
 	return "", nil, s.accessErr
 }
 

@@ -20,38 +20,70 @@ const (
 )
 
 type JWTClaims struct {
-	UserID    string
-	SessionID string
-	UserRole  int8
-	TokenType TokenType
-	JTI       string
-	Issuer    string
-	Subject   string
-	Audience  []string
-	ExpiresAt time.Time
-	IssuedAt  time.Time
-	NotBefore time.Time
+	UserID            string
+	SessionID         string
+	CredentialVersion int64
+	Role              UserRole
+	Permissions       PermissionSet
+	TokenType         TokenType
+	JTI               string
+	Issuer            string
+	Subject           string
+	Audience          []string
+	ExpiresAt         time.Time
+	IssuedAt          time.Time
+	NotBefore         time.Time
 }
 
-func NewJWTClaims(userID string, sessionID string, tokenType TokenType, jti string, expiresAt time.Time) (*JWTClaims, error) {
-	if userID == "" || jti == "" {
+type TokenIdentity struct {
+	UserID            string
+	SessionID         string
+	JTI               string
+	CredentialVersion int64
+}
+
+type AuthorizationSnapshot struct {
+	Role        UserRole
+	Permissions PermissionSet
+}
+
+func NewJWTClaims(
+	identity TokenIdentity,
+	tokenType TokenType,
+	expiresAt time.Time,
+	issuedAt time.Time,
+	snapshot AuthorizationSnapshot,
+) (*JWTClaims, error) {
+	issuedAt = issuedAt.UTC()
+	expiresAt = expiresAt.UTC()
+	if identity.UserID == "" || identity.SessionID == "" || identity.JTI == "" ||
+		identity.CredentialVersion <= 0 {
 		return nil, errors.ErrInvalidInput
 	}
-	if !expiresAt.After(time.Now()) {
+	if tokenType != TokenTypeAccess && tokenType != TokenTypeRefresh {
+		return nil, errors.ErrInvalidInput
+	}
+	if !expiresAt.After(issuedAt) {
+		return nil, errors.ErrInvalidInput
+	}
+	if tokenType == TokenTypeAccess && snapshot.Role == RoleUnknown {
 		return nil, errors.ErrInvalidInput
 	}
 
 	claims := &JWTClaims{
-		UserID:    userID,
-		SessionID: sessionID,
-		TokenType: tokenType,
-		JTI:       jti,
-		Issuer:    TokenIssuer,
-		Subject:   string(tokenType),
-		Audience:  []string{TokenAudience},
-		ExpiresAt: expiresAt,
-		IssuedAt:  time.Now().UTC(),
-		NotBefore: time.Now().UTC(),
+		UserID:            identity.UserID,
+		SessionID:         identity.SessionID,
+		CredentialVersion: identity.CredentialVersion,
+		Role:              snapshot.Role,
+		Permissions:       snapshot.Permissions,
+		TokenType:         tokenType,
+		JTI:               identity.JTI,
+		Issuer:            TokenIssuer,
+		Subject:           string(tokenType),
+		Audience:          []string{TokenAudience},
+		ExpiresAt:         expiresAt,
+		IssuedAt:          issuedAt,
+		NotBefore:         issuedAt,
 	}
 
 	return claims, nil
@@ -68,5 +100,9 @@ func (c *JWTClaims) IsAccess() bool  { return c.TokenType == TokenTypeAccess }
 func (c *JWTClaims) IsRefresh() bool { return c.TokenType == TokenTypeRefresh }
 
 func (c *JWTClaims) IsExpired() bool {
-	return time.Now().After(c.ExpiresAt)
+	return c.IsExpiredAt(time.Now())
+}
+
+func (c *JWTClaims) IsExpiredAt(now time.Time) bool {
+	return !now.Before(c.ExpiresAt)
 }

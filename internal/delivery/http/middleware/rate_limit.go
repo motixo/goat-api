@@ -37,9 +37,9 @@ func (m *RateLimitMiddleware) Handler(config RateLimit) gin.HandlerFunc {
 		actorType := "ip"
 		actorID := c.ClientIP()
 
-		if userID := c.GetString(UserIDKey); userID != "" {
+		if principal, ok := PrincipalFrom(c); ok {
 			actorType = "user"
-			actorID = userID
+			actorID = principal.UserID()
 		}
 
 		allowed, retryAfter, currentCount, err := m.limiter.Allow(

@@ -15,6 +15,7 @@ import (
 	"github.com/lib/pq"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/usecase/auth"
+	"github.com/motixo/goat-api/internal/usecase/authorization"
 	"github.com/motixo/goat-api/internal/usecase/session"
 )
 
@@ -41,6 +42,11 @@ var mappedProblemCases = []mappedProblemCase{
 	{name: "token expired", err: domainErrors.ErrTokenExpired, status: http.StatusUnauthorized, typ: "/errors/unauthorized", titleKey: titleUnauthorized, detailKey: detailTokenExpired, title: "Unauthorized", detail: "token has expired"},
 	{name: "token invalid", err: domainErrors.ErrTokenInvalid, status: http.StatusUnauthorized, typ: "/errors/unauthorized", titleKey: titleUnauthorized, detailKey: detailTokenInvalid, title: "Unauthorized", detail: "invalid or malformed token"},
 	{name: "current session invalid", err: auth.NewCurrentSessionInvalidError(domainErrors.ErrNotFound), status: http.StatusUnauthorized, typ: "/errors/unauthorized", titleKey: titleUnauthorized, detailKey: detailCurrentSessionNotFound, title: "Unauthorized", detail: "not found"},
+	{name: "security state changed", err: authorization.ErrPrincipalSecurityStateChanged, status: http.StatusUnauthorized, typ: "/errors/unauthorized", titleKey: titleUnauthorized, detailKey: DetailTokenRevoked, title: "Unauthorized", detail: "token has been revoked"},
+	{name: "blocked user access state", err: domainErrors.ErrUserAccessBlocked, status: http.StatusUnauthorized, typ: "/errors/unauthorized", titleKey: titleUnauthorized, detailKey: DetailTokenRevoked, title: "Unauthorized", detail: "token has been revoked"},
+	{name: "fresh inactive principal", err: authorization.ErrPrincipalInactive, status: http.StatusUnauthorized, typ: "/errors/unauthorized", titleKey: titleUnauthorized, detailKey: DetailAccountNotActivated, title: "Unauthorized", detail: "account not activated."},
+	{name: "fresh suspended principal", err: authorization.ErrPrincipalSuspended, status: http.StatusUnauthorized, typ: "/errors/unauthorized", titleKey: titleUnauthorized, detailKey: DetailAccountSuspended, title: "Unauthorized", detail: "account suspended."},
+	{name: "fresh permission denied", err: authorization.ErrPermissionDenied, status: http.StatusForbidden, typ: "/errors/forbidden", titleKey: titleForbidden, detailKey: DetailInsufficientPermissions, title: "Forbidden", detail: "insufficient permissions"},
 	{name: "invalid credentials", err: domainErrors.ErrInvalidCredentials, status: http.StatusUnauthorized, typ: "/errors/internal", titleKey: titleUnauthorized, detailKey: detailInvalidCredentials, title: "Unauthorized", detail: "Invalid email or password."},
 	{name: "forbidden", err: domainErrors.ErrForbidden, status: http.StatusForbidden, typ: "/errors/internal", titleKey: titleForbidden, detailKey: detailProcessingError, title: "Forbidden", detail: "An error occurred while processing your request."},
 	{name: "account suspended", err: domainErrors.ErrAccountSuspended, status: http.StatusForbidden, typ: "/errors/internal", titleKey: titleForbidden, detailKey: detailAccountSuspendedContactSupport, title: "Forbidden", detail: "Your account has been suspended. Please contact support."},
@@ -48,6 +54,7 @@ var mappedProblemCases = []mappedProblemCase{
 	{name: "user not found", err: domainErrors.ErrUserNotFound, status: http.StatusNotFound, typ: "/errors/not-found", titleKey: titleNotFound, detailKey: detailResourceNotFound, title: "Not Found", detail: "The requested resource was not found."},
 	{name: "permission not found", err: domainErrors.ErrPermissionNotFound, status: http.StatusNotFound, typ: "/errors/not-found", titleKey: titleNotFound, detailKey: detailResourceNotFound, title: "Not Found", detail: "The requested resource was not found."},
 	{name: "conflict", err: domainErrors.ErrConflict, status: http.StatusConflict, typ: "/errors/conflict", titleKey: titleConflict, detailKey: detailConflict, title: "Conflict", detail: "The request conflicts with current state."},
+	{name: "invalid user status transition", err: domainErrors.ErrInvalidUserStatusTransition, status: http.StatusConflict, typ: "/errors/conflict", titleKey: titleConflict, detailKey: detailConflict, title: "Conflict", detail: "The request conflicts with current state."},
 	{name: "email exists", err: domainErrors.ErrEmailAlreadyExists, status: http.StatusConflict, typ: "/errors/email-already-exists", titleKey: titleConflict, detailKey: detailEmailAlreadyExists, title: "Conflict", detail: "This email is already registered."},
 	{name: "permission exists", err: domainErrors.ErrPermissionAlreadyExists, status: http.StatusConflict, typ: "/errors/conflict", titleKey: titleConflict, detailKey: detailConflict, title: "Conflict", detail: "The request conflicts with current state."},
 	{name: "password unchanged", err: domainErrors.ErrPasswordSameAsCurrent, status: http.StatusConflict, typ: "/errors/internal", titleKey: titleConflict, detailKey: detailPasswordSameAsCurrent, title: "Conflict", detail: "Passwords can't be same"},
@@ -705,6 +712,105 @@ func TestUnknownUserIDLookupFailureRemainsSafeLocalizedInternalProblem(t *testin
 				t.Fatalf("localized internal problem leaked PostgreSQL details: %s", recorder.Body.String())
 			}
 		})
+	}
+}
+
+func TestUserStatusCompareAndSetFailuresPreserveLocalizedProblemContracts(
+	t *testing.T,
+) {
+	tests := []struct {
+		name          string
+		err           error
+		status        int
+		problemType   string
+		englishTitle  string
+		englishDetail string
+		persianTitle  string
+		persianDetail string
+	}{
+		{
+			name:          "user deleted during transition",
+			err:           fmt.Errorf("compare-and-set user status: %w", domainErrors.ErrUserNotFound),
+			status:        http.StatusNotFound,
+			problemType:   "/errors/not-found",
+			englishTitle:  "Not Found",
+			englishDetail: "The requested resource was not found.",
+			persianTitle:  "پیدا نشد",
+			persianDetail: "اطلاعات موردنظر پیدا نشد.",
+		},
+		{
+			name: "conflicting transition",
+			err: fmt.Errorf(
+				"%w: suspended to active",
+				domainErrors.ErrInvalidUserStatusTransition,
+			),
+			status:        http.StatusConflict,
+			problemType:   "/errors/conflict",
+			englishTitle:  "Conflict",
+			englishDetail: "The request conflicts with current state.",
+			persianTitle:  "امکان انجام درخواست وجود ندارد",
+			persianDetail: "در شرایط فعلی امکان انجام این درخواست وجود ندارد.",
+		},
+		{
+			name:          "unknown PostgreSQL failure",
+			err:           fmt.Errorf("compare-and-set user status: %w", errors.New("postgres host=db.internal password=secret")),
+			status:        http.StatusInternalServerError,
+			problemType:   "/errors/internal",
+			englishTitle:  "Internal Server Error",
+			englishDetail: "An unexpected error occurred.",
+			persianTitle:  "خطای سرور",
+			persianDetail: "مشکلی پیش آمد. لطفاً دوباره تلاش کنید.",
+		},
+	}
+
+	for _, test := range tests {
+		for _, language := range []struct {
+			name   string
+			header string
+			tag    string
+			title  string
+			detail string
+		}{
+			{
+				name:   "English",
+				header: "en-US",
+				tag:    "en",
+				title:  test.englishTitle,
+				detail: test.englishDetail,
+			},
+			{
+				name:   "Persian",
+				header: "fa-IR",
+				tag:    "fa",
+				title:  test.persianTitle,
+				detail: test.persianDetail,
+			},
+		} {
+			t.Run(test.name+"/"+language.name, func(t *testing.T) {
+				recorder := renderMappedError(t, test.err, language.header)
+				assertProblemHTTPContract(
+					t,
+					recorder,
+					language.tag,
+					"Accept-Language",
+					Problem{
+						Type:     test.problemType,
+						Title:    language.title,
+						Status:   test.status,
+						Detail:   language.detail,
+						Instance: "/resource",
+					},
+				)
+				if strings.Contains(recorder.Body.String(), "db.internal") ||
+					strings.Contains(recorder.Body.String(), "password=secret") ||
+					strings.Contains(recorder.Body.String(), "suspended to active") {
+					t.Fatalf(
+						"status CAS problem leaked internal detail: %s",
+						recorder.Body.String(),
+					)
+				}
+			})
+		}
 	}
 }
 

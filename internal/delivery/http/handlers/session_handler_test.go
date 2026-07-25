@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
+	"github.com/motixo/goat-api/internal/domain/valueobject"
 	"github.com/motixo/goat-api/internal/usecase/session"
 )
 
@@ -41,8 +42,12 @@ func TestSessionHandlerListUsesAuthenticatedPrincipalAndPreservesPaginationContr
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.GET("/user/sessions", func(c *gin.Context) {
-		c.Set("user_id", "authenticated-user")
-		c.Set("session_id", "01ARZ3NDEKTSV4RRFFQ69G5FAV")
+		setHandlerTestPrincipal(
+			c,
+			"authenticated-user",
+			"01ARZ3NDEKTSV4RRFFQ69G5FAV",
+			valueobject.RoleClient,
+		)
 		c.Next()
 	}, NewSessionHandler(usecase, discardSessionHandlerLogger{}).GetAllUserSessions)
 	request := httptest.NewRequest(http.MethodGet, "/user/sessions?page=2&limit=101&user_id=client-user&session_id=client-session", nil)
@@ -88,8 +93,12 @@ func TestSessionHandlerListPreservesOptionalFieldOmission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.GET("/user/sessions", func(c *gin.Context) {
-		c.Set("user_id", "authenticated-user")
-		c.Set("session_id", "01ARZ3NDEKTSV4RRFFQ69G5FAX")
+		setHandlerTestPrincipal(
+			c,
+			"authenticated-user",
+			"01ARZ3NDEKTSV4RRFFQ69G5FAX",
+			valueobject.RoleClient,
+		)
 		c.Next()
 	}, NewSessionHandler(usecase, discardSessionHandlerLogger{}).GetAllUserSessions)
 	request := httptest.NewRequest(http.MethodGet, "/user/sessions", nil)
@@ -256,8 +265,12 @@ func performSessionDeletionRequest(t *testing.T, body string, usecase session.Us
 
 	router := gin.New()
 	router.DELETE("/user/sessions", func(c *gin.Context) {
-		c.Set("user_id", "authenticated-user")
-		c.Set("session_id", "01ARZ3NDEKTSV4RRFFQ69G5FAV")
+		setHandlerTestPrincipal(
+			c,
+			"authenticated-user",
+			"01ARZ3NDEKTSV4RRFFQ69G5FAV",
+			valueobject.RoleClient,
+		)
 		c.Next()
 	}, NewSessionHandler(usecase, discardSessionHandlerLogger{}).DeleteSessions)
 

@@ -34,6 +34,7 @@ type recordingSessionUseCase struct {
 	err           error
 	validateInput session.ValidateInput
 	checked       bool
+	validateCalls int
 }
 
 func (s *recordingSessionUseCase) ValidateSession(
@@ -41,20 +42,9 @@ func (s *recordingSessionUseCase) ValidateSession(
 	input session.ValidateInput,
 ) (bool, error) {
 	s.checked = true
+	s.validateCalls++
 	s.validateInput = input
 	return s.valid, s.err
-}
-
-type stubUserCacheService struct {
-	service.UserCacheService
-	status valueobject.UserStatus
-	err    error
-	calls  int
-}
-
-func (s *stubUserCacheService) GetUserStatus(context.Context, string) (valueobject.UserStatus, error) {
-	s.calls++
-	return s.status, s.err
 }
 
 func TestAuthMiddlewareRequiredAllowsAccessToken(t *testing.T) {
@@ -62,21 +52,19 @@ func TestAuthMiddlewareRequiredAllowsAccessToken(t *testing.T) {
 
 	sessions := &recordingSessionUseCase{valid: true}
 	middleware := NewAuthMiddleware(
-		&stubJWTService{claims: &valueobject.JWTClaims{
-			UserID:    "user-1",
-			SessionID: "session-1",
-			TokenType: valueobject.TokenTypeAccess,
-			JTI:       "access-jti",
-		}},
+		&stubJWTService{claims: validAccessClaims(t)},
 		sessions,
-		&stubUserCacheService{status: valueobject.StatusActive},
 	)
 
-	var gotUserID, gotSessionID string
+	var gotPrincipalUserID, gotPrincipalSessionID string
 	router := gin.New()
 	router.GET("/protected", middleware.Required(), func(c *gin.Context) {
-		gotUserID = c.GetString(string(UserIDKey))
-		gotSessionID = c.GetString(string(SessionIDKey))
+		principal, ok := PrincipalFrom(c)
+		if !ok {
+			t.Fatal("verified principal was not attached")
+		}
+		gotPrincipalUserID = principal.UserID()
+		gotPrincipalSessionID = principal.SessionID()
 		c.Status(http.StatusNoContent)
 	})
 
@@ -91,19 +79,23 @@ func TestAuthMiddlewareRequiredAllowsAccessToken(t *testing.T) {
 	if !sessions.checked {
 		t.Fatal("expected access-token session to be checked")
 	}
+	if sessions.validateCalls != 1 {
+		t.Fatalf("Redis session validations = %d, want 1", sessions.validateCalls)
+	}
 	wantValidation := session.ValidateInput{
-		UserID:    "user-1",
-		SessionID: "session-1",
-		JTI:       "access-jti",
+		UserID:            "user-1",
+		SessionID:         "session-1",
+		JTI:               "access-jti",
+		CredentialVersion: 7,
 	}
 	if sessions.validateInput != wantValidation {
 		t.Fatalf("session validation input = %#v, want %#v", sessions.validateInput, wantValidation)
 	}
-	if gotUserID != "user-1" {
-		t.Fatalf("user ID = %q, want %q", gotUserID, "user-1")
+	if gotPrincipalUserID != "user-1" {
+		t.Fatalf("principal user ID = %q, want %q", gotPrincipalUserID, "user-1")
 	}
-	if gotSessionID != "session-1" {
-		t.Fatalf("session ID = %q, want %q", gotSessionID, "session-1")
+	if gotPrincipalSessionID != "session-1" {
+		t.Fatalf("principal session ID = %q, want %q", gotPrincipalSessionID, "session-1")
 	}
 }
 
@@ -113,12 +105,13 @@ func TestAuthMiddlewareRequiredRejectsRefreshTokenBeforeSessionLookup(t *testing
 	sessions := &recordingSessionUseCase{valid: true}
 	middleware := NewAuthMiddleware(
 		&stubJWTService{claims: &valueobject.JWTClaims{
-			UserID:    "user-1",
-			TokenType: valueobject.TokenTypeRefresh,
-			JTI:       "refresh-jti",
+			UserID:            "user-1",
+			SessionID:         "session-1",
+			CredentialVersion: 7,
+			TokenType:         valueobject.TokenTypeRefresh,
+			JTI:               "refresh-jti",
 		}},
 		sessions,
-		&stubUserCacheService{status: valueobject.StatusActive},
 	)
 
 	nextCalled := false
@@ -169,7 +162,6 @@ func TestAuthMiddlewareDelegatesTokenErrorsToCentralMapper(t *testing.T) {
 				middleware := NewAuthMiddleware(
 					&stubJWTService{err: variant.err},
 					sessions,
-					&stubUserCacheService{status: valueobject.StatusActive},
 				)
 
 				recorder := performRequiredMiddlewareRequest(t, middleware)
@@ -216,7 +208,6 @@ func TestAuthMiddlewareUsesSharedLocalizedWriter(t *testing.T) {
 			middleware := NewAuthMiddleware(
 				test.jwt,
 				&recordingSessionUseCase{valid: true},
-				&stubUserCacheService{status: valueobject.StatusActive},
 			)
 			recorder := performRequiredMiddlewareRequestWithLanguage(t, middleware, test.token, "fa-IR")
 
@@ -248,7 +239,6 @@ func TestAuthMiddlewareKeepsUnknownTokenFailuresInternal(t *testing.T) {
 	middleware := NewAuthMiddleware(
 		&stubJWTService{err: internalErr},
 		&recordingSessionUseCase{valid: true},
-		&stubUserCacheService{status: valueobject.StatusActive},
 	)
 
 	recorder := performRequiredMiddlewareRequest(t, middleware)
@@ -288,16 +278,9 @@ func TestAuthMiddlewareCredentialVersionRejectionPreservesLocalizedContract(t *t
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			sessions := &recordingSessionUseCase{valid: false}
-			cache := &stubUserCacheService{status: valueobject.StatusActive}
 			middleware := NewAuthMiddleware(
-				&stubJWTService{claims: &valueobject.JWTClaims{
-					UserID:    "user-1",
-					SessionID: "session-1",
-					TokenType: valueobject.TokenTypeAccess,
-					JTI:       "access-jti",
-				}},
+				&stubJWTService{claims: validAccessClaims(t)},
 				sessions,
-				cache,
 			)
 
 			recorder := performRequiredMiddlewareRequestWithLanguage(
@@ -317,15 +300,66 @@ func TestAuthMiddlewareCredentialVersionRejectionPreservesLocalizedContract(t *t
 				"detail":   test.wantDetail,
 				"instance": "/protected",
 			})
-			if cache.calls != 0 {
-				t.Fatalf("authorization cache calls = %d, want 0 after credential-version rejection", cache.calls)
-			}
 		})
 	}
 }
 
-func TestAuthMiddlewareAuthoritativeVersionFailureUsesSafeLocalizedInternalProblem(t *testing.T) {
-	lookupErr := stdErrors.New("postgres connection secret must not be exposed")
+func TestAuthMiddlewareRejectsBlockedUserThroughSharedLocalizedWriter(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		locale     string
+		err        error
+		wantTitle  string
+		wantDetail string
+	}{
+		{
+			name:       "direct English",
+			locale:     "en",
+			err:        domainErrors.ErrUserAccessBlocked,
+			wantTitle:  "Unauthorized",
+			wantDetail: "token has been revoked",
+		},
+		{
+			name:       "wrapped Persian",
+			locale:     "fa-IR",
+			err:        fmt.Errorf("validate Redis access state: %w", domainErrors.ErrUserAccessBlocked),
+			wantTitle:  "لطفاً وارد حساب خود شوید",
+			wantDetail: "دسترسی شما لغو شده است. لطفاً دوباره وارد شوید.",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sessions := &recordingSessionUseCase{err: test.err}
+			middleware := NewAuthMiddleware(
+				&stubJWTService{claims: validAccessClaims(t)},
+				sessions,
+			)
+
+			recorder := performRequiredMiddlewareRequestWithLanguage(
+				t,
+				middleware,
+				"access-token",
+				test.locale,
+			)
+
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusUnauthorized, recorder.Body.String())
+			}
+			if sessions.validateCalls != 1 {
+				t.Fatalf("Redis session validations = %d, want 1", sessions.validateCalls)
+			}
+			assertMiddlewareProblem(t, recorder.Body.Bytes(), map[string]any{
+				"type":     "/errors/unauthorized",
+				"title":    test.wantTitle,
+				"status":   float64(http.StatusUnauthorized),
+				"detail":   test.wantDetail,
+				"instance": "/protected",
+			})
+		})
+	}
+}
+
+func TestAuthMiddlewareRedisFailureUsesSafeLocalizedInternalProblem(t *testing.T) {
+	lookupErr := stdErrors.New("redis connection secret must not be exposed")
 	tests := []struct {
 		locale     string
 		wantTitle  string
@@ -346,14 +380,8 @@ func TestAuthMiddlewareAuthoritativeVersionFailureUsesSafeLocalizedInternalProbl
 	for _, test := range tests {
 		t.Run(test.locale, func(t *testing.T) {
 			middleware := NewAuthMiddleware(
-				&stubJWTService{claims: &valueobject.JWTClaims{
-					UserID:    "user-1",
-					SessionID: "session-1",
-					TokenType: valueobject.TokenTypeAccess,
-					JTI:       "access-jti",
-				}},
+				&stubJWTService{claims: validAccessClaims(t)},
 				&recordingSessionUseCase{err: lookupErr},
-				&stubUserCacheService{status: valueobject.StatusActive},
 			)
 
 			recorder := performRequiredMiddlewareRequestWithLanguage(
@@ -377,6 +405,25 @@ func TestAuthMiddlewareAuthoritativeVersionFailureUsesSafeLocalizedInternalProbl
 				t.Fatalf("internal lookup detail leaked: %s", recorder.Body.String())
 			}
 		})
+	}
+}
+
+func validAccessClaims(t *testing.T) *valueobject.JWTClaims {
+	t.Helper()
+	permissions, err := valueobject.NewPermissionSet([]valueobject.Permission{
+		valueobject.PermUserRead,
+	})
+	if err != nil {
+		t.Fatalf("build permission set: %v", err)
+	}
+	return &valueobject.JWTClaims{
+		UserID:            "user-1",
+		SessionID:         "session-1",
+		CredentialVersion: 7,
+		Role:              valueobject.RoleClient,
+		Permissions:       permissions,
+		TokenType:         valueobject.TokenTypeAccess,
+		JTI:               "access-jti",
 	}
 }
 

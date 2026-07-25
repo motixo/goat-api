@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -170,7 +171,8 @@ func TestUserHandlerListPreservesFiltersPaginationAndResponseContract(t *testing
 		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
 	wantInput := user.GetListInput{
-		ActorID: "authenticated-user",
+		ActorID:   "authenticated-user",
+		ActorRole: valueobject.RoleAdmin,
 		Filter: user.ListFilter{
 			Roles:    []valueobject.UserRole{valueobject.RoleClient, valueobject.RoleAdmin},
 			Statuses: []valueobject.UserStatus{valueobject.StatusActive},
@@ -465,6 +467,71 @@ func TestUserHandlerChangeStatusPreservesValidationBeforeAuthenticationContext(t
 	}`)
 }
 
+func TestUserHandlerChangeStatusLocalizesInvalidTransitionProblem(t *testing.T) {
+	tests := []struct {
+		name           string
+		acceptLanguage string
+		wantLanguage   string
+		wantTitle      string
+		wantDetail     string
+	}{
+		{
+			name:         "English",
+			wantLanguage: "en",
+			wantTitle:    "Conflict",
+			wantDetail:   "The request conflicts with current state.",
+		},
+		{
+			name:           "Persian",
+			acceptLanguage: "fa-IR",
+			wantLanguage:   "fa",
+			wantTitle:      "امکان انجام درخواست وجود ندارد",
+			wantDetail:     "در شرایط فعلی امکان انجام این درخواست وجود ندارد.",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			usecase := &stubUserHandlerUseCase{
+				changeStatus: func(context.Context, user.UpdateStatusInput) error {
+					return fmt.Errorf(
+						"change status: %w",
+						domainErrors.ErrInvalidUserStatusTransition,
+					)
+				},
+			}
+			path := "/user/" + userHandlerTargetID + "/change-status"
+			recorder := performUserHandlerRequestWithLanguage(
+				t,
+				newUserHandlerTestRouter(usecase),
+				http.MethodPatch,
+				path,
+				`{"status":"inactive"}`,
+				test.acceptLanguage,
+			)
+
+			if recorder.Code != http.StatusConflict {
+				t.Fatalf(
+					"status = %d, want %d; body = %s",
+					recorder.Code,
+					http.StatusConflict,
+					recorder.Body.String(),
+				)
+			}
+			if got := recorder.Header().Get("Content-Language"); got != test.wantLanguage {
+				t.Fatalf("Content-Language = %q, want %q", got, test.wantLanguage)
+			}
+			assertUserHandlerJSONEqual(t, recorder.Body.Bytes(), `{
+				"type":"/errors/conflict",
+				"title":`+strconv.Quote(test.wantTitle)+`,
+				"status":409,
+				"detail":`+strconv.Quote(test.wantDetail)+`,
+				"instance":"`+path+`"
+			}`)
+		})
+	}
+}
+
 func TestUserHandlerChangeCommandsPreserveMappingsAndContracts(t *testing.T) {
 	t.Run("email", func(t *testing.T) {
 		var gotInput user.UpdateEmailInput
@@ -562,9 +629,10 @@ func TestUserHandlerChangeCommandsPreserveMappingsAndContracts(t *testing.T) {
 			t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
 		}
 		wantInput := user.UpdateStatusInput{
-			UserID:  userHandlerTargetID,
-			ActorID: "authenticated-user",
-			Status:  valueobject.StatusSuspended,
+			UserID:    userHandlerTargetID,
+			ActorID:   "authenticated-user",
+			ActorRole: valueobject.RoleAdmin,
+			Status:    valueobject.StatusSuspended,
 		}
 		if !reflect.DeepEqual(gotInput, wantInput) {
 			t.Fatalf("ChangeStatus input = %#v, want %#v", gotInput, wantInput)
@@ -670,7 +738,12 @@ func newUserHandlerTestRouter(usecase user.UseCase) *gin.Engine {
 	router := gin.New()
 	handler := NewUserHandler(usecase, discardUserHandlerLogger{})
 	authenticated := func(c *gin.Context) {
-		c.Set("user_id", "authenticated-user")
+		setHandlerTestPrincipal(
+			c,
+			"authenticated-user",
+			"01ARZ3NDEKTSV4RRFFQ69G5FAV",
+			valueobject.RoleAdmin,
+		)
 		c.Next()
 	}
 
@@ -688,8 +761,20 @@ func newUserHandlerTestRouter(usecase user.UseCase) *gin.Engine {
 
 func performUserHandlerRequest(t *testing.T, router http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	return performUserHandlerRequestWithLanguage(t, router, method, path, body, "")
+}
+
+func performUserHandlerRequestWithLanguage(
+	t *testing.T,
+	router http.Handler,
+	method, path, body, acceptLanguage string,
+) *httptest.ResponseRecorder {
+	t.Helper()
 	request := httptest.NewRequest(method, path, strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
+	if acceptLanguage != "" {
+		request.Header.Set("Accept-Language", acceptLanguage)
+	}
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	return recorder

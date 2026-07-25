@@ -26,7 +26,7 @@ const (
 	userEmailUniqueConstraint = "users_email_key"
 )
 
-func NewRepository(db *sqlx.DB) repository.UserRepository {
+func NewRepository(db *sqlx.DB) *Repository {
 	return &Repository{db: db}
 }
 
@@ -145,12 +145,6 @@ func (r *Repository) Update(ctx context.Context, user *entity.User) error {
 		argIndex++
 	}
 
-	if row.Status != int16(valueobject.StatusUnknown) {
-		setClauses = append(setClauses, fmt.Sprintf("status = $%d", argIndex))
-		args = append(args, row.Status)
-		argIndex++
-	}
-
 	if len(setClauses) == 0 {
 		return domainErrors.ErrBadRequest
 	}
@@ -178,6 +172,101 @@ func (r *Repository) Update(ctx context.Context, user *entity.User) error {
 	}
 
 	return nil
+}
+
+func (r *Repository) UpdateStatus(
+	ctx context.Context,
+	userID string,
+	expected valueobject.UserStatus,
+	requested valueobject.UserStatus,
+) (repository.UserStatusUpdateResult, error) {
+	if !expected.IsKnown() {
+		return repository.UserStatusUpdateResult{}, fmt.Errorf(
+			"expected user status is invalid",
+		)
+	}
+	if !requested.IsKnown() {
+		return repository.UserStatusUpdateResult{}, fmt.Errorf(
+			"requested user status is invalid",
+		)
+	}
+	if expected == requested {
+		return repository.UserStatusUpdateResult{}, fmt.Errorf(
+			"compare-and-set user statuses must differ",
+		)
+	}
+
+	var storedStatus int16
+	err := r.db.GetContext(
+		ctx,
+		&storedStatus,
+		`UPDATE users
+		 SET status = $1,
+		     updated_at = $2
+		 WHERE id = $3
+		   AND status = $4
+		 RETURNING status`,
+		int16(requested),
+		time.Now().UTC(),
+		userID,
+		int16(expected),
+	)
+	if err == nil {
+		return repository.UserStatusUpdateResult{
+			Outcome:       repository.UserStatusUpdateApplied,
+			CurrentStatus: valueobject.UserStatus(storedStatus),
+		}, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return repository.UserStatusUpdateResult{}, fmt.Errorf(
+			"compare-and-set user status: %w",
+			err,
+		)
+	}
+
+	return r.classifyStatusUpdateMiss(ctx, userID, requested)
+}
+
+func (r *Repository) classifyStatusUpdateMiss(
+	ctx context.Context,
+	userID string,
+	requested valueobject.UserStatus,
+) (repository.UserStatusUpdateResult, error) {
+	var storedStatus int16
+	err := r.db.GetContext(
+		ctx,
+		&storedStatus,
+		"SELECT status FROM users WHERE id = $1",
+		userID,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return repository.UserStatusUpdateResult{
+			Outcome: repository.UserStatusUpdateNotFound,
+		}, nil
+	}
+	if err != nil {
+		return repository.UserStatusUpdateResult{}, fmt.Errorf(
+			"classify user status update: %w",
+			err,
+		)
+	}
+
+	current := valueobject.UserStatus(storedStatus)
+	if !current.IsKnown() {
+		return repository.UserStatusUpdateResult{}, fmt.Errorf(
+			"authoritative user status is invalid",
+		)
+	}
+	if current == requested {
+		return repository.UserStatusUpdateResult{
+			Outcome:       repository.UserStatusUpdateAlreadyApplied,
+			CurrentStatus: current,
+		}, nil
+	}
+	return repository.UserStatusUpdateResult{
+		Outcome:       repository.UserStatusUpdateConflict,
+		CurrentStatus: current,
+	}, nil
 }
 
 func (r *Repository) Delete(ctx context.Context, userID string) error {

@@ -101,12 +101,8 @@ func TestRepositoryIntegrationAllOperations(t *testing.T) {
 		t.Fatalf("Create(duplicate role/action) PostgreSQL error = code %q constraint %q", pqErr.Code, pqErr.Constraint)
 	}
 
-	deletedRole, err := repo.Delete(ctx, additional.ID)
-	if err != nil {
+	if err := repo.Delete(ctx, additional.ID); err != nil {
 		t.Fatalf("Delete() error = %v", err)
-	}
-	if deletedRole != int8(additional.Role) {
-		t.Fatalf("Delete() role = %d, want %d", deletedRole, additional.Role)
 	}
 	byRole, err = repo.GetByRoleID(ctx, valueobject.RoleOperator)
 	if err != nil {
@@ -116,7 +112,7 @@ func TestRepositoryIntegrationAllOperations(t *testing.T) {
 		t.Fatalf("GetByRoleID(after delete) = %#v, want only %s", byRole, permissions[1].ID)
 	}
 
-	_, err = repo.Delete(ctx, additional.ID)
+	err = repo.Delete(ctx, additional.ID)
 	if !errors.Is(err, domainErrors.ErrPermissionNotFound) {
 		t.Fatalf("Delete(missing) error = %v, want ErrPermissionNotFound", err)
 	}

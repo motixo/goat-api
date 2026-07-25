@@ -17,7 +17,7 @@ func TestRefreshRejectsAccessTokenPurpose(t *testing.T) {
 			TokenType: valueobject.TokenTypeAccess,
 		},
 	}
-	usecase := NewUsecase(nil, nil, nil, tokens, nil, discardAuthLogger{}, 0, 0, 0)
+	usecase := NewUsecase(nil, nil, nil, nil, tokens, discardAuthLogger{}, 0, 0, 0)
 
 	_, err := usecase.Refresh(context.Background(), RefreshInput{RefreshToken: "access-token"})
 

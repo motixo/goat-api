@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"os"
+	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +17,68 @@ import (
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
+
+func TestRepositoryIntegrationLoadsAuthoritativeSecurityStateInOneProjection(t *testing.T) {
+	repo := newPostgresUserIntegrationRepository(t)
+	ctx := context.Background()
+	user := integrationUser(
+		"40000000-0000-4000-8000-000000000001",
+		"authorization@example.com",
+		valueobject.RoleOperator,
+		valueobject.StatusActive,
+		time.Now().UTC(),
+	)
+	if err := repo.Create(ctx, user); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := repo.db.ExecContext(ctx, `
+		INSERT INTO permissions (id, role, action) VALUES
+			('40000000-0000-4000-8000-000000000010', $1, $2),
+			('40000000-0000-4000-8000-000000000011', $1, $3)
+	`, int16(valueobject.RoleOperator), valueobject.PermUserUpdate, valueobject.PermUserRead); err != nil {
+		t.Fatalf("seed operator permissions: %v", err)
+	}
+
+	state, err := repo.GetSecurityState(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("GetSecurityState() error = %v", err)
+	}
+	if state.UserID != user.ID ||
+		state.Status != valueobject.StatusActive ||
+		state.Role != valueobject.RoleOperator ||
+		state.CredentialVersion != entity.InitialCredentialVersion {
+		t.Fatalf("security state = %#v, want current user projection", state)
+	}
+	wantPermissions := []valueobject.Permission{
+		valueobject.PermUserRead,
+		valueobject.PermUserUpdate,
+	}
+	if got := state.Permissions.Values(); !reflect.DeepEqual(got, wantPermissions) {
+		t.Fatalf("security permissions = %v, want %v", got, wantPermissions)
+	}
+
+	identityState, err := repo.GetIdentityState(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("GetIdentityState() error = %v", err)
+	}
+	if identityState.UserID != user.ID ||
+		identityState.Status != valueobject.StatusActive ||
+		identityState.CredentialVersion != entity.InitialCredentialVersion {
+		t.Fatalf("identity state = %#v, want current user projection", identityState)
+	}
+
+	_, err = repo.GetSecurityState(ctx, "49999999-9999-4999-8999-999999999999")
+	if !errors.Is(err, domainErrors.ErrUserNotFound) ||
+		!errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("GetSecurityState(missing) error = %v, want ErrUserNotFound and sql.ErrNoRows", err)
+	}
+
+	_, err = repo.GetIdentityState(ctx, "49999999-9999-4999-8999-999999999999")
+	if !errors.Is(err, domainErrors.ErrUserNotFound) ||
+		!errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("GetIdentityState(missing) error = %v, want ErrUserNotFound and sql.ErrNoRows", err)
+	}
+}
 
 func TestRepositoryIntegrationCRUD(t *testing.T) {
 	repo := newPostgresUserIntegrationRepository(t)
@@ -89,7 +153,7 @@ func TestRepositoryIntegrationCRUD(t *testing.T) {
 		t.Fatalf("FindByID(updated) error = %v", err)
 	}
 	if updated.Email != update.Email || updated.Password.Encoded() != update.Password.Encoded() ||
-		updated.Status != update.Status || updated.Role != update.Role {
+		updated.Status != original.Status || updated.Role != update.Role {
 		t.Fatalf("updated user = %#v, want values from %#v", updated, update)
 	}
 	if updated.CredentialVersion != original.CredentialVersion+1 {
@@ -104,6 +168,27 @@ func TestRepositoryIntegrationCRUD(t *testing.T) {
 	}
 	if updated.UpdatedAt == nil || updated.UpdatedAt.Before(updateStartedAt.Add(-time.Second)) {
 		t.Fatalf("updated_at = %v, want timestamp set by Update", updated.UpdatedAt)
+	}
+
+	statusResult, err := repo.UpdateStatus(
+		ctx,
+		original.ID,
+		valueobject.StatusActive,
+		valueobject.StatusSuspended,
+	)
+	if err != nil {
+		t.Fatalf("UpdateStatus() error = %v", err)
+	}
+	if statusResult.Outcome != repository.UserStatusUpdateApplied ||
+		statusResult.CurrentStatus != valueobject.StatusSuspended {
+		t.Fatalf("UpdateStatus() result = %#v, want applied suspended", statusResult)
+	}
+	updated, err = repo.FindByID(ctx, original.ID)
+	if err != nil {
+		t.Fatalf("FindByID(status updated) error = %v", err)
+	}
+	if updated.Status != valueobject.StatusSuspended {
+		t.Fatalf("updated status = %s, want suspended", updated.Status)
 	}
 
 	if err := repo.Update(ctx, &entity.User{ID: original.ID}); !errors.Is(err, domainErrors.ErrBadRequest) {
@@ -128,6 +213,250 @@ func TestRepositoryIntegrationCRUD(t *testing.T) {
 	}
 	if err := repo.Delete(ctx, original.ID); !errors.Is(err, domainErrors.ErrUserNotFound) {
 		t.Fatalf("Delete(missing) error = %v, want ErrUserNotFound", err)
+	}
+}
+
+func TestRepositoryIntegrationUpdateStatusCompareAndSetOutcomes(t *testing.T) {
+	repo := newPostgresUserIntegrationRepository(t)
+	ctx := context.Background()
+	user := integrationUser(
+		"50000000-0000-4000-8000-000000000001",
+		"status-cas@example.com",
+		valueobject.RoleClient,
+		valueobject.StatusInactive,
+		time.Now().UTC(),
+	)
+	if err := repo.Create(ctx, user); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	applied, err := repo.UpdateStatus(
+		ctx,
+		user.ID,
+		valueobject.StatusInactive,
+		valueobject.StatusActive,
+	)
+	if err != nil {
+		t.Fatalf("UpdateStatus(applied) error = %v", err)
+	}
+	assertStatusUpdateResult(
+		t,
+		applied,
+		repository.UserStatusUpdateApplied,
+		valueobject.StatusActive,
+	)
+
+	alreadyApplied, err := repo.UpdateStatus(
+		ctx,
+		user.ID,
+		valueobject.StatusInactive,
+		valueobject.StatusActive,
+	)
+	if err != nil {
+		t.Fatalf("UpdateStatus(already applied) error = %v", err)
+	}
+	assertStatusUpdateResult(
+		t,
+		alreadyApplied,
+		repository.UserStatusUpdateAlreadyApplied,
+		valueobject.StatusActive,
+	)
+
+	conflict, err := repo.UpdateStatus(
+		ctx,
+		user.ID,
+		valueobject.StatusSuspended,
+		valueobject.StatusInactive,
+	)
+	if err != nil {
+		t.Fatalf("UpdateStatus(conflict) error = %v", err)
+	}
+	assertStatusUpdateResult(
+		t,
+		conflict,
+		repository.UserStatusUpdateConflict,
+		valueobject.StatusActive,
+	)
+
+	notFound, err := repo.UpdateStatus(
+		ctx,
+		"59999999-9999-4999-8999-999999999999",
+		valueobject.StatusActive,
+		valueobject.StatusSuspended,
+	)
+	if err != nil {
+		t.Fatalf("UpdateStatus(not found) error = %v", err)
+	}
+	assertStatusUpdateResult(
+		t,
+		notFound,
+		repository.UserStatusUpdateNotFound,
+		valueobject.StatusUnknown,
+	)
+
+	if _, err := repo.UpdateStatus(
+		ctx,
+		user.ID,
+		valueobject.StatusUnknown,
+		valueobject.StatusActive,
+	); err == nil {
+		t.Fatal("UpdateStatus(unknown expected) error = nil")
+	}
+	if _, err := repo.UpdateStatus(
+		ctx,
+		user.ID,
+		valueobject.StatusActive,
+		valueobject.StatusUnknown,
+	); err == nil {
+		t.Fatal("UpdateStatus(unknown requested) error = nil")
+	}
+	if _, err := repo.UpdateStatus(
+		ctx,
+		user.ID,
+		valueobject.StatusActive,
+		valueobject.StatusActive,
+	); err == nil {
+		t.Fatal("UpdateStatus(equal statuses) error = nil")
+	}
+
+	cancelledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	_, err = repo.UpdateStatus(
+		cancelledCtx,
+		user.ID,
+		valueobject.StatusActive,
+		valueobject.StatusSuspended,
+	)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf(
+			"UpdateStatus(cancelled) error = %v, want preserved context.Canceled",
+			err,
+		)
+	}
+
+	if err := repo.Update(ctx, &entity.User{
+		ID:     user.ID,
+		Status: valueobject.StatusSuspended,
+	}); !errors.Is(err, domainErrors.ErrBadRequest) {
+		t.Fatalf(
+			"generic Update(status only) error = %v, want ErrBadRequest",
+			err,
+		)
+	}
+	stored, err := repo.FindByID(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("FindByID(after generic status update) error = %v", err)
+	}
+	if stored.Status != valueobject.StatusActive {
+		t.Fatalf(
+			"status after generic Update = %s, want active unchanged",
+			stored.Status,
+		)
+	}
+
+	if _, err := repo.db.ExecContext(
+		ctx,
+		"UPDATE users SET status = 99 WHERE id = $1",
+		user.ID,
+	); err != nil {
+		t.Fatalf("seed unknown authoritative status: %v", err)
+	}
+	if _, err := repo.UpdateStatus(
+		ctx,
+		user.ID,
+		valueobject.StatusActive,
+		valueobject.StatusSuspended,
+	); err == nil {
+		t.Fatal("UpdateStatus(unknown authoritative status) error = nil")
+	}
+}
+
+func TestRepositoryIntegrationConcurrentIdenticalStatusUpdates(t *testing.T) {
+	tests := []struct {
+		name      string
+		initial   valueobject.UserStatus
+		requested valueobject.UserStatus
+	}{
+		{
+			name:      "activation",
+			initial:   valueobject.StatusInactive,
+			requested: valueobject.StatusActive,
+		},
+		{
+			name:      "suspension",
+			initial:   valueobject.StatusActive,
+			requested: valueobject.StatusSuspended,
+		},
+		{
+			name:      "reactivation",
+			initial:   valueobject.StatusSuspended,
+			requested: valueobject.StatusActive,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo := newPostgresUserIntegrationRepository(t)
+			ctx := context.Background()
+			user := integrationUser(
+				"60000000-0000-4000-8000-000000000001",
+				"concurrent-"+test.name+"@example.com",
+				valueobject.RoleClient,
+				test.initial,
+				time.Now().UTC(),
+			)
+			if err := repo.Create(ctx, user); err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+
+			start := make(chan struct{})
+			var wait sync.WaitGroup
+			wait.Add(2)
+			results := make([]repository.UserStatusUpdateResult, 2)
+			errs := make([]error, 2)
+			for index := range results {
+				index := index
+				go func() {
+					defer wait.Done()
+					<-start
+					results[index], errs[index] = repo.UpdateStatus(
+						ctx,
+						user.ID,
+						test.initial,
+						test.requested,
+					)
+				}()
+			}
+			close(start)
+			wait.Wait()
+
+			outcomes := map[repository.UserStatusUpdateOutcome]int{}
+			for index, err := range errs {
+				if err != nil {
+					t.Fatalf("UpdateStatus(%d) error = %v", index, err)
+				}
+				outcomes[results[index].Outcome]++
+			}
+			if outcomes[repository.UserStatusUpdateApplied] != 1 ||
+				outcomes[repository.UserStatusUpdateAlreadyApplied] != 1 {
+				t.Fatalf(
+					"concurrent outcomes = %v, want one applied and one already applied",
+					outcomes,
+				)
+			}
+
+			stored, err := repo.FindByID(ctx, user.ID)
+			if err != nil {
+				t.Fatalf("FindByID(after concurrent updates) error = %v", err)
+			}
+			if stored.Status != test.requested {
+				t.Fatalf(
+					"stored status = %s, want %s",
+					stored.Status,
+					test.requested,
+				)
+			}
+		})
 	}
 }
 
@@ -361,7 +690,7 @@ func TestRepositoryIntegrationListFiltersCountsAndPaginatesDeterministically(t *
 	}
 }
 
-func newPostgresUserIntegrationRepository(t *testing.T) repository.UserRepository {
+func newPostgresUserIntegrationRepository(t *testing.T) *Repository {
 	t.Helper()
 	dsn := os.Getenv("GOAT_POSTGRES_TEST_DSN")
 	if dsn == "" {
@@ -391,6 +720,14 @@ func newPostgresUserIntegrationRepository(t *testing.T) repository.UserRepositor
 			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMP NULL,
 			CONSTRAINT reject_password_update CHECK (password <> '$reject-password-update$')
+		) ON COMMIT PRESERVE ROWS;
+		CREATE TEMP TABLE permissions (
+			id UUID PRIMARY KEY,
+			role SMALLINT NOT NULL,
+			action TEXT NOT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMP NULL,
+			CONSTRAINT unique_role_action UNIQUE(role, action)
 		) ON COMMIT PRESERVE ROWS
 	`
 	if _, err := db.Exec(schema); err != nil {
@@ -440,6 +777,23 @@ func assertUserIDs(t *testing.T, users []*entity.User, want []string) {
 		if users[index].ID != want[index] {
 			t.Fatalf("users[%d].ID = %q, want %q", index, users[index].ID, want[index])
 		}
+	}
+}
+
+func assertStatusUpdateResult(
+	t *testing.T,
+	result repository.UserStatusUpdateResult,
+	wantOutcome repository.UserStatusUpdateOutcome,
+	wantStatus valueobject.UserStatus,
+) {
+	t.Helper()
+	if result.Outcome != wantOutcome || result.CurrentStatus != wantStatus {
+		t.Fatalf(
+			"status update result = %#v, want outcome %d and status %s",
+			result,
+			wantOutcome,
+			wantStatus,
+		)
 	}
 }
 
