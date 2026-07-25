@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 	"github.com/motixo/goat-api/internal/usecase/authorization"
 )
@@ -39,11 +39,22 @@ type identityStateRow struct {
 }
 
 type authorizationStateRow struct {
-	UserID            string         `db:"id"`
-	Status            int16          `db:"status"`
-	Role              int16          `db:"role"`
-	CredentialVersion int64          `db:"credential_version"`
-	Permissions       pq.StringArray `db:"permissions"`
+	UserID            string            `db:"id"`
+	Status            int16             `db:"status"`
+	Role              int16             `db:"role"`
+	CredentialVersion int64             `db:"credential_version"`
+	Permissions       postgresTextArray `db:"permissions"`
+}
+
+type postgresTextArray []string
+
+func (array *postgresTextArray) Scan(source any) error {
+	var values []string
+	if err := pgtype.NewMap().SQLScanner(&values).Scan(source); err != nil {
+		return fmt.Errorf("scan PostgreSQL text array: %w", err)
+	}
+	*array = values
+	return nil
 }
 
 func (r *Repository) GetIdentityState(

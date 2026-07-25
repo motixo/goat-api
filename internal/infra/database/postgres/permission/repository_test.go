@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 )
 
@@ -42,9 +42,9 @@ func TestTranslatePermissionDeleteError(t *testing.T) {
 
 func TestTranslatePermissionCreateError(t *testing.T) {
 	t.Run("role action uniqueness preserves semantic identity and postgres cause", func(t *testing.T) {
-		cause := &pq.Error{
-			Code:       permissionUniqueViolation,
-			Constraint: permissionRoleActionUniqueConstraint,
+		cause := &pgconn.PgError{
+			Code:           permissionUniqueViolation,
+			ConstraintName: permissionRoleActionUniqueConstraint,
 		}
 		for _, err := range []error{
 			cause,
@@ -54,9 +54,9 @@ func TestTranslatePermissionCreateError(t *testing.T) {
 			if !errors.Is(got, domainErrors.ErrPermissionAlreadyExists) {
 				t.Fatalf("translated error = %v, want ErrPermissionAlreadyExists", got)
 			}
-			var gotCause *pq.Error
+			var gotCause *pgconn.PgError
 			if !errors.As(got, &gotCause) {
-				t.Fatalf("translated error = %v, want wrapped *pq.Error", got)
+				t.Fatalf("translated error = %v, want wrapped *pgconn.PgError", got)
 			}
 			if gotCause != cause {
 				t.Fatalf("wrapped PostgreSQL cause = %p, want %p", gotCause, cause)
@@ -65,9 +65,9 @@ func TestTranslatePermissionCreateError(t *testing.T) {
 	})
 
 	t.Run("other postgres constraints remain unknown", func(t *testing.T) {
-		cause := &pq.Error{
-			Code:       permissionUniqueViolation,
-			Constraint: "permissions_pkey",
+		cause := &pgconn.PgError{
+			Code:           permissionUniqueViolation,
+			ConstraintName: "permissions_pkey",
 		}
 		got := translatePermissionCreateError(cause)
 		if got != cause {

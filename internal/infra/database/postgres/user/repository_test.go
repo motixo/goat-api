@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 )
 
@@ -22,10 +22,10 @@ func TestBuildUserListSelectQueryUsesStableTieBreaker(t *testing.T) {
 }
 
 func TestTranslateUserWriteError(t *testing.T) {
-	emailConflict := &pq.Error{
-		Code:       "23505",
-		Constraint: "users_email_key",
-		Message:    "duplicate key value violates unique constraint",
+	emailConflict := &pgconn.PgError{
+		Code:           "23505",
+		ConstraintName: "users_email_key",
+		Message:        "duplicate key value violates unique constraint",
 	}
 
 	for _, test := range []struct {
@@ -33,7 +33,7 @@ func TestTranslateUserWriteError(t *testing.T) {
 		err          error
 		wantSemantic bool
 		wantSame     bool
-		wantCause    *pq.Error
+		wantCause    *pgconn.PgError
 	}{
 		{
 			name:         "email unique violation",
@@ -49,17 +49,17 @@ func TestTranslateUserWriteError(t *testing.T) {
 		},
 		{
 			name: "unrelated unique constraint",
-			err: &pq.Error{
-				Code:       "23505",
-				Constraint: "users_pkey",
+			err: &pgconn.PgError{
+				Code:           "23505",
+				ConstraintName: "users_pkey",
 			},
 			wantSame: true,
 		},
 		{
 			name: "same constraint with unrelated SQLSTATE",
-			err: &pq.Error{
-				Code:       "23503",
-				Constraint: "users_email_key",
+			err: &pgconn.PgError{
+				Code:           "23503",
+				ConstraintName: "users_email_key",
 			},
 			wantSame: true,
 		},
@@ -84,9 +84,9 @@ func TestTranslateUserWriteError(t *testing.T) {
 				t.Fatalf("translateUserWriteError() = %v, want original error %v", got, test.err)
 			}
 			if test.wantCause != nil {
-				var postgresErr *pq.Error
+				var postgresErr *pgconn.PgError
 				if !errors.As(got, &postgresErr) {
-					t.Fatalf("translated error does not preserve *pq.Error: %v", got)
+					t.Fatalf("translated error does not preserve *pgconn.PgError: %v", got)
 				}
 				if postgresErr != test.wantCause {
 					t.Fatalf("preserved PostgreSQL error = %p, want %p", postgresErr, test.wantCause)

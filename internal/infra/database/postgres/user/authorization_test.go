@@ -4,7 +4,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/lib/pq"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
@@ -74,7 +73,7 @@ func TestAuthorizationStateRowToSecurityStateValidatesAndNormalizesProjection(t 
 					Status:            int16(status),
 					Role:              int16(role),
 					CredentialVersion: 7,
-					Permissions: pq.StringArray{
+					Permissions: postgresTextArray{
 						valueobject.PermUserWrite.String(),
 						valueobject.PermUserRead.String(),
 						valueobject.PermUserRead.String(),
@@ -119,7 +118,7 @@ func TestAuthorizationStateRowRejectsIncompleteOrInvalidProjection(t *testing.T)
 		{name: "unknown role", mutate: func(row *authorizationStateRow) { row.Role = 99 }},
 		{name: "unknown status", mutate: func(row *authorizationStateRow) { row.Status = 99 }},
 		{name: "unknown permission", mutate: func(row *authorizationStateRow) {
-			row.Permissions = pq.StringArray{"unknown:permission"}
+			row.Permissions = postgresTextArray{"unknown:permission"}
 		}},
 	}
 

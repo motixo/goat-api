@@ -10,9 +10,6 @@ type MetricsService interface {
 	// Database metrics
 	RecordDBQuery(duration float64, operation, success string)
 
-	// Cache metrics
-	RecordCacheHit(hit bool, cacheType string)
-
 	// Business metrics
 	RecordUserLogin(success bool)
 	RecordTokenRefresh(success bool)

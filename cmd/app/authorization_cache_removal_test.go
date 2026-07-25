@@ -26,6 +26,7 @@ func TestProductionHasNoAuthorizationCacheOrInvalidationEventReferences(t *testi
 		"NewCachedRepository":           {},
 		"PermissionUpdatedEvent":        {},
 		"PermCacheService":              {},
+		"RecordCacheHit":                {},
 		"RecordEventPublicationFailure": {},
 		"UserCacheService":              {},
 		"UserUpdatedEvent":              {},
@@ -36,6 +37,7 @@ func TestProductionHasNoAuthorizationCacheOrInvalidationEventReferences(t *testi
 	forbiddenSourceFragments := []string{
 		`RedisKey("perm", "role"`,
 		`RedisKey("user", "id"`,
+		"cache_hits_total",
 		"event_publication_failures_total",
 	}
 

@@ -12,8 +12,7 @@ import (
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
-func SeedPermissions(db *sqlx.DB) (err error) {
-
+func SeedPermissions(ctx context.Context, db *sqlx.DB) (err error) {
 	adminRole := int8(valueobject.RoleAdmin)
 	clientRole := int8(valueobject.RoleClient)
 	operatorRole := int8(valueobject.RoleOperator)
@@ -28,9 +27,9 @@ func SeedPermissions(db *sqlx.DB) (err error) {
 		valueobject.PermUserChangeStatus,
 	}
 
-	tx, err := db.Begin()
+	tx, err := db.BeginTxx(ctx, nil)
 	if err != nil {
-		return err
+		return startupOperationError("begin permission seed transaction", ctx, err)
 	}
 	defer func() {
 		if err == nil {
@@ -49,52 +48,59 @@ func SeedPermissions(db *sqlx.DB) (err error) {
 	`
 
 	// Admin
-	_, err = tx.Exec(insertStmt, adminRole, adminPerm)
+	_, err = tx.ExecContext(ctx, insertStmt, adminRole, adminPerm)
 	if err != nil {
-		return err
+		return startupOperationError("seed admin permission", ctx, err)
 	}
 
 	// Client
 	for _, p := range clientPerm {
-		_, err = tx.Exec(insertStmt, clientRole, p)
+		_, err = tx.ExecContext(ctx, insertStmt, clientRole, p)
 		if err != nil {
-			return err
+			return startupOperationError("seed client permission", ctx, err)
 		}
 	}
 
 	// Operator
 	for _, p := range operatorPerm {
-		_, err = tx.Exec(insertStmt, operatorRole, p)
+		_, err = tx.ExecContext(ctx, insertStmt, operatorRole, p)
 		if err != nil {
-			return err
+			return startupOperationError("seed operator permission", ctx, err)
 		}
 	}
 
 	err = tx.Commit()
+	if err != nil {
+		return startupOperationError("commit permission seed transaction", ctx, err)
+	}
 	return err
 }
 
-func SeedAdminUser(db *sqlx.DB, passwordHasher service.PasswordHasher, cfg *config.Config) error {
+func SeedAdminUser(
+	ctx context.Context,
+	db *sqlx.DB,
+	passwordHasher service.PasswordHasher,
+	cfg *config.Config,
+) error {
 	email := cfg.AdminEmail
 	password := cfg.AdminPassword
 
-	ctx := context.Background()
 	hashedPassword, err := passwordHasher.Hash(ctx, password)
 	if err != nil {
-		return err
+		return startupOperationError("hash seeded admin password", ctx, err)
 	}
 
 	adminRole := valueobject.RoleAdmin
 	activeStatus := valueobject.StatusActive
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(ctx, `
 		INSERT INTO users (id, email, password, status, role, created_at)
 		VALUES (gen_random_uuid(), $1, $2, $3, $4, CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
 		ON CONFLICT (email) DO NOTHING
 	`, email, hashedPassword, int8(activeStatus), int8(adminRole))
 
 	if err != nil {
-		return err
+		return startupOperationError("seed admin user", ctx, err)
 	}
 
 	return nil

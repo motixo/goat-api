@@ -58,43 +58,80 @@ type runtimeResources struct {
 
 type bootstrapDependencies struct {
 	newLogger      func() (loggerResource, error)
-	newPostgres    func(*config.Config, pkg.Logger, service.PasswordHasher) (postgresResource, error)
-	newRedis       func(*config.Config, pkg.Logger) (redisResource, error)
+	newPostgres    func(context.Context, *config.Config, pkg.Logger, service.PasswordHasher) (postgresResource, error)
+	newRedis       func(context.Context, *config.Config, pkg.Logger) (redisResource, error)
 	validateAssets func(context.Context, *redis.Client) error
 	buildRuntime   func(*config.Config, pkg.Logger, *sqlx.DB, *redis.Client, service.PasswordHasher) (runtimeResources, error)
 }
 
-func InitializeApp(cfg *config.Config) (*Application, error) {
-	return initializeApp(cfg, defaultBootstrapDependencies())
+func InitializeApp(ctx context.Context, cfg *config.Config) (*Application, error) {
+	return initializeApp(ctx, cfg, defaultBootstrapDependencies())
 }
 
-func initializeApp(cfg *config.Config, dependencies bootstrapDependencies) (*Application, error) {
+func initializeApp(
+	ctx context.Context,
+	cfg *config.Config,
+	dependencies bootstrapDependencies,
+) (*Application, error) {
+	if ctx == nil {
+		return nil, errors.New("application startup context is required")
+	}
+	if cfg == nil {
+		return nil, errors.New("application configuration is required")
+	}
+	if err := startupContextError(ctx); err != nil {
+		return nil, err
+	}
+
 	appLogger, err := dependencies.newLogger()
 	if err != nil {
 		return nil, fmt.Errorf("initialize logger: %w", err)
 	}
-
-	passwordHasher := authInfra.NewPasswordService(cfg)
-
-	database, err := dependencies.newPostgres(cfg, appLogger.logger, passwordHasher)
-	if err != nil {
+	if err := startupContextError(ctx); err != nil {
 		return nil, errors.Join(
-			fmt.Errorf("initialize postgres: %w", err),
-			runCleanup("sync logger after PostgreSQL initialization failure", appLogger.sync),
+			err,
+			runCleanup("sync logger after startup cancellation", appLogger.sync),
 		)
 	}
 
-	redisClient, err := dependencies.newRedis(cfg, appLogger.logger)
+	passwordHasher := authInfra.NewPasswordService(cfg)
+
+	database, err := dependencies.newPostgres(ctx, cfg, appLogger.logger, passwordHasher)
+	if err != nil {
+		return nil, errors.Join(
+			fmt.Errorf("initialize postgres: %w", err),
+			startupContextError(ctx),
+			runCleanup("sync logger after PostgreSQL initialization failure", appLogger.sync),
+		)
+	}
+	if err := startupContextError(ctx); err != nil {
+		return nil, errors.Join(
+			err,
+			runCleanup("close PostgreSQL after startup cancellation", database.close),
+			runCleanup("sync logger after startup cancellation", appLogger.sync),
+		)
+	}
+
+	redisClient, err := dependencies.newRedis(ctx, cfg, appLogger.logger)
 	if err != nil {
 		return nil, errors.Join(
 			fmt.Errorf("initialize Redis: %w", err),
+			startupContextError(ctx),
 			runCleanup("close PostgreSQL after Redis initialization failure", database.close),
 			runCleanup("sync logger after Redis initialization failure", appLogger.sync),
 		)
 	}
+	if err := startupContextError(ctx); err != nil {
+		return nil, errors.Join(
+			err,
+			runCleanup("close Redis after startup cancellation", redisClient.close),
+			runCleanup("close PostgreSQL after startup cancellation", database.close),
+			runCleanup("sync logger after startup cancellation", appLogger.sync),
+		)
+	}
 
 	validationCtx, cancelValidation := context.WithTimeout(
-		context.Background(),
+		ctx,
 		runtimeAssetValidationTimeout,
 	)
 	if dependencies.validateAssets == nil {
@@ -102,6 +139,7 @@ func initializeApp(cfg *config.Config, dependencies bootstrapDependencies) (*App
 	} else {
 		err = dependencies.validateAssets(validationCtx, redisClient.client)
 	}
+	err = errors.Join(err, startupContextError(validationCtx))
 	cancelValidation()
 	if err != nil {
 		return nil, errors.Join(
@@ -109,6 +147,14 @@ func initializeApp(cfg *config.Config, dependencies bootstrapDependencies) (*App
 			runCleanup("close Redis after runtime asset validation failure", redisClient.close),
 			runCleanup("close PostgreSQL after runtime asset validation failure", database.close),
 			runCleanup("sync logger after runtime asset validation failure", appLogger.sync),
+		)
+	}
+	if err := startupContextError(ctx); err != nil {
+		return nil, errors.Join(
+			err,
+			runCleanup("close Redis after startup cancellation", redisClient.close),
+			runCleanup("close PostgreSQL after startup cancellation", database.close),
+			runCleanup("sync logger after startup cancellation", appLogger.sync),
 		)
 	}
 
@@ -122,9 +168,18 @@ func initializeApp(cfg *config.Config, dependencies bootstrapDependencies) (*App
 	if err != nil {
 		return nil, errors.Join(
 			fmt.Errorf("initialize application runtime: %w", err),
+			startupContextError(ctx),
 			runCleanup("close Redis after runtime initialization failure", redisClient.close),
 			runCleanup("close PostgreSQL after runtime initialization failure", database.close),
 			runCleanup("sync logger after runtime initialization failure", appLogger.sync),
+		)
+	}
+	if err := startupContextError(ctx); err != nil {
+		return nil, errors.Join(
+			err,
+			runCleanup("close Redis after startup cancellation", redisClient.close),
+			runCleanup("close PostgreSQL after startup cancellation", database.close),
+			runCleanup("sync logger after startup cancellation", appLogger.sync),
 		)
 	}
 
@@ -152,11 +207,12 @@ func defaultBootstrapDependencies() bootstrapDependencies {
 			}, nil
 		},
 		newPostgres: func(
+			ctx context.Context,
 			cfg *config.Config,
 			appLogger pkg.Logger,
 			passwordHasher service.PasswordHasher,
 		) (postgresResource, error) {
-			db, err := postgres.NewDatabase(cfg, appLogger, passwordHasher)
+			db, err := postgres.NewDatabase(ctx, cfg, appLogger, passwordHasher)
 			if err != nil {
 				return postgresResource{}, err
 			}
@@ -165,8 +221,12 @@ func defaultBootstrapDependencies() bootstrapDependencies {
 				close: db.Close,
 			}, nil
 		},
-		newRedis: func(cfg *config.Config, appLogger pkg.Logger) (redisResource, error) {
-			client, err := redisStorage.NewClient(cfg, appLogger)
+		newRedis: func(
+			ctx context.Context,
+			cfg *config.Config,
+			appLogger pkg.Logger,
+		) (redisResource, error) {
+			client, err := redisStorage.NewClient(ctx, cfg, appLogger)
 			if err != nil {
 				return redisResource{}, err
 			}
@@ -178,6 +238,21 @@ func defaultBootstrapDependencies() bootstrapDependencies {
 		validateAssets: validateRuntimeAssets,
 		buildRuntime:   buildRuntime,
 	}
+}
+
+func startupContextError(ctx context.Context) error {
+	if ctx == nil || ctx.Err() == nil {
+		return nil
+	}
+	contextErr := fmt.Errorf("application startup context: %w", ctx.Err())
+	cause := context.Cause(ctx)
+	if cause == nil || errors.Is(contextErr, cause) {
+		return contextErr
+	}
+	return errors.Join(
+		contextErr,
+		fmt.Errorf("application startup cancellation cause: %w", cause),
+	)
 }
 
 func validateRuntimeAssets(ctx context.Context, redisClient *redis.Client) error {

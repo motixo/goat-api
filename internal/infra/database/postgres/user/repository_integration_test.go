@@ -10,8 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
-	"github.com/lib/pq"
 	"github.com/motixo/goat-api/internal/domain/entity"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
@@ -697,7 +698,7 @@ func newPostgresUserIntegrationRepository(t *testing.T) *Repository {
 		t.Skip("set GOAT_POSTGRES_TEST_DSN to run PostgreSQL integration tests")
 	}
 
-	db, err := sqlx.Connect("postgres", dsn)
+	db, err := sqlx.Connect("pgx", dsn)
 	if err != nil {
 		t.Fatalf("connect to PostgreSQL: %v", err)
 	}
@@ -807,14 +808,14 @@ func assertEmailConflictError(t *testing.T, err error) {
 
 func assertPostgresConstraint(t *testing.T, err error, wantCode, wantConstraint string) {
 	t.Helper()
-	var postgresErr *pq.Error
+	var postgresErr *pgconn.PgError
 	if !errors.As(err, &postgresErr) {
-		t.Fatalf("error = %v, want preserved *pq.Error", err)
+		t.Fatalf("error = %v, want preserved *pgconn.PgError", err)
 	}
-	if got := string(postgresErr.Code); got != wantCode {
+	if got := postgresErr.Code; got != wantCode {
 		t.Fatalf("PostgreSQL SQLSTATE = %q, want %q", got, wantCode)
 	}
-	if postgresErr.Constraint != wantConstraint {
-		t.Fatalf("PostgreSQL constraint = %q, want %q", postgresErr.Constraint, wantConstraint)
+	if postgresErr.ConstraintName != wantConstraint {
+		t.Fatalf("PostgreSQL constraint = %q, want %q", postgresErr.ConstraintName, wantConstraint)
 	}
 }

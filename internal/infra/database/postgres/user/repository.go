@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jmoiron/sqlx"
-	"github.com/lib/pq"
 	"github.com/motixo/goat-api/internal/domain/entity"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
@@ -293,14 +293,14 @@ func (r *Repository) List(ctx context.Context, offset, limit int, filters reposi
 
 	if len(filters.Roles) > 0 {
 		whereClauses = append(whereClauses, fmt.Sprintf("role = ANY($%d)", argIndex))
-		args = append(args, pq.Array(filters.Roles))
+		args = append(args, userRolesToDatabase(filters.Roles))
 		argIndex++
 	}
 
 	// Status filter
 	if len(filters.Statuses) > 0 {
 		whereClauses = append(whereClauses, fmt.Sprintf("status = ANY($%d)", argIndex))
-		args = append(args, pq.Array(filters.Statuses))
+		args = append(args, userStatusesToDatabase(filters.Statuses))
 		argIndex++
 	}
 
@@ -343,6 +343,22 @@ func buildUserListSelectQuery(whereClause string, argIndex int) string {
 		fmt.Sprintf(" LIMIT $%d OFFSET $%d", argIndex, argIndex+1)
 }
 
+func userRolesToDatabase(roles []valueobject.UserRole) []int16 {
+	values := make([]int16, len(roles))
+	for index := range roles {
+		values[index] = int16(roles[index])
+	}
+	return values
+}
+
+func userStatusesToDatabase(statuses []valueobject.UserStatus) []int16 {
+	values := make([]int16, len(statuses))
+	for index := range statuses {
+		values[index] = int16(statuses[index])
+	}
+	return values
+}
+
 func translateUserFindByIDError(err error) error {
 	if err == nil {
 		return nil
@@ -358,10 +374,10 @@ func translateUserWriteError(err error) error {
 		return nil
 	}
 
-	var postgresErr *pq.Error
+	var postgresErr *pgconn.PgError
 	if errors.As(err, &postgresErr) &&
-		string(postgresErr.Code) == uniqueViolationSQLState &&
-		postgresErr.Constraint == userEmailUniqueConstraint {
+		postgresErr.Code == uniqueViolationSQLState &&
+		postgresErr.ConstraintName == userEmailUniqueConstraint {
 		return fmt.Errorf("%w: %w", domainErrors.ErrEmailAlreadyExists, err)
 	}
 

@@ -162,7 +162,6 @@ type routeClassificationMetrics struct {
 func (routeClassificationMetrics) RecordHTTPRequest(float64, string, string, string) {}
 func (routeClassificationMetrics) RecordHTTPActiveRequests(bool)                     {}
 func (routeClassificationMetrics) RecordDBQuery(float64, string, string)             {}
-func (routeClassificationMetrics) RecordCacheHit(bool, string)                       {}
 func (routeClassificationMetrics) RecordUserLogin(bool)                              {}
 func (routeClassificationMetrics) RecordTokenRefresh(bool)                           {}
 func (m routeClassificationMetrics) GetRegistry() *prometheus.Registry               { return m.registry }

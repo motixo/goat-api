@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/usecase/auth"
 	"github.com/motixo/goat-api/internal/usecase/authorization"
@@ -532,11 +532,11 @@ func TestUnknownErrorsNeverLeakInternalDetailsOrTranslationKeys(t *testing.T) {
 }
 
 func TestEmailConflictPreservesExactLocalizedProblemContracts(t *testing.T) {
-	postgresErr := &pq.Error{
-		Code:       "23505",
-		Constraint: "users_email_key",
-		Message:    "duplicate key value violates unique constraint users_email_key",
-		Detail:     "Key (email)=(private@example.com) already exists.",
+	postgresErr := &pgconn.PgError{
+		Code:           "23505",
+		ConstraintName: "users_email_key",
+		Message:        "duplicate key value violates unique constraint users_email_key",
+		Detail:         "Key (email)=(private@example.com) already exists.",
 	}
 	err := fmt.Errorf(
 		"create user: %w",
@@ -583,11 +583,11 @@ func TestEmailConflictPreservesExactLocalizedProblemContracts(t *testing.T) {
 }
 
 func TestUnclassifiedPostgresErrorsRemainSafeLocalizedInternalProblems(t *testing.T) {
-	err := &pq.Error{
-		Code:       "23505",
-		Constraint: "users_pkey",
-		Message:    "duplicate key value exposes database detail",
-		Detail:     "Key (id)=(private-user-id) already exists.",
+	err := &pgconn.PgError{
+		Code:           "23505",
+		ConstraintName: "users_pkey",
+		Message:        "duplicate key value exposes database detail",
+		Detail:         "Key (id)=(private-user-id) already exists.",
 	}
 
 	for _, test := range []struct {

@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
-	"github.com/lib/pq"
 	"github.com/motixo/goat-api/internal/domain/entity"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
@@ -93,12 +94,16 @@ func TestRepositoryIntegrationAllOperations(t *testing.T) {
 	if !errors.Is(err, domainErrors.ErrPermissionAlreadyExists) {
 		t.Fatalf("Create(duplicate role/action) error = %v, want ErrPermissionAlreadyExists", err)
 	}
-	var pqErr *pq.Error
-	if !errors.As(err, &pqErr) {
-		t.Fatalf("Create(duplicate role/action) error = %v, want wrapped *pq.Error", err)
+	var postgresErr *pgconn.PgError
+	if !errors.As(err, &postgresErr) {
+		t.Fatalf("Create(duplicate role/action) error = %v, want wrapped *pgconn.PgError", err)
 	}
-	if pqErr.Code != "23505" || pqErr.Constraint != "unique_role_action" {
-		t.Fatalf("Create(duplicate role/action) PostgreSQL error = code %q constraint %q", pqErr.Code, pqErr.Constraint)
+	if postgresErr.Code != "23505" || postgresErr.ConstraintName != "unique_role_action" {
+		t.Fatalf(
+			"Create(duplicate role/action) PostgreSQL error = code %q constraint %q",
+			postgresErr.Code,
+			postgresErr.ConstraintName,
+		)
 	}
 
 	if err := repo.Delete(ctx, additional.ID); err != nil {
@@ -134,7 +139,7 @@ func newPostgresPermissionIntegrationDB(t *testing.T) *sqlx.DB {
 		t.Skip("set GOAT_POSTGRES_TEST_DSN to run PostgreSQL integration tests")
 	}
 
-	db, err := sqlx.Connect("postgres", dsn)
+	db, err := sqlx.Connect("pgx", dsn)
 	if err != nil {
 		t.Fatalf("connect to PostgreSQL: %v", err)
 	}

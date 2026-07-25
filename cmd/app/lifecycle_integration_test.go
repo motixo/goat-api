@@ -25,9 +25,12 @@ func TestApplicationLifecycleIntegration(t *testing.T) {
 		dependencies := defaultBootstrapDependencies()
 		database, redisClient := captureIntegrationStores(&dependencies)
 
-		app, err := initializeApp(cfg, dependencies)
+		app, err := initializeApp(context.Background(), cfg, dependencies)
 		if err != nil {
 			t.Fatalf("initializeApp() error = %v", err)
+		}
+		if got := database().DriverName(); got != "pgx" {
+			t.Fatalf("PostgreSQL driver = %q, want pgx stdlib", got)
 		}
 		t.Cleanup(func() {
 			_ = app.Shutdown(context.Background())
@@ -59,7 +62,7 @@ func TestApplicationLifecycleIntegration(t *testing.T) {
 		dependencies := defaultBootstrapDependencies()
 		database, _ := captureIntegrationStores(&dependencies)
 
-		app, err := initializeApp(cfg, dependencies)
+		app, err := initializeApp(context.Background(), cfg, dependencies)
 		if app != nil {
 			t.Fatal("initializeApp() returned an application after Redis failure")
 		}
@@ -89,7 +92,7 @@ func TestApplicationLifecycleIntegration(t *testing.T) {
 			return runtimeResources{}, runtimeErr
 		}
 
-		app, err := initializeApp(cfg, dependencies)
+		app, err := initializeApp(context.Background(), cfg, dependencies)
 		if app != nil {
 			t.Fatal("initializeApp() returned an application after runtime failure")
 		}
@@ -108,27 +111,30 @@ func lifecycleIntegrationConfig(t *testing.T) *config.Config {
 		t.Fatalf("parse GOAT_REDIS_ADDR: %v", err)
 	}
 	return &config.Config{
-		Env:                    "development",
-		ServerPort:             "127.0.0.1:0",
-		DBHost:                 envOrDefault("GOAT_POSTGRES_HOST", "127.0.0.1"),
-		DBPort:                 envOrDefault("GOAT_POSTGRES_PORT", "5432"),
-		DBUser:                 envOrDefault("GOAT_POSTGRES_USER", "postgres"),
-		DBPassword:             envOrDefault("GOAT_POSTGRES_PASSWORD", "postgres"),
-		DBName:                 envOrDefault("GOAT_POSTGRES_DB", "goat"),
-		JWTSecret:              "lifecycle-integration-secret",
-		PasswordPepper:         "lifecycle-integration-pepper",
-		RedisHost:              redisHost,
-		RedisPort:              redisPort,
-		Seed:                   0,
-		JWTExpiration:          15 * time.Minute,
-		RefreshTokenExpiration: 24 * time.Hour,
-		SessionExpiration:      30 * 24 * time.Hour,
-		RateLimitAuthLimit:     5,
-		RateLimitAuthWindow:    time.Minute,
-		RateLimitPublicLimit:   100,
-		RateLimitPublicWindow:  time.Minute,
-		RateLimitPrivateLimit:  60,
-		RateLimitPrivateWindow: time.Minute,
+		Env:                     "development",
+		ServerPort:              "127.0.0.1:0",
+		DBHost:                  envOrDefault("GOAT_POSTGRES_HOST", "127.0.0.1"),
+		DBPort:                  envOrDefault("GOAT_POSTGRES_PORT", "5432"),
+		DBUser:                  envOrDefault("GOAT_POSTGRES_USER", "postgres"),
+		DBPassword:              envOrDefault("GOAT_POSTGRES_PASSWORD", "postgres"),
+		DBName:                  envOrDefault("GOAT_POSTGRES_DB", "goat"),
+		DBConnectionTimeout:     2 * time.Second,
+		DBInitializationTimeout: 30 * time.Second,
+		JWTSecret:               "lifecycle-integration-secret",
+		PasswordPepper:          "lifecycle-integration-pepper",
+		RedisHost:               redisHost,
+		RedisPort:               redisPort,
+		RedisConnectionTimeout:  2 * time.Second,
+		Seed:                    0,
+		JWTExpiration:           15 * time.Minute,
+		RefreshTokenExpiration:  24 * time.Hour,
+		SessionExpiration:       30 * 24 * time.Hour,
+		RateLimitAuthLimit:      5,
+		RateLimitAuthWindow:     time.Minute,
+		RateLimitPublicLimit:    100,
+		RateLimitPublicWindow:   time.Minute,
+		RateLimitPrivateLimit:   60,
+		RateLimitPrivateWindow:  time.Minute,
 	}
 }
 
@@ -141,16 +147,21 @@ func captureIntegrationStores(
 	var redisClient *redis.Client
 
 	dependencies.newPostgres = func(
+		ctx context.Context,
 		cfg *config.Config,
 		logger pkg.Logger,
 		passwordHasher service.PasswordHasher,
 	) (postgresResource, error) {
-		resource, err := newPostgres(cfg, logger, passwordHasher)
+		resource, err := newPostgres(ctx, cfg, logger, passwordHasher)
 		database = resource.db
 		return resource, err
 	}
-	dependencies.newRedis = func(cfg *config.Config, logger pkg.Logger) (redisResource, error) {
-		resource, err := newRedis(cfg, logger)
+	dependencies.newRedis = func(
+		ctx context.Context,
+		cfg *config.Config,
+		logger pkg.Logger,
+	) (redisResource, error) {
+		resource, err := newRedis(ctx, cfg, logger)
 		redisClient = resource.client
 		return resource, err
 	}

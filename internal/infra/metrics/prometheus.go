@@ -18,9 +18,6 @@ type PrometheusMetrics struct {
 	dbQueryDuration *prometheus.HistogramVec
 	dbQueriesTotal  *prometheus.CounterVec
 
-	// Cache metrics
-	cacheHits *prometheus.CounterVec
-
 	// Business metrics
 	userLoginsTotal               *prometheus.CounterVec
 	tokenRefreshTotal             *prometheus.CounterVec
@@ -77,15 +74,6 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 			[]string{"operation", "success"},
 		),
 
-		// Cache metrics
-		cacheHits: promauto.With(registry).NewCounterVec(
-			prometheus.CounterOpts{
-				Name: "cache_hits_total",
-				Help: "Total cache hits/misses",
-			},
-			[]string{"cache_type", "hit"},
-		),
-
 		// Business metrics
 		userLoginsTotal: promauto.With(registry).NewCounterVec(
 			prometheus.CounterOpts{
@@ -131,15 +119,6 @@ func (m *PrometheusMetrics) RecordHTTPActiveRequests(increment bool) {
 func (m *PrometheusMetrics) RecordDBQuery(duration float64, operation, success string) {
 	m.dbQueryDuration.WithLabelValues(operation, success).Observe(duration)
 	m.dbQueriesTotal.WithLabelValues(operation, success).Inc()
-}
-
-// Cache metrics
-func (m *PrometheusMetrics) RecordCacheHit(hit bool, cacheType string) {
-	hitStr := "true"
-	if !hit {
-		hitStr = "false"
-	}
-	m.cacheHits.WithLabelValues(cacheType, hitStr).Inc()
 }
 
 // Business metrics

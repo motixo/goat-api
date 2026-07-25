@@ -17,6 +17,8 @@ func TestInitializeAppRollsBackPostgresWhenRedisConstructionFails(t *testing.T) 
 	t.Parallel()
 
 	redisErr := errors.New("redis unavailable")
+	startupCtx, cancelStartup := context.WithCancel(context.Background())
+	defer cancelStartup()
 	recorder := &lifecycleRecorder{}
 	dependencies := bootstrapDependencies{
 		newLogger: func() (loggerResource, error) {
@@ -26,15 +28,22 @@ func TestInitializeAppRollsBackPostgresWhenRedisConstructionFails(t *testing.T) 
 				sync:   recorder.action("logger.sync", nil),
 			}, nil
 		},
-		newPostgres: func(*config.Config, pkg.Logger, service.PasswordHasher) (postgresResource, error) {
+		newPostgres: func(context.Context, *config.Config, pkg.Logger, service.PasswordHasher) (postgresResource, error) {
 			recorder.append("postgres.create")
 			return postgresResource{
 				close: recorder.action("postgres.close", nil),
 			}, nil
 		},
-		newRedis: func(*config.Config, pkg.Logger) (redisResource, error) {
+		newRedis: func(ctx context.Context, _ *config.Config, _ pkg.Logger) (redisResource, error) {
+			if ctx != startupCtx {
+				t.Fatal("newRedis() did not receive the caller-owned startup context")
+			}
 			recorder.append("redis.create")
 			return redisResource{}, redisErr
+		},
+		validateAssets: func(context.Context, *redis.Client) error {
+			t.Fatal("validateAssets() called after Redis connection validation failed")
+			return nil
 		},
 		buildRuntime: func(*config.Config, pkg.Logger, *sqlx.DB, *redis.Client, service.PasswordHasher) (runtimeResources, error) {
 			t.Fatal("buildRuntime() called after Redis construction failed")
@@ -42,7 +51,7 @@ func TestInitializeAppRollsBackPostgresWhenRedisConstructionFails(t *testing.T) 
 		},
 	}
 
-	app, err := initializeApp(&config.Config{}, dependencies)
+	app, err := initializeApp(startupCtx, &config.Config{}, dependencies)
 	if app != nil {
 		t.Fatal("initializeApp() returned an application after Redis failure")
 	}
@@ -62,6 +71,65 @@ func TestInitializeAppRollsBackPostgresWhenRedisConstructionFails(t *testing.T) 
 	}
 }
 
+func TestInitializeAppPreservesRedisStartupCancellationCause(t *testing.T) {
+	t.Parallel()
+
+	cancellationCause := errors.New("startup canceled during Redis validation")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	recorder := &lifecycleRecorder{}
+	dependencies := successfulBootstrapDependencies(recorder)
+	dependencies.newRedis = func(
+		startupCtx context.Context,
+		_ *config.Config,
+		_ pkg.Logger,
+	) (redisResource, error) {
+		recorder.append("redis.create")
+		if startupCtx != ctx {
+			t.Fatal("newRedis() did not receive the caller-owned startup context")
+		}
+		cancel(cancellationCause)
+		<-startupCtx.Done()
+		return redisResource{}, startupCtx.Err()
+	}
+	dependencies.validateAssets = func(context.Context, *redis.Client) error {
+		t.Fatal("validateAssets() called after canceled Redis validation")
+		return nil
+	}
+	dependencies.buildRuntime = func(
+		*config.Config,
+		pkg.Logger,
+		*sqlx.DB,
+		*redis.Client,
+		service.PasswordHasher,
+	) (runtimeResources, error) {
+		t.Fatal("buildRuntime() called after canceled Redis validation")
+		return runtimeResources{}, nil
+	}
+
+	app, err := initializeApp(ctx, &config.Config{}, dependencies)
+	if app != nil {
+		t.Fatal("initializeApp() returned an application after Redis startup cancellation")
+	}
+	for name, target := range map[string]error{
+		"context cancellation": context.Canceled,
+		"caller cause":         cancellationCause,
+	} {
+		if !errors.Is(err, target) {
+			t.Errorf("initializeApp() error = %v, want %s", err, name)
+		}
+	}
+	want := []string{
+		"logger.create",
+		"postgres.create",
+		"redis.create",
+		"postgres.close",
+		"logger.sync",
+	}
+	if got := recorder.snapshot(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("startup cancellation order = %v, want %v", got, want)
+	}
+}
+
 func TestInitializeAppSuccessfulBootstrapAndCleanup(t *testing.T) {
 	t.Parallel()
 
@@ -75,7 +143,11 @@ func TestInitializeAppSuccessfulBootstrapAndCleanup(t *testing.T) {
 		}, nil
 	}
 
-	app, err := initializeApp(&config.Config{ServerPort: "127.0.0.1:0"}, dependencies)
+	app, err := initializeApp(
+		context.Background(),
+		&config.Config{ServerPort: "127.0.0.1:0"},
+		dependencies,
+	)
 	if err != nil {
 		t.Fatalf("initializeApp() error = %v", err)
 	}
@@ -112,7 +184,7 @@ func TestInitializeAppRollsBackRedisPostgresAndLoggerAfterRuntimeFailure(t *test
 		return runtimeResources{}, runtimeErr
 	}
 
-	app, err := initializeApp(&config.Config{}, dependencies)
+	app, err := initializeApp(context.Background(), &config.Config{}, dependencies)
 	if app != nil {
 		t.Fatal("initializeApp() returned an application after runtime failure")
 	}
@@ -150,7 +222,7 @@ func TestInitializeAppValidatesAssetsBeforeRuntimeAndRollsBackInReverseOrder(t *
 		return runtimeResources{}, nil
 	}
 
-	app, err := initializeApp(&config.Config{}, dependencies)
+	app, err := initializeApp(context.Background(), &config.Config{}, dependencies)
 	if app != nil {
 		t.Fatal("initializeApp() returned an application after asset validation failure")
 	}
@@ -180,13 +252,13 @@ func TestInitializeAppPreservesPrimaryAndRollbackErrors(t *testing.T) {
 	loggerSyncErr := errors.New("logger sync failed")
 	recorder := &lifecycleRecorder{}
 	dependencies := successfulBootstrapDependencies(recorder)
-	dependencies.newPostgres = func(*config.Config, pkg.Logger, service.PasswordHasher) (postgresResource, error) {
+	dependencies.newPostgres = func(context.Context, *config.Config, pkg.Logger, service.PasswordHasher) (postgresResource, error) {
 		recorder.append("postgres.create")
 		return postgresResource{
 			close: recorder.action("postgres.close", postgresCloseErr),
 		}, nil
 	}
-	dependencies.newRedis = func(*config.Config, pkg.Logger) (redisResource, error) {
+	dependencies.newRedis = func(context.Context, *config.Config, pkg.Logger) (redisResource, error) {
 		recorder.append("redis.create")
 		return redisResource{}, redisErr
 	}
@@ -198,7 +270,7 @@ func TestInitializeAppPreservesPrimaryAndRollbackErrors(t *testing.T) {
 		}, nil
 	}
 
-	_, err := initializeApp(&config.Config{}, dependencies)
+	_, err := initializeApp(context.Background(), &config.Config{}, dependencies)
 	for name, target := range map[string]error{
 		"Redis construction": redisErr,
 		"PostgreSQL close":   postgresCloseErr,
@@ -207,6 +279,145 @@ func TestInitializeAppPreservesPrimaryAndRollbackErrors(t *testing.T) {
 		if !errors.Is(err, target) {
 			t.Errorf("initializeApp() error = %v, want wrapped %s error", err, name)
 		}
+	}
+}
+
+func TestInitializeAppStopsAfterPostgresFailureAndPreservesLoggerCleanupError(t *testing.T) {
+	t.Parallel()
+
+	postgresErr := errors.New("PostgreSQL startup failed")
+	loggerSyncErr := errors.New("logger sync failed")
+	recorder := &lifecycleRecorder{}
+	dependencies := bootstrapDependencies{
+		newLogger: func() (loggerResource, error) {
+			recorder.append("logger.create")
+			return loggerResource{
+				logger: discardLogger{},
+				sync:   recorder.action("logger.sync", loggerSyncErr),
+			}, nil
+		},
+		newPostgres: func(
+			ctx context.Context,
+			_ *config.Config,
+			_ pkg.Logger,
+			_ service.PasswordHasher,
+		) (postgresResource, error) {
+			recorder.append("postgres.create")
+			if ctx == nil {
+				t.Fatal("newPostgres() received a nil startup context")
+			}
+			return postgresResource{}, postgresErr
+		},
+		newRedis: func(context.Context, *config.Config, pkg.Logger) (redisResource, error) {
+			recorder.append("UNEXPECTED:redis.create")
+			return redisResource{}, nil
+		},
+		buildRuntime: func(*config.Config, pkg.Logger, *sqlx.DB, *redis.Client, service.PasswordHasher) (runtimeResources, error) {
+			recorder.append("UNEXPECTED:runtime.create")
+			return runtimeResources{}, nil
+		},
+	}
+
+	app, err := initializeApp(context.Background(), &config.Config{}, dependencies)
+	if app != nil {
+		t.Fatal("initializeApp() returned an application after PostgreSQL failure")
+	}
+	if !errors.Is(err, postgresErr) {
+		t.Fatalf("initializeApp() error = %v, want PostgreSQL startup error", err)
+	}
+	if !errors.Is(err, loggerSyncErr) {
+		t.Fatalf("initializeApp() error = %v, want logger cleanup error", err)
+	}
+	want := []string{"logger.create", "postgres.create", "logger.sync"}
+	if got := recorder.snapshot(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("startup events = %v, want %v", got, want)
+	}
+}
+
+func TestInitializeAppCancellationAfterPostgresStopsRemainingConstruction(t *testing.T) {
+	t.Parallel()
+
+	cancellationCause := errors.New("startup canceled by process signal")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	recorder := &lifecycleRecorder{}
+	dependencies := successfulBootstrapDependencies(recorder)
+	dependencies.newPostgres = func(
+		startupCtx context.Context,
+		_ *config.Config,
+		_ pkg.Logger,
+		_ service.PasswordHasher,
+	) (postgresResource, error) {
+		recorder.append("postgres.create")
+		if startupCtx != ctx {
+			t.Fatal("newPostgres() did not receive the caller-owned startup context")
+		}
+		cancel(cancellationCause)
+		return postgresResource{
+			close: recorder.action("postgres.close", nil),
+		}, nil
+	}
+	dependencies.newRedis = func(context.Context, *config.Config, pkg.Logger) (redisResource, error) {
+		recorder.append("UNEXPECTED:redis.create")
+		return redisResource{}, nil
+	}
+
+	app, err := initializeApp(ctx, &config.Config{}, dependencies)
+	if app != nil {
+		t.Fatal("initializeApp() returned an application after startup cancellation")
+	}
+	if !errors.Is(err, cancellationCause) {
+		t.Fatalf("initializeApp() error = %v, want caller cancellation cause", err)
+	}
+	want := []string{
+		"logger.create",
+		"postgres.create",
+		"postgres.close",
+		"logger.sync",
+	}
+	if got := recorder.snapshot(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("startup cancellation order = %v, want %v", got, want)
+	}
+}
+
+func TestInitializeAppAssetValidationInheritsStartupCancellation(t *testing.T) {
+	t.Parallel()
+
+	cancellationCause := errors.New("startup canceled during asset validation")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	recorder := &lifecycleRecorder{}
+	dependencies := successfulBootstrapDependencies(recorder)
+	dependencies.validateAssets = func(validationCtx context.Context, _ *redis.Client) error {
+		recorder.append("assets.validate")
+		cancel(cancellationCause)
+		<-validationCtx.Done()
+		if context.Cause(validationCtx) != cancellationCause {
+			t.Fatalf(
+				"asset validation context cause = %v, want %v",
+				context.Cause(validationCtx),
+				cancellationCause,
+			)
+		}
+		return validationCtx.Err()
+	}
+
+	app, err := initializeApp(ctx, &config.Config{}, dependencies)
+	if app != nil {
+		t.Fatal("initializeApp() returned an application after asset validation cancellation")
+	}
+	if !errors.Is(err, cancellationCause) {
+		t.Fatalf("initializeApp() error = %v, want caller cancellation cause", err)
+	}
+	want := []string{
+		"logger.create",
+		"postgres.create",
+		"redis.create",
+		"assets.validate",
+		"redis.close",
+		"postgres.close",
+		"logger.sync",
+	}
+	if got := recorder.snapshot(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("asset validation cancellation order = %v, want %v", got, want)
 	}
 }
 
@@ -219,13 +430,13 @@ func successfulBootstrapDependencies(recorder *lifecycleRecorder) bootstrapDepen
 				sync:   recorder.action("logger.sync", nil),
 			}, nil
 		},
-		newPostgres: func(*config.Config, pkg.Logger, service.PasswordHasher) (postgresResource, error) {
+		newPostgres: func(context.Context, *config.Config, pkg.Logger, service.PasswordHasher) (postgresResource, error) {
 			recorder.append("postgres.create")
 			return postgresResource{
 				close: recorder.action("postgres.close", nil),
 			}, nil
 		},
-		newRedis: func(*config.Config, pkg.Logger) (redisResource, error) {
+		newRedis: func(context.Context, *config.Config, pkg.Logger) (redisResource, error) {
 			recorder.append("redis.create")
 			return redisResource{
 				close: recorder.action("redis.close", nil),

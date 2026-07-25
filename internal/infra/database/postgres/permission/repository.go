@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jmoiron/sqlx"
-	"github.com/lib/pq"
 	"github.com/motixo/goat-api/internal/domain/entity"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
@@ -86,10 +86,10 @@ func translatePermissionCreateError(err error) error {
 		return nil
 	}
 
-	var postgresErr *pq.Error
+	var postgresErr *pgconn.PgError
 	if errors.As(err, &postgresErr) &&
 		postgresErr.Code == permissionUniqueViolation &&
-		postgresErr.Constraint == permissionRoleActionUniqueConstraint {
+		postgresErr.ConstraintName == permissionRoleActionUniqueConstraint {
 		return fmt.Errorf("%w: %w", domainErrors.ErrPermissionAlreadyExists, err)
 	}
 

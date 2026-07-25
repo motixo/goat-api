@@ -23,17 +23,22 @@ func main() {
 }
 
 func run() error {
+	ctx, stopSignals := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer stopSignals()
+
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	app, err := InitializeApp(cfg)
+	app, err := InitializeApp(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("initialize app: %w", err)
 	}
 
-	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopSignals()
 	return app.Run(ctx)
 }
