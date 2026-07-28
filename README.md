@@ -134,8 +134,9 @@ JSON field: it is ignored.
 ### Infrastructure Endpoints
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `api/health` | Health check endpoint |
-| `GET` | `api/metrics` | Prometheus metrics endpoint |
+| `GET` | `/api/health` | Dependency-free process liveness |
+| `GET` | `/api/ready` | Bounded PostgreSQL and Redis readiness |
+| `GET` | `/api/metrics` | Prometheus metrics endpoint |
 
 ## 🛠️ Development
 
@@ -215,6 +216,12 @@ by default. Deployments behind a reverse proxy must set
 `HTTP_TRUSTED_PROXIES` to that proxy's explicit IP address or CIDR range so IP
 rate limiting cannot be influenced by untrusted forwarding headers.
 
+`GET /api/health` remains a dependency-free liveness signal. `GET /api/ready`
+returns `200` only while the HTTP server is accepting traffic and both
+PostgreSQL and Redis answer within the shared `HTTP_READINESS_TIMEOUT`; it
+returns a non-cacheable `503` without exposing dependency details while the
+server is starting, draining, or a dependency is unavailable.
+
 ### Database migrations
 
 PostgreSQL schema changes are immutable, sequential SQL files embedded in the
@@ -249,10 +256,49 @@ docker run --rm \
 
 # Start the application after migrations succeed
 docker run -p 8080:8080 \
+  --stop-timeout 30 \
   --env-file .env \
   --name goat-api \
   goat-api
 ```
+
+The image declares `SIGTERM` as its stop signal and uses `/api/ready` for its
+single Docker health state. The health check allows 150 seconds for the default
+bounded startup work, then checks every 10 seconds. Docker records health; the
+runtime or orchestrator remains responsible for deciding whether an unhealthy
+container should be restarted.
+
+### Kubernetes Deployment
+
+[`deploy/kubernetes/goat-api.yaml`](deploy/kubernetes/goat-api.yaml) provides a
+Deployment and ClusterIP Service baseline. Before applying it:
+
+1. Replace the image template with an immutable release tag or digest.
+2. Create `goat-api-config` from non-secret environment values and
+   `goat-api-secrets` from `DB_PASSWORD`, `JWT_SECRET`, `PASSWORD_PEPPER`, and
+   any Redis credential. The manifest deliberately contains no credentials.
+3. Run `/app/migrate up` as a separate deployment job, using the same external
+   configuration, before rolling out the application.
+
+The probes have distinct responsibilities:
+
+* Startup and liveness call dependency-free `/api/health`. The 180-second
+  startup budget covers the documented default database initialization window;
+  deployments that raise startup timeouts must tune the probe budget too.
+* Readiness calls `/api/ready`, so a PostgreSQL or Redis outage removes the Pod
+  from Service traffic without turning a dependency outage into a liveness
+  restart loop. Its three-second timeout exceeds the default two-second shared
+  dependency deadline; if `HTTP_READINESS_TIMEOUT` is raised, raise the probe
+  timeout as well.
+* On termination, Kubernetes first marks the endpoint as terminating. The
+  five-second `preStop` delay gives routing changes time to propagate before
+  `SIGTERM`; the remaining grace period exceeds the application's bounded
+  15-second HTTP shutdown. This reduces, but cannot eliminate, in-flight
+  request ambiguity during distributed routing changes.
+
+The manifest uses two replicas and `maxUnavailable: 0` for rolling updates.
+Resource requests and limits are safe baseline values for the current Argon2id
+settings; tune them from measured workload data before a production rollout.
 
 ## 📊 Observability
 

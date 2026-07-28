@@ -17,6 +17,7 @@ func TestLoadParsesCompleteTypedConfiguration(t *testing.T) {
 		"HTTP_READ_TIMEOUT":             "20s",
 		"HTTP_WRITE_TIMEOUT":            "40s",
 		"HTTP_IDLE_TIMEOUT":             "90s",
+		"HTTP_READINESS_TIMEOUT":        "4s",
 		"HTTP_MAX_HEADER_BYTES":         "32768",
 		"HTTP_MAX_BODY_BYTES":           "2097152",
 		"HTTP_TRUSTED_PROXIES":          "127.0.0.1,10.0.0.0/8,::1",
@@ -61,6 +62,7 @@ func TestLoadParsesCompleteTypedConfiguration(t *testing.T) {
 		HTTPReadTimeout:            20 * time.Second,
 		HTTPWriteTimeout:           40 * time.Second,
 		HTTPIdleTimeout:            90 * time.Second,
+		HTTPReadinessTimeout:       4 * time.Second,
 		HTTPMaxHeaderBytes:         32768,
 		HTTPMaxBodyBytes:           2097152,
 		HTTPTrustedProxies:         []string{"127.0.0.1", "10.0.0.0/8", "::1"},
@@ -136,6 +138,7 @@ func TestLoadAppliesIntentionalDefaults(t *testing.T) {
 		"HTTP_READ_TIMEOUT":         {got: cfg.HTTPReadTimeout, want: 15 * time.Second},
 		"HTTP_WRITE_TIMEOUT":        {got: cfg.HTTPWriteTimeout, want: 30 * time.Second},
 		"HTTP_IDLE_TIMEOUT":         {got: cfg.HTTPIdleTimeout, want: time.Minute},
+		"HTTP_READINESS_TIMEOUT":    {got: cfg.HTTPReadinessTimeout, want: 2 * time.Second},
 		"REDIS_CONNECTION_TIMEOUT":  {got: cfg.RedisConnectionTimeout, want: 5 * time.Second},
 		"JWT_EXPIRATION":            {got: cfg.JWTExpiration, want: 5 * time.Minute},
 		"REFRESH_TOKEN_EXPIRATION":  {got: cfg.RefreshTokenExpiration, want: 168 * time.Hour},
@@ -191,6 +194,7 @@ func TestLoadRejectsMalformedTypedValues(t *testing.T) {
 		{name: "SEED", value: "not-a-boolean"},
 		{name: "PASSWORD_HASH_MAX_CONCURRENCY", value: "not-an-integer"},
 		{name: "HTTP_READ_HEADER_TIMEOUT", value: "not-a-duration"},
+		{name: "HTTP_READINESS_TIMEOUT", value: "not-a-duration"},
 		{name: "HTTP_MAX_BODY_BYTES", value: "not-an-integer"},
 		{name: "JWT_EXPIRATION", value: "not-a-duration"},
 	}
@@ -218,6 +222,8 @@ func TestLoadRejectsInvalidRanges(t *testing.T) {
 		{name: "HTTP_READ_TIMEOUT", value: "121s", wantFragment: "HTTP_READ_TIMEOUT"},
 		{name: "HTTP_WRITE_TIMEOUT", value: "301s", wantFragment: "HTTP_WRITE_TIMEOUT"},
 		{name: "HTTP_IDLE_TIMEOUT", value: "601s", wantFragment: "HTTP_IDLE_TIMEOUT"},
+		{name: "HTTP_READINESS_TIMEOUT", value: "0s", wantFragment: "HTTP_READINESS_TIMEOUT"},
+		{name: "HTTP_READINESS_TIMEOUT", value: "11s", wantFragment: "HTTP_READINESS_TIMEOUT"},
 		{name: "HTTP_MAX_HEADER_BYTES", value: "0", wantFragment: "HTTP_MAX_HEADER_BYTES"},
 		{name: "HTTP_MAX_HEADER_BYTES", value: "1048577", wantFragment: "HTTP_MAX_HEADER_BYTES"},
 		{name: "HTTP_MAX_BODY_BYTES", value: "-1", wantFragment: "HTTP_MAX_BODY_BYTES"},
@@ -318,10 +324,11 @@ func TestLoadRejectsInvalidEnvironmentAndTokenBounds(t *testing.T) {
 
 func TestLoadRejectsEmptyRequiredValues(t *testing.T) {
 	for name, value := range map[string]string{
-		"HTTP_READ_TIMEOUT": "",
-		"REDIS_HOST":        "",
-		"JWT_SECRET":        " ",
-		"PASSWORD_PEPPER":   "\t",
+		"HTTP_READ_TIMEOUT":      "",
+		"HTTP_READINESS_TIMEOUT": "",
+		"REDIS_HOST":             "",
+		"JWT_SECRET":             " ",
+		"PASSWORD_PEPPER":        "\t",
 	} {
 		t.Run(name, func(t *testing.T) {
 			setValidLoadEnvironment(t)

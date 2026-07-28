@@ -22,6 +22,7 @@ const (
 	maximumHTTPReadTimeout         = 2 * time.Minute
 	maximumHTTPWriteTimeout        = 5 * time.Minute
 	maximumHTTPIdleTimeout         = 10 * time.Minute
+	maximumHTTPReadinessTimeout    = 10 * time.Second
 	maximumHTTPHeaderBytes         = 1 << 20
 	maximumHTTPRequestBodyBytes    = 10 << 20
 	defaultAdminEmail              = "admin@goat.api"
@@ -35,6 +36,7 @@ var nonEmptyEnvironmentVariables = []string{
 	"HTTP_READ_TIMEOUT",
 	"HTTP_WRITE_TIMEOUT",
 	"HTTP_IDLE_TIMEOUT",
+	"HTTP_READINESS_TIMEOUT",
 	"HTTP_MAX_HEADER_BYTES",
 	"HTTP_MAX_BODY_BYTES",
 	"DB_HOST",
@@ -74,6 +76,7 @@ type Config struct {
 	HTTPReadTimeout            time.Duration `env:"HTTP_READ_TIMEOUT" envDefault:"15s"`
 	HTTPWriteTimeout           time.Duration `env:"HTTP_WRITE_TIMEOUT" envDefault:"30s"`
 	HTTPIdleTimeout            time.Duration `env:"HTTP_IDLE_TIMEOUT" envDefault:"60s"`
+	HTTPReadinessTimeout       time.Duration `env:"HTTP_READINESS_TIMEOUT" envDefault:"2s"`
 	HTTPMaxHeaderBytes         int           `env:"HTTP_MAX_HEADER_BYTES" envDefault:"65536"`
 	HTTPMaxBodyBytes           int64         `env:"HTTP_MAX_BODY_BYTES" envDefault:"1048576"`
 	HTTPTrustedProxies         []string      `env:"HTTP_TRUSTED_PROXIES" envSeparator:","`
@@ -277,6 +280,7 @@ func (c *Config) validateHTTPIngress() error {
 		{name: "HTTP_READ_TIMEOUT", value: c.HTTPReadTimeout, maximum: maximumHTTPReadTimeout},
 		{name: "HTTP_WRITE_TIMEOUT", value: c.HTTPWriteTimeout, maximum: maximumHTTPWriteTimeout},
 		{name: "HTTP_IDLE_TIMEOUT", value: c.HTTPIdleTimeout, maximum: maximumHTTPIdleTimeout},
+		{name: "HTTP_READINESS_TIMEOUT", value: c.HTTPReadinessTimeout, maximum: maximumHTTPReadinessTimeout},
 	}
 	for _, timeout := range timeouts {
 		if timeout.value <= 0 || timeout.value > timeout.maximum {
@@ -289,6 +293,9 @@ func (c *Config) validateHTTPIngress() error {
 	}
 	if c.HTTPReadHeaderTimeout > c.HTTPReadTimeout {
 		return fmt.Errorf("invalid HTTP_READ_HEADER_TIMEOUT: must not exceed HTTP_READ_TIMEOUT")
+	}
+	if c.HTTPReadinessTimeout > c.HTTPWriteTimeout {
+		return fmt.Errorf("invalid HTTP_READINESS_TIMEOUT: must not exceed HTTP_WRITE_TIMEOUT")
 	}
 	if c.HTTPMaxHeaderBytes <= 0 || c.HTTPMaxHeaderBytes > maximumHTTPHeaderBytes {
 		return fmt.Errorf(

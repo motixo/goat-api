@@ -346,6 +346,7 @@ func buildRuntime(
 			JWTService:            jwtManager,
 			MetricsService:        metricsService,
 			RateLimiter:           rateLimiter,
+			ReadinessChecker:      newRuntimeReadinessChecker(db, redisClient),
 		},
 		newRateLimitConfig(cfg),
 	)
@@ -366,6 +367,7 @@ func newHTTPServerConfig(cfg *config.Config) deliveryHTTP.ServerConfig {
 		ReadTimeout:         cfg.HTTPReadTimeout,
 		WriteTimeout:        cfg.HTTPWriteTimeout,
 		IdleTimeout:         cfg.HTTPIdleTimeout,
+		ReadinessTimeout:    cfg.HTTPReadinessTimeout,
 		MaxHeaderBytes:      cfg.HTTPMaxHeaderBytes,
 		MaxRequestBodyBytes: cfg.HTTPMaxBodyBytes,
 		TrustedProxies:      append([]string(nil), cfg.HTTPTrustedProxies...),

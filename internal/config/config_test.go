@@ -160,12 +160,35 @@ func TestValidateBoundsHTTPIngress(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "readiness timeout must be positive",
+			mutate: func(cfg *Config) {
+				cfg.HTTPReadinessTimeout = 0
+			},
+			wantErr: true,
+		},
+		{
+			name: "readiness timeout rejects unreasonable value",
+			mutate: func(cfg *Config) {
+				cfg.HTTPReadinessTimeout = maximumHTTPReadinessTimeout + time.Nanosecond
+			},
+			wantErr: true,
+		},
+		{
+			name: "readiness timeout exceeds write timeout",
+			mutate: func(cfg *Config) {
+				cfg.HTTPWriteTimeout = time.Second
+				cfg.HTTPReadinessTimeout = 2 * time.Second
+			},
+			wantErr: true,
+		},
+		{
 			name: "maximum values",
 			mutate: func(cfg *Config) {
 				cfg.HTTPReadHeaderTimeout = maximumHTTPReadHeaderTimeout
 				cfg.HTTPReadTimeout = maximumHTTPReadTimeout
 				cfg.HTTPWriteTimeout = maximumHTTPWriteTimeout
 				cfg.HTTPIdleTimeout = maximumHTTPIdleTimeout
+				cfg.HTTPReadinessTimeout = maximumHTTPReadinessTimeout
 				cfg.HTTPMaxHeaderBytes = maximumHTTPHeaderBytes
 				cfg.HTTPMaxBodyBytes = maximumHTTPRequestBodyBytes
 			},
@@ -253,6 +276,7 @@ func setValidLoadEnvironment(t *testing.T) {
 		"JWT_EXPIRATION":            "5m",
 		"PASSWORD_PEPPER":           "config-test-pepper",
 		"GIN_MODE":                  "debug",
+		"HTTP_READINESS_TIMEOUT":    "2s",
 		"DB_CONNECTION_TIMEOUT":     "5s",
 		"DB_INITIALIZATION_TIMEOUT": "2m",
 		"REDIS_CONNECTION_TIMEOUT":  "5s",
@@ -269,6 +293,7 @@ func validConfig() *Config {
 		HTTPReadTimeout:            15 * time.Second,
 		HTTPWriteTimeout:           30 * time.Second,
 		HTTPIdleTimeout:            time.Minute,
+		HTTPReadinessTimeout:       2 * time.Second,
 		HTTPMaxHeaderBytes:         64 << 10,
 		HTTPMaxBodyBytes:           1 << 20,
 		DBHost:                     "127.0.0.1",

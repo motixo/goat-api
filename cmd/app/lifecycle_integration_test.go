@@ -47,6 +47,13 @@ func TestApplicationLifecycleIntegration(t *testing.T) {
 		if got := database().DriverName(); got != "pgx" {
 			t.Fatalf("PostgreSQL driver = %q, want pgx stdlib", got)
 		}
+		readinessChecker := newRuntimeReadinessChecker(database(), redisClient())
+		readinessCtx, cancelReadiness := context.WithTimeout(context.Background(), 2*time.Second)
+		if err := readinessChecker.CheckReadiness(readinessCtx); err != nil {
+			cancelReadiness()
+			t.Fatalf("live runtime readiness check error = %v", err)
+		}
+		cancelReadiness()
 		t.Cleanup(func() {
 			_ = app.Shutdown(context.Background())
 		})
@@ -69,6 +76,11 @@ func TestApplicationLifecycleIntegration(t *testing.T) {
 		}
 
 		assertIntegrationStoresClosed(t, database(), redisClient())
+		closedCtx, cancelClosedCheck := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancelClosedCheck()
+		if err := readinessChecker.CheckReadiness(closedCtx); err == nil {
+			t.Fatal("runtime readiness remained successful after dependency cleanup")
+		}
 	})
 
 	t.Run("Redis failure rolls back an already-created PostgreSQL pool", func(t *testing.T) {
@@ -133,6 +145,7 @@ func lifecycleIntegrationConfig(t *testing.T) *config.Config {
 		HTTPReadTimeout:            15 * time.Second,
 		HTTPWriteTimeout:           30 * time.Second,
 		HTTPIdleTimeout:            time.Minute,
+		HTTPReadinessTimeout:       2 * time.Second,
 		HTTPMaxHeaderBytes:         64 << 10,
 		HTTPMaxBodyBytes:           1 << 20,
 		DBHost:                     envOrDefault("GOAT_POSTGRES_HOST", "127.0.0.1"),

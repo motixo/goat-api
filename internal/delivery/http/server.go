@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -25,7 +26,20 @@ import (
 var (
 	ErrServerAlreadyStarted         = errors.New("HTTP server already started")
 	ErrHTTPServerStoppedBeforeReady = errors.New("HTTP server stopped before accepting connections")
+	ErrReadinessCheckerRequired     = errors.New("HTTP readiness checker is required")
 )
+
+const (
+	readinessStatusReady    = "ready"
+	readinessStatusNotReady = "not_ready"
+)
+
+// ReadinessChecker is the delivery-owned port for the runtime dependencies
+// required to serve application traffic. Implementations must honor the
+// caller-owned context and must not expose dependency details to the response.
+type ReadinessChecker interface {
+	CheckReadiness(context.Context) error
+}
 
 // GinMode is a delivery-owned Gin engine mode.
 type GinMode string
@@ -61,6 +75,7 @@ type ServerConfig struct {
 	ReadTimeout         time.Duration
 	WriteTimeout        time.Duration
 	IdleTimeout         time.Duration
+	ReadinessTimeout    time.Duration
 	MaxHeaderBytes      int
 	MaxRequestBodyBytes int64
 	TrustedProxies      []string
@@ -75,6 +90,7 @@ func (c ServerConfig) validate() error {
 		{name: "read timeout", value: c.ReadTimeout},
 		{name: "write timeout", value: c.WriteTimeout},
 		{name: "idle timeout", value: c.IdleTimeout},
+		{name: "readiness timeout", value: c.ReadinessTimeout},
 	}
 	for _, timeout := range timeouts {
 		if timeout.value <= 0 {
@@ -106,10 +122,13 @@ type Server struct {
 	rateLimitMiddleware  *middleware.RateLimitMiddleware
 	rlConfig             middleware.RateLimitConfig
 	metricsService       service.MetricsService
+	readinessChecker     ReadinessChecker
+	readinessTimeout     time.Duration
 	routeClassifications []routes.RouteClassification
 
 	lifecycleMu sync.Mutex
 	started     bool
+	accepting   atomic.Bool
 	listen      func(network, address string) (net.Listener, error)
 }
 
@@ -126,6 +145,7 @@ type ServerDependencies struct {
 	JWTService            service.JWTService
 	MetricsService        service.MetricsService
 	RateLimiter           service.RateLimiter
+	ReadinessChecker      ReadinessChecker
 }
 
 type readyListener struct {
@@ -148,6 +168,9 @@ func NewServer(
 ) (*Server, error) {
 	if err := config.validate(); err != nil {
 		return nil, err
+	}
+	if dependencies.ReadinessChecker == nil {
+		return nil, ErrReadinessCheckerRequired
 	}
 	trustedProxies := append([]string(nil), config.TrustedProxies...)
 	router, err := newGinEngine(config.GinMode, trustedProxies)
@@ -193,6 +216,8 @@ func NewServer(
 		metricsMiddleware:   metricsMiddleware,
 		rateLimitMiddleware: rateLimitMiddleware,
 		metricsService:      dependencies.MetricsService,
+		readinessChecker:    dependencies.ReadinessChecker,
+		readinessTimeout:    config.ReadinessTimeout,
 		rlConfig:            rlConfig,
 		listen:              net.Listen,
 	}
@@ -215,10 +240,34 @@ func (s *Server) setupRoutes() {
 		api,
 		http.MethodGet,
 		"/health",
-		s.rateLimitMiddleware.Handler(s.rlConfig.Public),
 		func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) },
 	)
+	// The Redis-backed rate limiter must not mask Redis readiness failures or
+	// turn an orchestrator probe into a different response contract.
+	classifications.Public(
+		api,
+		http.MethodGet,
+		"/ready",
+		s.readiness,
+	)
 	s.routeClassifications = classifications.Entries()
+}
+
+func (s *Server) readiness(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	if !s.accepting.Load() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": readinessStatusNotReady})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), s.readinessTimeout)
+	defer cancel()
+	if err := s.readinessChecker.CheckReadiness(ctx); err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": readinessStatusNotReady})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": readinessStatusReady})
 }
 
 func (s *Server) RouteClassifications() []routes.RouteClassification {
@@ -248,9 +297,11 @@ func (s *Server) Start(addr string) (<-chan error, error) {
 		Listener: listener,
 		ready:    ready,
 	}
+	s.accepting.Store(true)
 
 	serveErrors := make(chan error, 1)
 	go func() {
+		defer s.accepting.Store(false)
 		err := s.httpServer.Serve(listenerWithReady)
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
@@ -272,6 +323,7 @@ func (s *Server) Start(addr string) (<-chan error, error) {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	s.accepting.Store(false)
 	err := s.httpServer.Shutdown(ctx)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
@@ -280,6 +332,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) Close() error {
+	s.accepting.Store(false)
 	err := s.httpServer.Close()
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil

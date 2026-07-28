@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -55,11 +56,17 @@ func TestServerStartIsReadyForImmediateShutdown(t *testing.T) {
 	if _, err := server.Start("127.0.0.1:0"); !errors.Is(err, ErrServerAlreadyStarted) {
 		t.Fatalf("second Start() error = %v, want ErrServerAlreadyStarted", err)
 	}
+	if !server.accepting.Load() {
+		t.Fatal("server was not marked ready after its listener began accepting")
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
 		t.Fatalf("Shutdown() error = %v", err)
+	}
+	if server.accepting.Load() {
+		t.Fatal("server remained ready after shutdown began")
 	}
 	select {
 	case serveErr := <-serveErrors:
@@ -78,7 +85,8 @@ func TestEveryRegisteredRouteHasExplicitAuthorizationClassification(t *testing.T
 	server, err := NewServer(
 		testServerConfig(GinModeRelease),
 		ServerDependencies{
-			MetricsService: routeClassificationMetrics{registry: prometheus.NewRegistry()},
+			MetricsService:   routeClassificationMetrics{registry: prometheus.NewRegistry()},
+			ReadinessChecker: readinessCheckFunc(func(context.Context) error { return nil }),
 		},
 		middleware.RateLimitConfig{},
 	)
@@ -90,6 +98,7 @@ func TestEveryRegisteredRouteHasExplicitAuthorizationClassification(t *testing.T
 	// repository-specific risk classification before this test will pass.
 	expected := map[string]routes.RouteClassification{
 		"GET /api/health":                      routeClass("GET", "/api/health", routes.AuthorizationPublic, ""),
+		"GET /api/ready":                       routeClass("GET", "/api/ready", routes.AuthorizationPublic, ""),
 		"GET /api/metrics":                     routeClass("GET", "/api/metrics", routes.AuthorizationPublic, ""),
 		"POST /api/v1/auth/login":              routeClass("POST", "/api/v1/auth/login", routes.AuthorizationPublic, ""),
 		"POST /api/v1/auth/signup":             routeClass("POST", "/api/v1/auth/signup", routes.AuthorizationPublic, ""),
@@ -164,7 +173,8 @@ func TestNewServerAppliesConfiguredGinMode(t *testing.T) {
 			server, err := NewServer(
 				testServerConfig(test.mode),
 				ServerDependencies{
-					MetricsService: routeClassificationMetrics{registry: prometheus.NewRegistry()},
+					MetricsService:   routeClassificationMetrics{registry: prometheus.NewRegistry()},
+					ReadinessChecker: readinessCheckFunc(func(context.Context) error { return nil }),
 				},
 				middleware.RateLimitConfig{},
 			)
@@ -186,7 +196,9 @@ func TestNewServerRejectsUnsupportedGinMode(t *testing.T) {
 	config := testServerConfig(GinMode("unsupported"))
 	server, err := NewServer(
 		config,
-		ServerDependencies{},
+		ServerDependencies{
+			ReadinessChecker: readinessCheckFunc(func(context.Context) error { return nil }),
+		},
 		middleware.RateLimitConfig{},
 	)
 	if err == nil {
@@ -200,6 +212,20 @@ func TestNewServerRejectsUnsupportedGinMode(t *testing.T) {
 	}
 }
 
+func TestNewServerRequiresReadinessChecker(t *testing.T) {
+	server, err := NewServer(
+		testServerConfig(GinModeRelease),
+		ServerDependencies{},
+		middleware.RateLimitConfig{},
+	)
+	if !errors.Is(err, ErrReadinessCheckerRequired) {
+		t.Fatalf("NewServer() error = %v, want ErrReadinessCheckerRequired", err)
+	}
+	if server != nil {
+		t.Fatal("NewServer() returned a server without a readiness checker")
+	}
+}
+
 func TestNewServerConstructsDeliveryComponentsFromNamedDependencies(t *testing.T) {
 	metricsService := routeClassificationMetrics{registry: prometheus.NewRegistry()}
 	rateLimitConfig := middleware.RateLimitConfig{
@@ -210,7 +236,10 @@ func TestNewServerConstructsDeliveryComponentsFromNamedDependencies(t *testing.T
 
 	server, err := NewServer(
 		testServerConfig(GinModeRelease),
-		ServerDependencies{MetricsService: metricsService},
+		ServerDependencies{
+			MetricsService:   metricsService,
+			ReadinessChecker: readinessCheckFunc(func(context.Context) error { return nil }),
+		},
 		rateLimitConfig,
 	)
 	if err != nil {
@@ -243,7 +272,8 @@ func TestNewServerAppliesHTTPIngressConfiguration(t *testing.T) {
 	server, err := NewServer(
 		config,
 		ServerDependencies{
-			MetricsService: routeClassificationMetrics{registry: prometheus.NewRegistry()},
+			MetricsService:   routeClassificationMetrics{registry: prometheus.NewRegistry()},
+			ReadinessChecker: readinessCheckFunc(func(context.Context) error { return nil }),
 		},
 		middleware.RateLimitConfig{},
 	)
@@ -278,6 +308,7 @@ func TestNewServerRejectsInvalidHTTPIngressConfiguration(t *testing.T) {
 		{name: "read-header exceeds read", mutate: func(config *ServerConfig) { config.ReadHeaderTimeout = config.ReadTimeout + time.Second }},
 		{name: "write timeout", mutate: func(config *ServerConfig) { config.WriteTimeout = 0 }},
 		{name: "idle timeout", mutate: func(config *ServerConfig) { config.IdleTimeout = 0 }},
+		{name: "readiness timeout", mutate: func(config *ServerConfig) { config.ReadinessTimeout = 0 }},
 		{name: "header bytes", mutate: func(config *ServerConfig) { config.MaxHeaderBytes = 0 }},
 		{name: "body bytes", mutate: func(config *ServerConfig) { config.MaxRequestBodyBytes = 0 }},
 		{name: "trusted proxy", mutate: func(config *ServerConfig) { config.TrustedProxies = []string{"not-an-ip"} }},
@@ -287,7 +318,13 @@ func TestNewServerRejectsInvalidHTTPIngressConfiguration(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			config := testServerConfig(GinModeRelease)
 			test.mutate(&config)
-			server, err := NewServer(config, ServerDependencies{}, middleware.RateLimitConfig{})
+			server, err := NewServer(
+				config,
+				ServerDependencies{
+					ReadinessChecker: readinessCheckFunc(func(context.Context) error { return nil }),
+				},
+				middleware.RateLimitConfig{},
+			)
 			if err == nil {
 				t.Fatal("NewServer() error = nil, want invalid ingress configuration error")
 			}
@@ -304,7 +341,8 @@ func TestNewServerLimitsRequestBodyReads(t *testing.T) {
 	server, err := NewServer(
 		config,
 		ServerDependencies{
-			MetricsService: routeClassificationMetrics{registry: prometheus.NewRegistry()},
+			MetricsService:   routeClassificationMetrics{registry: prometheus.NewRegistry()},
+			ReadinessChecker: readinessCheckFunc(func(context.Context) error { return nil }),
 		},
 		middleware.RateLimitConfig{},
 	)
@@ -356,7 +394,8 @@ func TestNewServerUsesForwardedClientIPOnlyFromTrustedProxy(t *testing.T) {
 			server, err := NewServer(
 				config,
 				ServerDependencies{
-					MetricsService: routeClassificationMetrics{registry: prometheus.NewRegistry()},
+					MetricsService:   routeClassificationMetrics{registry: prometheus.NewRegistry()},
+					ReadinessChecker: readinessCheckFunc(func(context.Context) error { return nil }),
 				},
 				middleware.RateLimitConfig{},
 			)
@@ -380,6 +419,162 @@ func TestNewServerUsesForwardedClientIPOnlyFromTrustedProxy(t *testing.T) {
 	}
 }
 
+func TestLivenessPreservesContractWithoutDependencyProbes(t *testing.T) {
+	var calls atomic.Int64
+	dependencies := testServerDependencies(readinessCheckFunc(func(context.Context) error {
+		calls.Add(1)
+		return errors.New("private dependency failure")
+	}))
+	dependencies.RateLimiter = unexpectedRateLimiter{t: t}
+	server, err := NewServer(
+		testServerConfig(GinModeRelease),
+		dependencies,
+		middleware.RateLimitConfig{
+			Public: middleware.RateLimit{Limit: 100, Window: time.Minute},
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	server.engine.ServeHTTP(
+		recorder,
+		httptest.NewRequest(netHTTP.MethodGet, "/api/health", nil),
+	)
+
+	if recorder.Code != netHTTP.StatusOK {
+		t.Fatalf("GET /api/health status = %d, want 200", recorder.Code)
+	}
+	if got := recorder.Body.String(); got != `{"status":"ok"}` {
+		t.Fatalf("GET /api/health body = %q, want exact liveness contract", got)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("liveness dependency checks = %d, want 0", calls.Load())
+	}
+}
+
+func TestReadinessRequiresServingStateAndHealthyDependencies(t *testing.T) {
+	var calls atomic.Int64
+	var checkErr error
+	dependencies := testServerDependencies(readinessCheckFunc(func(context.Context) error {
+		calls.Add(1)
+		return checkErr
+	}))
+	dependencies.RateLimiter = unexpectedRateLimiter{t: t}
+	server, err := NewServer(
+		testServerConfig(GinModeRelease),
+		dependencies,
+		middleware.RateLimitConfig{},
+	)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	assertReadinessResponse(t, server, netHTTP.StatusServiceUnavailable, `{"status":"not_ready"}`)
+	if calls.Load() != 0 {
+		t.Fatalf("dependency checks before serving = %d, want 0", calls.Load())
+	}
+
+	server.accepting.Store(true)
+	assertReadinessResponse(t, server, netHTTP.StatusOK, `{"status":"ready"}`)
+	if calls.Load() != 1 {
+		t.Fatalf("dependency checks while ready = %d, want 1", calls.Load())
+	}
+
+	privateErr := errors.New("database host and credential details")
+	checkErr = privateErr
+	recorder := assertReadinessResponse(
+		t,
+		server,
+		netHTTP.StatusServiceUnavailable,
+		`{"status":"not_ready"}`,
+	)
+	if strings.Contains(recorder.Body.String(), privateErr.Error()) {
+		t.Fatalf("readiness response exposed internal dependency error: %s", recorder.Body.String())
+	}
+}
+
+func TestReadinessUsesBoundedRequestOwnedContext(t *testing.T) {
+	config := testServerConfig(GinModeRelease)
+	config.ReadinessTimeout = 20 * time.Millisecond
+	server, err := NewServer(
+		config,
+		testServerDependencies(readinessCheckFunc(func(ctx context.Context) error {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("readiness check received an unbounded context")
+			}
+			if remaining := time.Until(deadline); remaining > config.ReadinessTimeout {
+				t.Fatalf("readiness deadline = %s, exceeds configured %s", remaining, config.ReadinessTimeout)
+			}
+			<-ctx.Done()
+			return ctx.Err()
+		})),
+		middleware.RateLimitConfig{},
+	)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	server.accepting.Store(true)
+
+	assertReadinessResponse(t, server, netHTTP.StatusServiceUnavailable, `{"status":"not_ready"}`)
+}
+
+func TestReadinessPreservesEarlierRequestCancellation(t *testing.T) {
+	server, err := NewServer(
+		testServerConfig(GinModeRelease),
+		testServerDependencies(readinessCheckFunc(func(ctx context.Context) error {
+			if !errors.Is(ctx.Err(), context.Canceled) {
+				t.Fatalf("readiness context error = %v, want request cancellation", ctx.Err())
+			}
+			return ctx.Err()
+		})),
+		middleware.RateLimitConfig{},
+	)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	server.accepting.Store(true)
+
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	cancelRequest()
+	request := httptest.NewRequest(netHTTP.MethodGet, "/api/ready", nil).WithContext(requestCtx)
+	recorder := httptest.NewRecorder()
+	server.engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != netHTTP.StatusServiceUnavailable {
+		t.Fatalf("GET /api/ready status = %d, want 503", recorder.Code)
+	}
+}
+
+func assertReadinessResponse(
+	t *testing.T,
+	server *Server,
+	wantStatus int,
+	wantBody string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	server.engine.ServeHTTP(
+		recorder,
+		httptest.NewRequest(netHTTP.MethodGet, "/api/ready", nil),
+	)
+	if recorder.Code != wantStatus {
+		t.Fatalf("GET /api/ready status = %d, want %d", recorder.Code, wantStatus)
+	}
+	if got := recorder.Body.String(); got != wantBody {
+		t.Fatalf("GET /api/ready body = %q, want %q", got, wantBody)
+	}
+	if got := recorder.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("GET /api/ready Cache-Control = %q, want no-store", got)
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "application/json; charset=utf-8" {
+		t.Fatalf("GET /api/ready Content-Type = %q, want JSON", got)
+	}
+	return recorder
+}
+
 func testServerConfig(mode GinMode) ServerConfig {
 	return ServerConfig{
 		GinMode:             mode,
@@ -387,9 +582,53 @@ func testServerConfig(mode GinMode) ServerConfig {
 		ReadTimeout:         15 * time.Second,
 		WriteTimeout:        30 * time.Second,
 		IdleTimeout:         time.Minute,
+		ReadinessTimeout:    2 * time.Second,
 		MaxHeaderBytes:      64 << 10,
 		MaxRequestBodyBytes: 1 << 20,
 	}
+}
+
+func testServerDependencies(checker ReadinessChecker) ServerDependencies {
+	return ServerDependencies{
+		MetricsService:   routeClassificationMetrics{registry: prometheus.NewRegistry()},
+		RateLimiter:      allowingRateLimiter{},
+		ReadinessChecker: checker,
+	}
+}
+
+type readinessCheckFunc func(context.Context) error
+
+func (check readinessCheckFunc) CheckReadiness(ctx context.Context) error {
+	return check(ctx)
+}
+
+type allowingRateLimiter struct{}
+
+func (allowingRateLimiter) Allow(
+	context.Context,
+	string,
+	string,
+	string,
+	int,
+	time.Duration,
+) (bool, time.Duration, int64, error) {
+	return true, time.Minute, 1, nil
+}
+
+type unexpectedRateLimiter struct {
+	t *testing.T
+}
+
+func (l unexpectedRateLimiter) Allow(
+	context.Context,
+	string,
+	string,
+	string,
+	int,
+	time.Duration,
+) (bool, time.Duration, int64, error) {
+	l.t.Fatal("probe endpoint invoked the Redis-backed rate limiter")
+	return false, 0, 0, nil
 }
 
 func routeClass(
