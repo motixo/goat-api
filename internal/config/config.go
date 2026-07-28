@@ -64,6 +64,8 @@ var nonEmptyEnvironmentVariables = []string{
 	"RATE_LIMIT_AUTH_WINDOW",
 	"RATE_LIMIT_PUBLIC_LIMIT",
 	"RATE_LIMIT_PUBLIC_WINDOW",
+	"RATE_LIMIT_PROTECTED_IP_LIMIT",
+	"RATE_LIMIT_PROTECTED_IP_WINDOW",
 	"RATE_LIMIT_PRIVATE_LIMIT",
 	"RATE_LIMIT_PRIVATE_WINDOW",
 }
@@ -106,6 +108,8 @@ type Config struct {
 	RateLimitAuthWindow        time.Duration `env:"RATE_LIMIT_AUTH_WINDOW" envDefault:"1m"`
 	RateLimitPublicLimit       int           `env:"RATE_LIMIT_PUBLIC_LIMIT" envDefault:"100"`
 	RateLimitPublicWindow      time.Duration `env:"RATE_LIMIT_PUBLIC_WINDOW" envDefault:"1m"`
+	RateLimitProtectedIPLimit  int           `env:"RATE_LIMIT_PROTECTED_IP_LIMIT" envDefault:"300"`
+	RateLimitProtectedIPWindow time.Duration `env:"RATE_LIMIT_PROTECTED_IP_WINDOW" envDefault:"1m"`
 	RateLimitPrivateLimit      int           `env:"RATE_LIMIT_PRIVATE_LIMIT" envDefault:"60"`
 	RateLimitPrivateWindow     time.Duration `env:"RATE_LIMIT_PRIVATE_WINDOW" envDefault:"1m"`
 }
@@ -231,6 +235,7 @@ func (c *Config) validate() error {
 	}{
 		{name: "RATE_LIMIT_AUTH_LIMIT", value: c.RateLimitAuthLimit},
 		{name: "RATE_LIMIT_PUBLIC_LIMIT", value: c.RateLimitPublicLimit},
+		{name: "RATE_LIMIT_PROTECTED_IP_LIMIT", value: c.RateLimitProtectedIPLimit},
 		{name: "RATE_LIMIT_PRIVATE_LIMIT", value: c.RateLimitPrivateLimit},
 	}
 	for _, field := range positiveIntegers {
@@ -244,6 +249,7 @@ func (c *Config) validate() error {
 	}{
 		{name: "RATE_LIMIT_AUTH_WINDOW", value: c.RateLimitAuthWindow},
 		{name: "RATE_LIMIT_PUBLIC_WINDOW", value: c.RateLimitPublicWindow},
+		{name: "RATE_LIMIT_PROTECTED_IP_WINDOW", value: c.RateLimitProtectedIPWindow},
 		{name: "RATE_LIMIT_PRIVATE_WINDOW", value: c.RateLimitPrivateWindow},
 	}
 	for _, field := range positiveDurations {

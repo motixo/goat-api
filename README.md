@@ -215,6 +215,16 @@ defaults documented in `.env.example`. Forwarded client-IP headers are ignored
 by default. Deployments behind a reverse proxy must set
 `HTTP_TRUSTED_PROXIES` to that proxy's explicit IP address or CIDR range so IP
 rate limiting cannot be influenced by untrusted forwarding headers.
+Protected routes first apply a configurable aggregate IP admission limit
+(`RATE_LIMIT_PROTECTED_IP_*`, default `300/min`) before authentication. After
+JWT and Redis session validation, they apply the existing private limit per
+verified user (`RATE_LIMIT_PRIVATE_*`, default `60/min`) before fresh database
+authorization or application work. This lets users sharing a NAT receive
+independent user quotas while retaining an aggregate abuse boundary. Public
+login, signup, and refresh limits remain IP-based because no verified principal
+exists at that point. `User-Agent` is deliberately not used as a rate-limit key
+because clients can spoof or change it. If Redis cannot enforce either limit,
+the request fails closed with the standard localized internal-error response.
 
 `GET /api/health` remains a dependency-free liveness signal. `GET /api/ready`
 returns `200` only while the HTTP server is accepting traffic and both

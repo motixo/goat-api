@@ -318,6 +318,8 @@ func validConfig() *Config {
 		RateLimitAuthWindow:        time.Minute,
 		RateLimitPublicLimit:       100,
 		RateLimitPublicWindow:      time.Minute,
+		RateLimitProtectedIPLimit:  300,
+		RateLimitProtectedIPWindow: time.Minute,
 		RateLimitPrivateLimit:      60,
 		RateLimitPrivateWindow:     time.Minute,
 	}

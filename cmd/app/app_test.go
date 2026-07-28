@@ -17,12 +17,14 @@ func TestNewRateLimitConfig(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{
-		RateLimitAuthLimit:     5,
-		RateLimitAuthWindow:    time.Minute,
-		RateLimitPublicLimit:   100,
-		RateLimitPublicWindow:  2 * time.Minute,
-		RateLimitPrivateLimit:  60,
-		RateLimitPrivateWindow: 3 * time.Minute,
+		RateLimitAuthLimit:         5,
+		RateLimitAuthWindow:        time.Minute,
+		RateLimitPublicLimit:       100,
+		RateLimitPublicWindow:      2 * time.Minute,
+		RateLimitProtectedIPLimit:  300,
+		RateLimitProtectedIPWindow: 4 * time.Minute,
+		RateLimitPrivateLimit:      60,
+		RateLimitPrivateWindow:     3 * time.Minute,
 	}
 
 	want := middleware.RateLimitConfig{
@@ -33,6 +35,10 @@ func TestNewRateLimitConfig(t *testing.T) {
 		Public: middleware.RateLimit{
 			Limit:  100,
 			Window: 2 * time.Minute,
+		},
+		ProtectedIP: middleware.RateLimit{
+			Limit:  300,
+			Window: 4 * time.Minute,
 		},
 		Private: middleware.RateLimit{
 			Limit:  60,

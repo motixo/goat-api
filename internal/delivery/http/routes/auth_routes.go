@@ -42,13 +42,17 @@ func RegisterAuthRoutes(
 		)
 	}
 
-	private := router.Group("/auth")
+	private := router.Group(
+		"/auth",
+		rl.Handler(rlConfig.ProtectedIP),
+		authMiddleware.Required(),
+		rl.Authenticated(rlConfig.Private),
+	)
 	{
 		classifications.FreshIdentity(
 			private,
 			http.MethodPost,
 			"/logout",
-			authMiddleware.Required(),
 			permMiddleware.FreshIdentity(),
 			authHandler.Logout,
 		)

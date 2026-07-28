@@ -417,6 +417,10 @@ func newRateLimitConfig(cfg *config.Config) middleware.RateLimitConfig {
 			Limit:  cfg.RateLimitPublicLimit,
 			Window: cfg.RateLimitPublicWindow,
 		},
+		ProtectedIP: middleware.RateLimit{
+			Limit:  cfg.RateLimitProtectedIPLimit,
+			Window: cfg.RateLimitProtectedIPWindow,
+		},
 		Private: middleware.RateLimit{
 			Limit:  cfg.RateLimitPrivateLimit,
 			Window: cfg.RateLimitPrivateWindow,

@@ -19,16 +19,18 @@ func RegisterUserRoutes(
 	rlConfig middleware.RateLimitConfig,
 	classifications *ClassificationRegistry,
 ) {
-	private := router.Group("/user")
-	privateRateLimit := rl.Handler(rlConfig.Private)
+	private := router.Group(
+		"/user",
+		rl.Handler(rlConfig.ProtectedIP),
+		authMiddleware.Required(),
+		rl.Authenticated(rlConfig.Private),
+	)
 
 	classifications.FreshAuthorization(
 		private,
 		http.MethodPost,
 		"/",
 		valueobject.PermFullAccess,
-		authMiddleware.Required(),
-		privateRateLimit,
 		permMiddleware.RequireFreshAuthorization(valueobject.PermFullAccess),
 		userHandler.CreateUser,
 	)
@@ -37,8 +39,6 @@ func RegisterUserRoutes(
 		http.MethodGet,
 		"/",
 		"",
-		authMiddleware.Required(),
-		privateRateLimit,
 		userHandler.GetUser,
 	)
 	classifications.FreshAuthorization(
@@ -46,8 +46,6 @@ func RegisterUserRoutes(
 		http.MethodGet,
 		"/:id",
 		valueobject.PermUserRead,
-		authMiddleware.Required(),
-		privateRateLimit,
 		permMiddleware.RequireFreshAuthorization(valueobject.PermUserRead),
 		userHandler.GetUser,
 	)
@@ -56,8 +54,6 @@ func RegisterUserRoutes(
 		http.MethodGet,
 		"/list",
 		valueobject.PermUserRead,
-		authMiddleware.Required(),
-		privateRateLimit,
 		permMiddleware.RequireFreshAuthorization(valueobject.PermUserRead),
 		userHandler.GetUserList,
 	)
@@ -65,8 +61,6 @@ func RegisterUserRoutes(
 		private,
 		http.MethodDelete,
 		"/",
-		authMiddleware.Required(),
-		privateRateLimit,
 		permMiddleware.FreshIdentity(),
 		userHandler.DeleteUser,
 	)
@@ -75,8 +69,6 @@ func RegisterUserRoutes(
 		http.MethodDelete,
 		"/:id",
 		valueobject.PermUserDelete,
-		authMiddleware.Required(),
-		privateRateLimit,
 		permMiddleware.RequireFreshAuthorization(valueobject.PermUserDelete),
 		userHandler.DeleteUser,
 	)
@@ -85,8 +77,6 @@ func RegisterUserRoutes(
 		http.MethodPut,
 		"/:id",
 		valueobject.PermFullAccess,
-		authMiddleware.Required(),
-		privateRateLimit,
 		permMiddleware.RequireFreshAuthorization(valueobject.PermFullAccess),
 		userHandler.UpdateUser,
 	)
@@ -94,8 +84,6 @@ func RegisterUserRoutes(
 		private,
 		http.MethodPatch,
 		"/change-email",
-		authMiddleware.Required(),
-		privateRateLimit,
 		permMiddleware.FreshIdentity(),
 		userHandler.ChangeEmail,
 	)
@@ -103,8 +91,6 @@ func RegisterUserRoutes(
 		private,
 		http.MethodPatch,
 		"/change-password",
-		authMiddleware.Required(),
-		privateRateLimit,
 		permMiddleware.FreshIdentity(),
 		userHandler.ChangePassword,
 	)
@@ -113,8 +99,6 @@ func RegisterUserRoutes(
 		http.MethodPatch,
 		"/:id/change-role",
 		valueobject.PermUserChangeRole,
-		authMiddleware.Required(),
-		privateRateLimit,
 		permMiddleware.RequireFreshAuthorization(valueobject.PermUserChangeRole),
 		userHandler.ChangeRole,
 	)
@@ -123,8 +107,6 @@ func RegisterUserRoutes(
 		http.MethodPatch,
 		"/:id/change-status",
 		valueobject.PermUserChangeStatus,
-		authMiddleware.Required(),
-		privateRateLimit,
 		permMiddleware.RequireFreshAuthorization(valueobject.PermUserChangeStatus),
 		userHandler.ChangeStatus,
 	)
@@ -132,8 +114,6 @@ func RegisterUserRoutes(
 		private,
 		http.MethodGet,
 		"/sessions",
-		authMiddleware.Required(),
-		privateRateLimit,
 		permMiddleware.FreshIdentity(),
 		sessionHandler.GetAllUserSessions,
 	)
@@ -141,8 +121,6 @@ func RegisterUserRoutes(
 		private,
 		http.MethodDelete,
 		"/sessions",
-		authMiddleware.Required(),
-		privateRateLimit,
 		permMiddleware.FreshIdentity(),
 		sessionHandler.DeleteSessions,
 	)

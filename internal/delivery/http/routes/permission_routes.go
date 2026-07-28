@@ -18,17 +18,19 @@ func RegisterPermissionRoutes(
 	rlConfig middleware.RateLimitConfig,
 	classifications *ClassificationRegistry,
 ) {
-	private := router.Group("/permission")
-	privateRateLimit := rl.Handler(rlConfig.Private)
+	private := router.Group(
+		"/permission",
+		rl.Handler(rlConfig.ProtectedIP),
+		authMiddleware.Required(),
+		rl.Authenticated(rlConfig.Private),
+	)
 
 	classifications.FreshAuthorization(
 		private,
 		http.MethodGet,
 		"/",
 		valueobject.PermFullAccess,
-		authMiddleware.Required(),
 		permMiddleware.RequireFreshAuthorization(valueobject.PermFullAccess),
-		privateRateLimit,
 		permissionHandler.GetPermissions,
 	)
 	classifications.FreshAuthorization(
@@ -36,9 +38,7 @@ func RegisterPermissionRoutes(
 		http.MethodGet,
 		"/:role",
 		valueobject.PermFullAccess,
-		authMiddleware.Required(),
 		permMiddleware.RequireFreshAuthorization(valueobject.PermFullAccess),
-		privateRateLimit,
 		permissionHandler.GetPermissionsByRole,
 	)
 	classifications.FreshAuthorization(
@@ -46,9 +46,7 @@ func RegisterPermissionRoutes(
 		http.MethodPost,
 		"/",
 		valueobject.PermFullAccess,
-		authMiddleware.Required(),
 		permMiddleware.RequireFreshAuthorization(valueobject.PermFullAccess),
-		privateRateLimit,
 		permissionHandler.CreatePermissin,
 	)
 	classifications.FreshAuthorization(
@@ -56,9 +54,7 @@ func RegisterPermissionRoutes(
 		http.MethodDelete,
 		"/:id",
 		valueobject.PermFullAccess,
-		authMiddleware.Required(),
 		permMiddleware.RequireFreshAuthorization(valueobject.PermFullAccess),
-		privateRateLimit,
 		permissionHandler.DeletePermissin,
 	)
 }
