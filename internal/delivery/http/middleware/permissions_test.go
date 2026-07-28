@@ -235,8 +235,7 @@ func BenchmarkSnapshotAuthorization(b *testing.B) {
 	request := httptest.NewRequest(http.MethodGet, "/protected", nil)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		router.ServeHTTP(httptest.NewRecorder(), request)
 	}
 	b.ReportMetric(0, "postgres_auth_queries/op")
