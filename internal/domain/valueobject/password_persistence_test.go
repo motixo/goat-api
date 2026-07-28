@@ -7,21 +7,30 @@ import (
 	"testing"
 )
 
-func TestPasswordDoesNotImplementDatabaseInterfaces(t *testing.T) {
+func TestPasswordTypesDoNotImplementDatabaseInterfaces(t *testing.T) {
 	valuerType := reflect.TypeOf((*driver.Valuer)(nil)).Elem()
 	scannerType := reflect.TypeOf((*sql.Scanner)(nil)).Elem()
 
-	if reflect.TypeOf(Password{}).Implements(valuerType) {
-		t.Fatal("Password implements driver.Valuer")
-	}
-	if reflect.TypeOf(&Password{}).Implements(scannerType) {
-		t.Fatal("*Password implements sql.Scanner")
+	for _, passwordType := range []reflect.Type{
+		reflect.TypeOf(PlainPassword{}),
+		reflect.TypeOf(PasswordDigest{}),
+	} {
+		if passwordType.Implements(valuerType) || reflect.PointerTo(passwordType).Implements(valuerType) {
+			t.Fatalf("%s implements driver.Valuer", passwordType)
+		}
+		if passwordType.Implements(scannerType) || reflect.PointerTo(passwordType).Implements(scannerType) {
+			t.Fatalf("%s implements sql.Scanner", passwordType)
+		}
 	}
 }
 
-func TestPasswordEncodedPreservesStoredHash(t *testing.T) {
+func TestPasswordDigestEncodedPreservesStoredHash(t *testing.T) {
 	const hash = "$argon2id$stored-hash"
-	if got := PasswordFromHash(hash).Encoded(); got != hash {
-		t.Fatalf("Password.Encoded() = %q, want %q", got, hash)
+	digest, err := NewPasswordDigest(hash)
+	if err != nil {
+		t.Fatalf("NewPasswordDigest() error = %v", err)
+	}
+	if got := digest.Encoded(); got != hash {
+		t.Fatalf("PasswordDigest.Encoded() = %q, want %q", got, hash)
 	}
 }

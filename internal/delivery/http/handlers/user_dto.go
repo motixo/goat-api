@@ -29,10 +29,8 @@ type createUserRequest struct {
 }
 
 type updateUserRequest struct {
-	Email    string          `json:"email" validate:"email"`
-	Password string          `json:"password"`
-	Status   json.RawMessage `json:"status"`
-	Role     json.RawMessage `json:"role"`
+	Email    string `json:"email" validate:"email"`
+	Password string `json:"password"`
 }
 
 type updateUserEmailRequest struct {
@@ -109,30 +107,10 @@ func (request createUserRequest) toInput() (user.CreateInput, error) {
 }
 
 func (request updateUserRequest) toInput(userID string) (user.UpdateInput, error) {
-	status := valueobject.StatusUnknown
-	if len(request.Status) != 0 {
-		parsedStatus, err := parseUserStatusRequest(request.Status)
-		if err != nil {
-			return user.UpdateInput{}, err
-		}
-		status = parsedStatus
-	}
-
-	role := valueobject.RoleUnknown
-	if len(request.Role) != 0 {
-		parsedRole, err := parseUserRoleRequest(request.Role)
-		if err != nil {
-			return user.UpdateInput{}, err
-		}
-		role = parsedRole
-	}
-
 	return user.UpdateInput{
 		UserID:   userID,
 		Email:    request.Email,
 		Password: request.Password,
-		Status:   status,
-		Role:     role,
 	}, nil
 }
 
@@ -186,10 +164,26 @@ func newUserResponse(output user.UserOutput) userResponse {
 	}
 }
 
-func newUserResponses(output []user.UserOutput) []userResponse {
-	responses := make([]userResponse, 0, len(output))
-	for _, item := range output {
-		responses = append(responses, newUserResponse(item))
+func newUserDetailResponse(detail user.UserDetail) userResponse {
+	return userResponse{
+		ID:        detail.ID,
+		Email:     detail.Email,
+		Role:      detail.Role.String(),
+		Status:    detail.Status.String(),
+		CreatedAt: detail.CreatedAt,
+	}
+}
+
+func newUserListResponses(items []user.UserListItem) []userResponse {
+	responses := make([]userResponse, 0, len(items))
+	for _, item := range items {
+		responses = append(responses, userResponse{
+			ID:        item.ID,
+			Email:     item.Email,
+			Role:      item.Role.String(),
+			Status:    item.Status.String(),
+			CreatedAt: item.CreatedAt,
+		})
 	}
 	return responses
 }

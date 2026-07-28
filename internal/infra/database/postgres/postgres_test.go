@@ -4,10 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
-
-	"github.com/motixo/goat-api/internal/config"
 )
 
 func TestPGXStdlibDriverIsRegistered(t *testing.T) {
@@ -20,21 +19,24 @@ func TestPGXStdlibDriverIsRegistered(t *testing.T) {
 }
 
 func TestNewDatabaseReturnsConnectionFailure(t *testing.T) {
-	database, err := NewDatabase(context.Background(), &config.Config{
-		DBHost:                  "127.0.0.1",
-		DBPort:                  "1",
-		DBUser:                  "postgres",
-		DBPassword:              "postgres",
-		DBName:                  "goat",
-		DBConnectionTimeout:     100 * time.Millisecond,
-		DBInitializationTimeout: time.Second,
-		Seed:                    0,
-	}, postgresTestLogger{}, nil)
+	cfg := validClientConfig()
+	cfg.Host = "127.0.0.1"
+	cfg.Port = 1
+	cfg.Password = "connection-secret-that-must-not-appear"
+	cfg.ConnectionTimeout = 100 * time.Millisecond
+	cfg.InitializationTimeout = time.Second
+
+	database, err := NewDatabase(context.Background(), cfg, postgresTestLogger{}, nil)
 	if database != nil {
 		t.Fatal("NewDatabase() database is non-nil after connection failure")
 	}
 	if err == nil {
 		t.Fatal("NewDatabase() error = nil, want PostgreSQL connection failure")
+	}
+	for _, forbidden := range []string{cfg.Password, "postgres://", "password="} {
+		if strings.Contains(err.Error(), forbidden) {
+			t.Fatalf("NewDatabase() error exposed PostgreSQL credentials or a full connection string: %v", err)
+		}
 	}
 }
 
@@ -43,16 +45,12 @@ func TestNewDatabasePreservesCallerCancellationCause(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	cancel(cancellationCause)
 
-	database, err := NewDatabase(ctx, &config.Config{
-		DBHost:                  "127.0.0.1",
-		DBPort:                  "5432",
-		DBUser:                  "postgres",
-		DBPassword:              "postgres",
-		DBName:                  "goat",
-		DBConnectionTimeout:     time.Second,
-		DBInitializationTimeout: time.Second,
-		Seed:                    0,
-	}, postgresTestLogger{}, nil)
+	cfg := validClientConfig()
+	cfg.Host = "127.0.0.1"
+	cfg.ConnectionTimeout = time.Second
+	cfg.InitializationTimeout = time.Second
+
+	database, err := NewDatabase(ctx, cfg, postgresTestLogger{}, nil)
 	if database != nil {
 		t.Fatal("NewDatabase() database is non-nil after caller cancellation")
 	}

@@ -23,7 +23,7 @@ import (
 	redisStorage "github.com/motixo/goat-api/internal/infra/storage/redis"
 	redisSession "github.com/motixo/goat-api/internal/infra/storage/redis/session"
 	"github.com/motixo/goat-api/internal/pkg"
-	"github.com/motixo/goat-api/internal/usecase/auth"
+	"github.com/motixo/goat-api/internal/usecase/authentication"
 	"github.com/motixo/goat-api/internal/usecase/authorization"
 	"github.com/motixo/goat-api/internal/usecase/permission"
 	"github.com/motixo/goat-api/internal/usecase/session"
@@ -58,7 +58,7 @@ type runtimeResources struct {
 
 type bootstrapDependencies struct {
 	newLogger      func() (loggerResource, error)
-	newPostgres    func(context.Context, *config.Config, pkg.Logger, service.PasswordHasher) (postgresResource, error)
+	newPostgres    func(context.Context, postgres.ClientConfig, pkg.Logger, service.PasswordHasher) (postgresResource, error)
 	newRedis       func(context.Context, *config.Config, pkg.Logger) (redisResource, error)
 	validateAssets func(context.Context, *redis.Client) error
 	buildRuntime   func(*config.Config, pkg.Logger, *sqlx.DB, *redis.Client, service.PasswordHasher) (runtimeResources, error)
@@ -94,9 +94,20 @@ func initializeApp(
 		)
 	}
 
-	passwordHasher := authInfra.NewPasswordService(cfg)
+	passwordHasher, err := authInfra.NewPasswordService(newPasswordHasherConfig(cfg))
+	if err != nil {
+		return nil, errors.Join(
+			fmt.Errorf("initialize password hasher: %w", err),
+			runCleanup("sync logger after password hasher initialization failure", appLogger.sync),
+		)
+	}
 
-	database, err := dependencies.newPostgres(ctx, cfg, appLogger.logger, passwordHasher)
+	database, err := dependencies.newPostgres(
+		ctx,
+		newPostgresClientConfig(cfg),
+		appLogger.logger,
+		passwordHasher,
+	)
 	if err != nil {
 		return nil, errors.Join(
 			fmt.Errorf("initialize postgres: %w", err),
@@ -184,7 +195,7 @@ func initializeApp(
 	}
 
 	return newApplication(applicationResources{
-		address:         cfg.ServerPort,
+		address:         cfg.ServerAddress(),
 		shutdownTimeout: defaultShutdownTimeout,
 		server:          runtime.server,
 		cleaner:         runtime.cleaner,
@@ -208,7 +219,7 @@ func defaultBootstrapDependencies() bootstrapDependencies {
 		},
 		newPostgres: func(
 			ctx context.Context,
-			cfg *config.Config,
+			cfg postgres.ClientConfig,
 			appLogger pkg.Logger,
 			passwordHasher service.PasswordHasher,
 		) (postgresResource, error) {
@@ -226,7 +237,11 @@ func defaultBootstrapDependencies() bootstrapDependencies {
 			cfg *config.Config,
 			appLogger pkg.Logger,
 		) (redisResource, error) {
-			client, err := redisStorage.NewClient(ctx, cfg, appLogger)
+			client, err := redisStorage.NewClient(
+				ctx,
+				newRedisClientConfig(cfg),
+				appLogger,
+			)
 			if err != nil {
 				return redisResource{}, err
 			}
@@ -292,44 +307,89 @@ func buildRuntime(
 		userRepository,
 		userRepository,
 	)
-	authUseCase := auth.NewUsecase(
-		userRepository,
-		userRepository,
-		sessionUseCase,
-		passwordHasher,
-		jwtManager,
-		appLogger,
-		auth.AccessTTL(cfg.JWTExpiration),
-		auth.RefreshTTL(cfg.RefreshTokenExpiration),
-		auth.SessionTTL(cfg.SessionExpiration),
-	)
-	userUseCase := user.NewUsecase(
-		userRepository,
-		passwordHasher,
-		appLogger,
-		sessionRepository,
-		metricsService,
-	)
+	authenticationUseCase := authentication.NewUsecase(authentication.Dependencies{
+		UserRepository:      userRepository,
+		SecurityStateReader: userRepository,
+		SessionUseCase:      sessionUseCase,
+		PasswordHasher:      passwordHasher,
+		JWTService:          jwtManager,
+		Logger:              appLogger,
+		AccessTTL:           authentication.AccessTTL(cfg.JWTExpiration),
+		RefreshTTL:          authentication.RefreshTTL(cfg.RefreshTokenExpiration),
+		SessionTTL:          authentication.SessionTTL(cfg.SessionExpiration),
+	})
+	userUseCase := user.NewUsecase(user.Dependencies{
+		UserRepository:               userRepository,
+		DetailReader:                 userRepository,
+		ListReader:                   userRepository,
+		StatusReader:                 userRepository,
+		UpdateWriter:                 userRepository,
+		EmailWriter:                  userRepository,
+		RoleWriter:                   userRepository,
+		PasswordHasher:               passwordHasher,
+		Logger:                       appLogger,
+		SessionRepository:            sessionRepository,
+		PasswordChangeCleanupMetrics: metricsService,
+	})
 	permissionUseCase := permission.NewUsecase(permissionRepository, appLogger)
 	cleaner := cron.NewSessionCleaner(sessionRepository, appLogger)
 
-	server := deliveryHTTP.NewServer(
-		userUseCase,
-		authUseCase,
-		authorizationUseCase,
-		permissionUseCase,
-		sessionUseCase,
-		appLogger,
-		jwtManager,
-		metricsService,
-		rateLimiter,
+	server, err := deliveryHTTP.NewServer(
+		deliveryHTTP.GinMode(cfg.GinMode),
+		deliveryHTTP.ServerDependencies{
+			UserUseCase:           userUseCase,
+			AuthenticationUseCase: authenticationUseCase,
+			AuthorizationUseCase:  authorizationUseCase,
+			PermissionUseCase:     permissionUseCase,
+			SessionUseCase:        sessionUseCase,
+			Logger:                appLogger,
+			JWTService:            jwtManager,
+			MetricsService:        metricsService,
+			RateLimiter:           rateLimiter,
+		},
 		newRateLimitConfig(cfg),
 	)
+	if err != nil {
+		return runtimeResources{}, fmt.Errorf("construct HTTP server: %w", err)
+	}
 
 	return runtimeResources{
 		server:  server,
 		cleaner: cleaner,
 	}, nil
+}
+
+func newRedisClientConfig(cfg *config.Config) redisStorage.ClientConfig {
+	return redisStorage.ClientConfig{
+		Host:              cfg.RedisHost,
+		Port:              cfg.RedisPort,
+		Password:          cfg.RedisPassword,
+		Database:          cfg.RedisDB,
+		ConnectionTimeout: cfg.RedisConnectionTimeout,
+	}
+}
+
+func newPasswordHasherConfig(cfg *config.Config) authInfra.PasswordHasherConfig {
+	return authInfra.PasswordHasherConfig{
+		Pepper:         cfg.PasswordPepper,
+		MaxConcurrency: cfg.PasswordHashMaxConcurrency,
+	}
+}
+
+func newPostgresClientConfig(cfg *config.Config) postgres.ClientConfig {
+	return postgres.ClientConfig{
+		Host:                  cfg.DBHost,
+		Port:                  cfg.DBPort,
+		User:                  cfg.DBUser,
+		Password:              cfg.DBPassword,
+		Database:              cfg.DBName,
+		SSLMode:               postgres.SSLModeDisable,
+		ConnectionTimeout:     cfg.DBConnectionTimeout,
+		InitializationTimeout: cfg.DBInitializationTimeout,
+		Seed:                  cfg.Seed,
+		AdminEmail:            cfg.AdminEmail,
+		AdminPassword:         cfg.AdminPassword,
+	}
 }
 
 func newRateLimitConfig(cfg *config.Config) middleware.RateLimitConfig {

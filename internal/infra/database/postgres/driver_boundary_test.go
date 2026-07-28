@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"go/build"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -9,6 +10,20 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestPostgreSQLAdapterDoesNotImportApplicationConfiguration(t *testing.T) {
+	t.Parallel()
+
+	pkg, err := build.Default.ImportDir(".", build.IgnoreVendor)
+	if err != nil {
+		t.Fatalf("inspect PostgreSQL adapter imports: %v", err)
+	}
+	for _, importPath := range pkg.Imports {
+		if importPath == "github.com/motixo/goat-api/internal/config" {
+			t.Fatalf("PostgreSQL adapter imports complete application configuration")
+		}
+	}
+}
 
 func TestPGXTypesRemainInsidePostgreSQLAdapter(t *testing.T) {
 	t.Parallel()

@@ -7,9 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
-	"github.com/motixo/goat-api/internal/config"
 	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/pkg"
 )
@@ -59,36 +58,30 @@ type databaseCloser interface {
 
 func NewDatabase(
 	ctx context.Context,
-	cfg *config.Config,
+	cfg ClientConfig,
 	logger pkg.Logger,
 	passwordSrv service.PasswordHasher,
 ) (*sqlx.DB, error) {
 	if ctx == nil {
 		return nil, errors.New("PostgreSQL startup context is required")
 	}
-	if cfg == nil {
-		return nil, errors.New("PostgreSQL configuration is required")
+	connectionConfig, err := newConnectionConfig(cfg)
+	if err != nil {
+		return nil, err
 	}
-	if cfg.DBConnectionTimeout <= 0 {
-		return nil, errors.New("PostgreSQL connection timeout must be positive")
-	}
-	if cfg.DBInitializationTimeout <= 0 {
-		return nil, errors.New("PostgreSQL initialization timeout must be positive")
+	if cfg.Seed && passwordSrv == nil {
+		return nil, errors.New("PostgreSQL administrator seed password hasher is required")
 	}
 
-	db, err := sqlx.Open(driverName, cfg.DSN())
-	if err != nil {
-		logger.Error("failed to open database", "error", err)
-		return nil, fmt.Errorf("open PostgreSQL: %w", err)
-	}
-	if err := pingDatabase(ctx, cfg.DBConnectionTimeout, db); err != nil {
+	db := sqlx.NewDb(stdlib.OpenDB(*connectionConfig), driverName)
+	if err := pingDatabase(ctx, cfg.ConnectionTimeout, db); err != nil {
 		logger.Error("failed to connect to database", "error", err)
 		return nil, closeFailedDatabaseInitialization(db, err)
 	}
 
 	initializationCtx, cancelInitialization := context.WithTimeout(
 		ctx,
-		cfg.DBInitializationTimeout,
+		cfg.InitializationTimeout,
 	)
 	defer cancelInitialization()
 	if err := initializeSchema(initializationCtx, db); err != nil {
@@ -98,14 +91,20 @@ func NewDatabase(
 
 	logger.Info("Database connected and users, permissions table ensured")
 
-	if cfg.Seed == 1 {
+	if cfg.Seed {
 		if err := SeedPermissions(initializationCtx, db); err != nil {
 			logger.Error("failed to seed permissions", "error", err)
 			return nil, closeFailedDatabaseInitialization(db, err)
 		}
 		logger.Info("Permissions seeded successfully")
 
-		if err := SeedAdminUser(initializationCtx, db, passwordSrv, cfg); err != nil {
+		if err := SeedAdminUser(
+			initializationCtx,
+			db,
+			passwordSrv,
+			cfg.AdminEmail,
+			cfg.AdminPassword,
+		); err != nil {
 			logger.Error("failed to seed admin user", "error", err)
 			return nil, closeFailedDatabaseInitialization(db, err)
 		}

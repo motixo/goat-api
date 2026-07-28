@@ -1,4 +1,4 @@
-package auth
+package authentication
 
 import (
 	"context"
@@ -17,7 +17,7 @@ func TestRefreshRejectsAccessTokenPurpose(t *testing.T) {
 			TokenType: valueobject.TokenTypeAccess,
 		},
 	}
-	usecase := NewUsecase(nil, nil, nil, nil, tokens, discardAuthLogger{}, 0, 0, 0)
+	usecase := NewUsecase(Dependencies{JWTService: tokens, Logger: discardAuthLogger{}})
 
 	_, err := usecase.Refresh(context.Background(), RefreshInput{RefreshToken: "access-token"})
 

@@ -62,7 +62,11 @@ func TestDeleteUserIntegrationCleansIndexedSessionsBeforeDeletingUser(t *testing
 				}
 			}
 
-			usecase := NewUsecase(users, nil, logger, sessions, nil)
+			usecase := NewUsecase(Dependencies{
+				UserRepository:    users,
+				Logger:            logger,
+				SessionRepository: sessions,
+			})
 			if err := usecase.DeleteUser(ctx, userID); err != nil {
 				t.Fatalf("DeleteUser() error = %v", err)
 			}
@@ -88,7 +92,11 @@ func TestDeleteUserIntegrationIsIdempotentAtTheSessionBoundary(t *testing.T) {
 	userID := createCredentialVersionIntegrationUser(t, ctx, users, passwordHasher)
 	sessions := redisSession.NewRepository(redisClient, logger)
 	owned := makeDeleteUserIntegrationSessions(t, ctx, redisClient, sessions, userID, 1)
-	usecase := NewUsecase(users, nil, logger, sessions, nil)
+	usecase := NewUsecase(Dependencies{
+		UserRepository:    users,
+		Logger:            logger,
+		SessionRepository: sessions,
+	})
 
 	if err := usecase.DeleteUser(ctx, userID); err != nil {
 		t.Fatalf("DeleteUser(first) error = %v", err)
@@ -110,7 +118,11 @@ func TestDeleteUserIntegrationRedisCleanupFailureLeavesPostgreSQLUntouched(t *te
 	if err := operationClient.Close(); err != nil {
 		t.Fatalf("close operation Redis client: %v", err)
 	}
-	err := NewUsecase(users, nil, logger, sessions, nil).DeleteUser(ctx, userID)
+	err := NewUsecase(Dependencies{
+		UserRepository:    users,
+		Logger:            logger,
+		SessionRepository: sessions,
+	}).DeleteUser(ctx, userID)
 	if !stdErrors.Is(err, redis.ErrClosed) {
 		t.Fatalf("DeleteUser() error = %v, want redis.ErrClosed", err)
 	}
@@ -135,7 +147,11 @@ func TestDeleteUserIntegrationPostgreSQLFailureOccursAfterCleanup(t *testing.T) 
 		UserRepository: users,
 		deleteErr:      deleteErr,
 	}
-	err := NewUsecase(failingUsers, nil, logger, sessions, nil).DeleteUser(ctx, userID)
+	err := NewUsecase(Dependencies{
+		UserRepository:    failingUsers,
+		Logger:            logger,
+		SessionRepository: sessions,
+	}).DeleteUser(ctx, userID)
 	if !stdErrors.Is(err, deleteErr) {
 		t.Fatalf("DeleteUser() error = %v, want PostgreSQL deletion error", err)
 	}
@@ -160,7 +176,11 @@ func TestDeleteUserIntegrationBlockPreventsLateSessionAndSnapshotAccess(t *testi
 	}
 	deleteDone := make(chan error, 1)
 	go func() {
-		deleteDone <- NewUsecase(gatedUsers, nil, logger, sessions, nil).
+		deleteDone <- NewUsecase(Dependencies{
+			UserRepository:    gatedUsers,
+			Logger:            logger,
+			SessionRepository: sessions,
+		}).
 			DeleteUser(ctx, userID)
 	}()
 

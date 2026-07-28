@@ -49,7 +49,8 @@ GOAT API is a **production-ready**, **secure**, and **scalable** backend applica
   immediate at the Redis validation boundary; role, permission, and
   non-suspension status changes may retain the bounded access-token stale
   window on snapshot routes.
-- **Argon2id Password Hashing**: With configurable pepper for enhanced security
+- **Argon2id Password Hashing**: With a configurable pepper and one bounded
+  concurrency gate shared by hashing and verification
 - **ULID Generation**: Lexicographically sortable unique identifiers
 - **RBAC**: Fine-grained permissions (e.g., `user:read`, `user:delete`) managed via middleware.
 
@@ -100,13 +101,21 @@ The project follows the **Dependency Rule**: source code dependencies only point
 | `GET` | `/api/v1/user/:id` | Get user by ID | `user:read` |
 | `GET` | `/api/v1/user/list` | List users with filtering | `user:read` |
 | `POST` | `/api/v1/user` | Create new user | `user:write` |
-| `PUT` | `/api/v1/user/:id` | Update user | `user:update` |
+| `PUT` | `/api/v1/user/:id` | Update user email/password | `user:update` |
 | `PATCH` | `/api/v1/user/change-email` | Update own email | Authenticated |
 | `PATCH` | `/api/v1/user/change-password` | Update own password | Authenticated |
 | `PATCH` | `/api/v1/user/:id/change-role` | Update user role | `user:change_role` |
 | `PATCH` | `/api/v1/user/:id/change-status` | Update user status | `user:change_status` |
 | `DELETE` | `/api/v1/user` | Delete own account | Authenticated |
 | `DELETE` | `/api/v1/user/:id` | Delete user | `user:delete` |
+
+User roles and statuses can be changed only through their dedicated routes:
+`PATCH /api/v1/user/:id/change-role` and
+`PATCH /api/v1/user/:id/change-status`. These workflows own their respective
+domain policies, authoritative state reads, Redis access-state lifecycle, and
+PostgreSQL compare-and-set updates. Supplying obsolete `role` or `status`
+fields to `PUT /api/v1/user/:id` has the same behavior as any other unknown
+JSON field: it is ignored.
 
 ### Session Management
 | Method | Endpoint | Description |
@@ -134,7 +143,7 @@ The project follows the **Dependency Rule**: source code dependencies only point
 ```text
 ├── cmd/app/                # Entry point & Wire DI configuration
 ├── internal/
-│   ├── config/             # Environment-based configuration (envconfig)
+│   ├── config/             # Typed process-environment configuration
 │   ├── delivery/http/      # Handlers, Middleware, and Gin Routes
 │   ├── domain/             # Entities, Value Objects, and Repository Interfaces
 │   ├── usecase/            # Application business logic (Auth, User, Permission)
@@ -150,11 +159,11 @@ The project follows the **Dependency Rule**: source code dependencies only point
 git clone https://github.com/motixo/goat-api.git
 cd goat-api
 
-# 2. Copy and configure environment
+# 2. Copy the documented environment template
 cp .env.example .env
 # Edit .env with your configuration
 
-# 3. Build and run
+# 3. Build and run; Make exports .env into the child process
 make run
 
 # 4. Run tests
@@ -167,12 +176,35 @@ make docker-build
 ### Available Make Commands
 ```bash
 make build          # Build the application
-make run            # Build and run with .env
+make run            # Build and run with .env exported as process environment
 make test           # Run all tests
 make clean          # Clean build artifacts
 make docker-build   # Build Docker image
 make help           # Show all commands
 ```
+
+The Go binary reads only its process environment; it never searches for or
+loads `.env` files. `make run` and Devenv load `.env` outside the application,
+while Docker accepts it through `--env-file`. When invoking the binary or
+`go run` directly, export the variables first:
+
+```bash
+set -a
+. ./.env
+set +a
+go run ./cmd/app
+```
+
+`DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JWT_SECRET`, and
+`PASSWORD_PEPPER` are required. Other defaults and supported bounds are
+documented in `.env.example`. Explicit malformed or empty non-optional values
+fail startup instead of being replaced silently. In production, administrator
+seeding cannot use the documented default credentials.
+
+`PASSWORD_HASH_MAX_CONCURRENCY` defaults to `2` and accepts `1` through `4`.
+Cancellation can reject password work before admission or while waiting for a
+slot; synchronous Argon2id work already in progress runs to completion.
+
 ### Docker Deployment
 
 ```bash

@@ -1,4 +1,4 @@
-package auth
+package authentication
 
 import (
 	"context"
@@ -19,7 +19,7 @@ import (
 
 func TestLogoutScopesCurrentSessionRevocationToAuthenticatedUser(t *testing.T) {
 	sessions := &recordingAuthSessionUseCase{}
-	usecase := NewUsecase(nil, nil, sessions, nil, nil, discardAuthLogger{}, 0, 0, 0)
+	usecase := NewUsecase(Dependencies{SessionUseCase: sessions, Logger: discardAuthLogger{}})
 
 	err := usecase.Logout(context.Background(), "01ARZ3NDEKTSV4RRFFQ69G5FAV", "user-1")
 
@@ -47,7 +47,7 @@ func TestLogoutClassifiesMissingCurrentSessionSemantically(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			sessions := &recordingAuthSessionUseCase{deleteErr: test.err}
-			usecase := NewUsecase(nil, nil, sessions, nil, nil, discardAuthLogger{}, 0, 0, 0)
+			usecase := NewUsecase(Dependencies{SessionUseCase: sessions, Logger: discardAuthLogger{}})
 
 			err := usecase.Logout(context.Background(), "01ARZ3NDEKTSV4RRFFQ69G5FAV", "user-1")
 
@@ -67,7 +67,7 @@ func TestLoginAccessTokenFailureScopesCleanupToCreatedSessionOwner(t *testing.T)
 	userEntity := &entity.User{
 		ID:                "user-1",
 		Email:             "user@example.com",
-		Password:          valueobject.PasswordFromHash("$hash"),
+		PasswordDigest:    testPasswordDigest("$hash"),
 		Status:            valueobject.StatusActive,
 		CredentialVersion: 9,
 	}
@@ -88,17 +88,17 @@ func TestLoginAccessTokenFailureScopesCleanupToCreatedSessionOwner(t *testing.T)
 		CredentialVersion: userEntity.CredentialVersion,
 		Permissions:       permissions,
 	}}
-	usecase := NewUsecase(
-		users,
-		securityStates,
-		sessions,
-		passwords,
-		tokens,
-		discardAuthLogger{},
-		AccessTTL(time.Minute),
-		RefreshTTL(time.Hour),
-		SessionTTL(24*time.Hour),
-	)
+	usecase := NewUsecase(Dependencies{
+		UserRepository:      users,
+		SecurityStateReader: securityStates,
+		SessionUseCase:      sessions,
+		PasswordHasher:      passwords,
+		JWTService:          tokens,
+		Logger:              discardAuthLogger{},
+		AccessTTL:           AccessTTL(time.Minute),
+		RefreshTTL:          RefreshTTL(time.Hour),
+		SessionTTL:          SessionTTL(24 * time.Hour),
+	})
 
 	_, err = usecase.Login(context.Background(), LoginInput{
 		Email:    userEntity.Email,
@@ -171,8 +171,12 @@ type authPasswordHasher struct {
 	service.PasswordHasher
 }
 
-func (*authPasswordHasher) Verify(context.Context, string, valueobject.Password) bool {
-	return true
+func (*authPasswordHasher) Verify(
+	context.Context,
+	valueobject.PlainPassword,
+	valueobject.PasswordDigest,
+) (bool, error) {
+	return true, nil
 }
 
 type authJWTService struct {

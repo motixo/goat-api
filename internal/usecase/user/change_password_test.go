@@ -3,6 +3,7 @@ package user
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -88,6 +89,57 @@ func TestChangePasswordIncorrectCurrentPasswordStopsBeforeDestructiveOperations(
 
 	if !errors.Is(err, domainErrors.ErrInvalidPassword) {
 		t.Fatalf("ChangePassword() error = %v, want ErrInvalidPassword", err)
+	}
+	assertPasswordChangeCalls(t, fixture, "user.find", "password.verify")
+	assertPasswordUnchanged(t, fixture)
+}
+
+func TestChangePasswordTreatsHashLookingCurrentValueAsPlaintext(t *testing.T) {
+	fixture := newPasswordChangeFixture()
+	input := passwordChangeInput()
+	input.OldPassword = "$argon2id$"
+
+	err := fixture.usecase.ChangePassword(context.Background(), input)
+
+	if !errors.Is(err, domainErrors.ErrInvalidPassword) {
+		t.Fatalf("ChangePassword() error = %v, want ErrInvalidPassword", err)
+	}
+	if errors.Is(err, domainErrors.ErrPasswordPolicyViolation) {
+		t.Fatalf("ChangePassword() exposed current-password policy details: %v", err)
+	}
+	assertPasswordChangeCalls(t, fixture, "user.find")
+	assertPasswordUnchanged(t, fixture)
+}
+
+func TestChangePasswordVerificationAdmissionFailureStopsBeforeDestructiveOperations(t *testing.T) {
+	verificationErr := errors.New("password verification admission canceled")
+	fixture := newPasswordChangeFixture()
+	fixture.passwordHasher.verifyErr = verificationErr
+
+	err := fixture.usecase.ChangePassword(context.Background(), passwordChangeInput())
+
+	if !errors.Is(err, verificationErr) {
+		t.Fatalf("ChangePassword() error = %v, want password verification failure", err)
+	}
+	assertPasswordChangeCalls(t, fixture, "user.find", "password.verify")
+	assertPasswordUnchanged(t, fixture)
+}
+
+func TestChangePasswordInvalidStoredHashIsNotAnIncorrectPassword(t *testing.T) {
+	verificationErr := fmt.Errorf(
+		"validate persisted credential: %w",
+		service.ErrInvalidStoredPasswordHash,
+	)
+	fixture := newPasswordChangeFixture()
+	fixture.passwordHasher.verifyErr = verificationErr
+
+	err := fixture.usecase.ChangePassword(context.Background(), passwordChangeInput())
+
+	if !errors.Is(err, service.ErrInvalidStoredPasswordHash) {
+		t.Fatalf("ChangePassword() error = %v, want invalid stored-hash identity", err)
+	}
+	if errors.Is(err, domainErrors.ErrInvalidPassword) {
+		t.Fatalf("ChangePassword() error = %v, must not be classified as incorrect password", err)
 	}
 	assertPasswordChangeCalls(t, fixture, "user.find", "password.verify")
 	assertPasswordUnchanged(t, fixture)
@@ -207,8 +259,8 @@ func TestChangePasswordDatabaseFailureDoesNotIncrementVersionOrStartRedisCleanup
 
 func TestChangePasswordRepeatedRequestUsesCommittedPasswordState(t *testing.T) {
 	fixture := newPasswordChangeFixture()
-	fixture.passwordHasher.verify = func(password string, hash valueobject.Password) bool {
-		return password == passwordChangeOldPassword && hash.Encoded() == passwordChangeOldHash
+	fixture.passwordHasher.verify = func(password valueobject.PlainPassword, hash valueobject.PasswordDigest) bool {
+		return string(password.Bytes()) == passwordChangeOldPassword && hash.Encoded() == passwordChangeOldHash
 	}
 
 	if err := fixture.usecase.ChangePassword(context.Background(), passwordChangeInput()); err != nil {
@@ -325,12 +377,12 @@ type passwordChangeFixture struct {
 func newPasswordChangeFixture() *passwordChangeFixture {
 	recorder := &passwordChangeRecorder{}
 	logRecorder := &passwordChangeLogRecorder{}
-	oldHash := valueobject.PasswordFromHash(passwordChangeOldHash)
+	oldHash := testPasswordDigest(passwordChangeOldHash)
 	userRepo := &passwordChangeUserRepository{
 		recorder: recorder,
 		user: &entity.User{
 			ID:                passwordChangeUserID,
-			Password:          oldHash,
+			PasswordDigest:    oldHash,
 			CredentialVersion: entity.InitialCredentialVersion,
 		},
 		persistedPassword: oldHash,
@@ -339,7 +391,7 @@ func newPasswordChangeFixture() *passwordChangeFixture {
 	passwordHasher := &passwordChangeHasher{
 		recorder:     recorder,
 		verifyResult: true,
-		hash:         valueobject.PasswordFromHash(passwordChangeNewHash),
+		hash:         testPasswordDigest(passwordChangeNewHash),
 	}
 	sessionRepo := &passwordChangeSessionRepository{recorder: recorder}
 	cleanupMetrics := &passwordChangeCleanupMetrics{}
@@ -351,13 +403,13 @@ func newPasswordChangeFixture() *passwordChangeFixture {
 		sessionRepo:    sessionRepo,
 		logger:         logRecorder,
 		metrics:        cleanupMetrics,
-		usecase: NewUsecase(
-			userRepo,
-			passwordHasher,
-			passwordChangeLogger{recorder: logRecorder},
-			sessionRepo,
-			cleanupMetrics,
-		),
+		usecase: NewUsecase(Dependencies{
+			UserRepository:               userRepo,
+			PasswordHasher:               passwordHasher,
+			Logger:                       passwordChangeLogger{recorder: logRecorder},
+			SessionRepository:            sessionRepo,
+			PasswordChangeCleanupMetrics: cleanupMetrics,
+		}),
 	}
 }
 
@@ -383,7 +435,7 @@ type passwordChangeUserRepository struct {
 	user              *entity.User
 	findErr           error
 	updatePasswordErr error
-	persistedPassword valueobject.Password
+	persistedPassword valueobject.PasswordDigest
 	credentialVersion int64
 }
 
@@ -395,7 +447,7 @@ func (r *passwordChangeUserRepository) FindByID(context.Context, string) (*entit
 func (r *passwordChangeUserRepository) UpdatePassword(
 	_ context.Context,
 	_ string,
-	password valueobject.Password,
+	password valueobject.PasswordDigest,
 ) (int64, error) {
 	r.recorder.record("user.update_password")
 	if r.updatePasswordErr != nil {
@@ -403,7 +455,7 @@ func (r *passwordChangeUserRepository) UpdatePassword(
 	}
 	r.persistedPassword = password
 	r.credentialVersion++
-	r.user.Password = password
+	r.user.PasswordDigest = password
 	r.user.CredentialVersion = r.credentialVersion
 	return r.credentialVersion, nil
 }
@@ -412,20 +464,31 @@ type passwordChangeHasher struct {
 	service.PasswordHasher
 	recorder     *passwordChangeRecorder
 	verifyResult bool
-	verify       func(password string, hash valueobject.Password) bool
-	hash         valueobject.Password
+	verify       func(password valueobject.PlainPassword, hash valueobject.PasswordDigest) bool
+	verifyErr    error
+	hash         valueobject.PasswordDigest
 	hashErr      error
 }
 
-func (h *passwordChangeHasher) Verify(_ context.Context, password string, hash valueobject.Password) bool {
+func (h *passwordChangeHasher) Verify(
+	_ context.Context,
+	password valueobject.PlainPassword,
+	hash valueobject.PasswordDigest,
+) (bool, error) {
 	h.recorder.record("password.verify")
-	if h.verify != nil {
-		return h.verify(password, hash)
+	if h.verifyErr != nil {
+		return false, h.verifyErr
 	}
-	return h.verifyResult
+	if h.verify != nil {
+		return h.verify(password, hash), nil
+	}
+	return h.verifyResult, nil
 }
 
-func (h *passwordChangeHasher) Hash(context.Context, string) (valueobject.Password, error) {
+func (h *passwordChangeHasher) Hash(
+	context.Context,
+	valueobject.PlainPassword,
+) (valueobject.PasswordDigest, error) {
 	h.recorder.record("password.hash")
 	return h.hash, h.hashErr
 }
@@ -503,3 +566,11 @@ func (l passwordChangeLogger) Error(message string, fields ...any) {
 func (passwordChangeLogger) Warn(string, ...any)  {}
 func (passwordChangeLogger) Debug(string, ...any) {}
 func (passwordChangeLogger) Panic(string, ...any) {}
+
+func testPasswordDigest(encoded string) valueobject.PasswordDigest {
+	digest, err := valueobject.NewPasswordDigest(encoded)
+	if err != nil {
+		panic("test password digest is invalid")
+	}
+	return digest
+}

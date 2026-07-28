@@ -1,8 +1,10 @@
-package auth
+package authentication
 
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,7 +22,7 @@ func TestLoginBuildsAccessSnapshotFromAuthoritativeSecurityState(t *testing.T) {
 	user := &entity.User{
 		ID:                "user-1",
 		Email:             "user@example.com",
-		Password:          valueobject.PasswordFromHash("$hash"),
+		PasswordDigest:    testPasswordDigest("$hash"),
 		Status:            valueobject.StatusActive,
 		Role:              valueobject.RoleClient,
 		CredentialVersion: 4,
@@ -36,17 +38,17 @@ func TestLoginBuildsAccessSnapshotFromAuthoritativeSecurityState(t *testing.T) {
 	}}
 	sessions := &securitySnapshotSessionUseCase{}
 	tokens := &securitySnapshotJWTService{}
-	usecase := NewUsecase(
-		users,
-		states,
-		sessions,
-		securitySnapshotPasswordHasher{valid: true},
-		tokens,
-		discardAuthLogger{},
-		AccessTTL(5*time.Minute),
-		RefreshTTL(24*time.Hour),
-		SessionTTL(30*24*time.Hour),
-	)
+	usecase := NewUsecase(Dependencies{
+		UserRepository:      users,
+		SecurityStateReader: states,
+		SessionUseCase:      sessions,
+		PasswordHasher:      securitySnapshotPasswordHasher{valid: true},
+		JWTService:          tokens,
+		Logger:              discardAuthLogger{},
+		AccessTTL:           AccessTTL(5 * time.Minute),
+		RefreshTTL:          RefreshTTL(24 * time.Hour),
+		SessionTTL:          SessionTTL(30 * 24 * time.Hour),
+	})
 
 	output, err := usecase.Login(context.Background(), LoginInput{
 		Email: user.Email, Password: "Password1!", IP: "127.0.0.1", Device: "test",
@@ -85,11 +87,151 @@ func TestLoginBuildsAccessSnapshotFromAuthoritativeSecurityState(t *testing.T) {
 	}
 }
 
+func TestLoginPropagatesPasswordVerificationAdmissionFailure(t *testing.T) {
+	verificationErr := errors.New("password verification admission canceled")
+	user := &entity.User{
+		ID:                "user-1",
+		Email:             "user@example.com",
+		PasswordDigest:    testPasswordDigest("$hash"),
+		Status:            valueobject.StatusActive,
+		Role:              valueobject.RoleClient,
+		CredentialVersion: 1,
+	}
+	states := &securitySnapshotStateReader{}
+	sessions := &securitySnapshotSessionUseCase{}
+	tokens := &securitySnapshotJWTService{}
+	usecase := NewUsecase(Dependencies{
+		UserRepository:      &securitySnapshotUserRepository{user: user},
+		SecurityStateReader: states,
+		SessionUseCase:      sessions,
+		PasswordHasher:      securitySnapshotPasswordHasher{err: verificationErr},
+		JWTService:          tokens,
+		Logger:              discardAuthLogger{},
+		AccessTTL:           AccessTTL(5 * time.Minute),
+		RefreshTTL:          RefreshTTL(time.Hour),
+		SessionTTL:          SessionTTL(24 * time.Hour),
+	})
+
+	_, err := usecase.Login(context.Background(), LoginInput{
+		Email: user.Email, Password: "Password1!",
+	})
+	if !errors.Is(err, verificationErr) {
+		t.Fatalf("Login() error = %v, want password verification failure", err)
+	}
+	if states.calls != 0 || sessions.createCalls != 0 ||
+		tokens.accessCalls != 0 || tokens.refreshCalls != 0 {
+		t.Fatalf(
+			"failed password admission performed security work: state=%d session=%d access=%d refresh=%d",
+			states.calls,
+			sessions.createCalls,
+			tokens.accessCalls,
+			tokens.refreshCalls,
+		)
+	}
+}
+
+func TestLoginTreatsInvalidHashLookingInputAsPlaintextWithoutLeakingPolicy(t *testing.T) {
+	verifyCalls := 0
+	user := &entity.User{
+		ID:                "user-1",
+		Email:             "user@example.com",
+		PasswordDigest:    testPasswordDigest("$stored-digest"),
+		Status:            valueobject.StatusActive,
+		Role:              valueobject.RoleClient,
+		CredentialVersion: 1,
+	}
+	usecase := NewUsecase(Dependencies{
+		UserRepository: &securitySnapshotUserRepository{user: user},
+		PasswordHasher: securitySnapshotPasswordHasher{valid: true, calls: &verifyCalls},
+		Logger:         discardAuthLogger{},
+	})
+
+	_, err := usecase.Login(context.Background(), LoginInput{
+		Email:    user.Email,
+		Password: "$argon2id$",
+	})
+	if !errors.Is(err, domainErrors.ErrInvalidCredentials) {
+		t.Fatalf("Login() error = %v, want privacy-preserving ErrInvalidCredentials", err)
+	}
+	if errors.Is(err, domainErrors.ErrPasswordPolicyViolation) {
+		t.Fatalf("Login() exposed plaintext policy details: %v", err)
+	}
+	if verifyCalls != 0 {
+		t.Fatalf("password verifications = %d, want 0 for invalid plaintext", verifyCalls)
+	}
+}
+
+func TestLoginKeepsInvalidStoredPasswordHashPrivateAndObservable(t *testing.T) {
+	const (
+		plaintext  = "Password1!"
+		storedHash = "$argon2id$corrupted-credential-material"
+	)
+	verificationErr := fmt.Errorf(
+		"validate persisted credential: %w",
+		service.ErrInvalidStoredPasswordHash,
+	)
+	user := &entity.User{
+		ID:                "user-1",
+		Email:             "user@example.com",
+		PasswordDigest:    testPasswordDigest(storedHash),
+		Status:            valueobject.StatusActive,
+		Role:              valueobject.RoleClient,
+		CredentialVersion: 1,
+	}
+	states := &securitySnapshotStateReader{}
+	sessions := &securitySnapshotSessionUseCase{}
+	tokens := &securitySnapshotJWTService{}
+	logger := &passwordVerificationLogRecorder{}
+	usecase := NewUsecase(Dependencies{
+		UserRepository:      &securitySnapshotUserRepository{user: user},
+		SecurityStateReader: states,
+		SessionUseCase:      sessions,
+		PasswordHasher:      securitySnapshotPasswordHasher{err: verificationErr},
+		JWTService:          tokens,
+		Logger:              logger,
+		AccessTTL:           AccessTTL(5 * time.Minute),
+		RefreshTTL:          RefreshTTL(time.Hour),
+		SessionTTL:          SessionTTL(24 * time.Hour),
+	})
+
+	_, err := usecase.Login(context.Background(), LoginInput{
+		Email: user.Email, Password: plaintext,
+	})
+	if !errors.Is(err, domainErrors.ErrInvalidCredentials) {
+		t.Fatalf("Login() error = %v, want privacy-preserving ErrInvalidCredentials", err)
+	}
+	if !errors.Is(err, service.ErrInvalidStoredPasswordHash) {
+		t.Fatalf("Login() error = %v, want retained invalid stored-hash identity", err)
+	}
+	if states.calls != 0 || sessions.createCalls != 0 ||
+		tokens.accessCalls != 0 || tokens.refreshCalls != 0 {
+		t.Fatalf(
+			"invalid stored hash performed security work: state=%d session=%d access=%d refresh=%d",
+			states.calls,
+			sessions.createCalls,
+			tokens.accessCalls,
+			tokens.refreshCalls,
+		)
+	}
+	if len(logger.errors) != 1 {
+		t.Fatalf("password credential error logs = %d, want 1", len(logger.errors))
+	}
+	logged := logger.errors[0]
+	if !strings.Contains(logged, "stored password credential is invalid") {
+		t.Fatalf("password credential error log = %q, want observable safe message", logged)
+	}
+	for _, secret := range []string{plaintext, storedHash} {
+		if strings.Contains(logged, secret) {
+			t.Fatal("password credential error log exposed plaintext or encoded hash")
+		}
+	}
+}
+
 func TestLoginRejectsStateChangedAfterPasswordVerification(t *testing.T) {
 	user := &entity.User{
 		ID:                "user-1",
 		Email:             "user@example.com",
-		Password:          valueobject.PasswordFromHash("$old-hash"),
+		PasswordDigest:    testPasswordDigest("$old-hash"),
 		Status:            valueobject.StatusActive,
 		Role:              valueobject.RoleClient,
 		CredentialVersion: 4,
@@ -103,17 +245,17 @@ func TestLoginRejectsStateChangedAfterPasswordVerification(t *testing.T) {
 	}}
 	sessions := &securitySnapshotSessionUseCase{}
 	tokens := &securitySnapshotJWTService{}
-	usecase := NewUsecase(
-		&securitySnapshotUserRepository{user: user},
-		states,
-		sessions,
-		securitySnapshotPasswordHasher{valid: true},
-		tokens,
-		discardAuthLogger{},
-		AccessTTL(5*time.Minute),
-		RefreshTTL(time.Hour),
-		SessionTTL(24*time.Hour),
-	)
+	usecase := NewUsecase(Dependencies{
+		UserRepository:      &securitySnapshotUserRepository{user: user},
+		SecurityStateReader: states,
+		SessionUseCase:      sessions,
+		PasswordHasher:      securitySnapshotPasswordHasher{valid: true},
+		JWTService:          tokens,
+		Logger:              discardAuthLogger{},
+		AccessTTL:           AccessTTL(5 * time.Minute),
+		RefreshTTL:          RefreshTTL(time.Hour),
+		SessionTTL:          SessionTTL(24 * time.Hour),
+	})
 
 	_, err := usecase.Login(context.Background(), LoginInput{
 		Email: user.Email, Password: "Password1!",
@@ -148,8 +290,8 @@ func TestLoginRefusesCurrentInactiveOrSuspendedStateWithoutIssuingTokens(t *test
 		t.Run(test.status.String(), func(t *testing.T) {
 			user := &entity.User{
 				ID: "user-1", Email: "user@example.com",
-				Password: valueobject.PasswordFromHash("$hash"),
-				Status:   valueobject.StatusActive, Role: valueobject.RoleClient,
+				PasswordDigest: testPasswordDigest("$hash"),
+				Status:         valueobject.StatusActive, Role: valueobject.RoleClient,
 				CredentialVersion: 4,
 			}
 			states := &securitySnapshotStateReader{state: authorization.SecurityState{
@@ -159,17 +301,17 @@ func TestLoginRefusesCurrentInactiveOrSuspendedStateWithoutIssuingTokens(t *test
 			}}
 			sessions := &securitySnapshotSessionUseCase{}
 			tokens := &securitySnapshotJWTService{}
-			usecase := NewUsecase(
-				&securitySnapshotUserRepository{user: user},
-				states,
-				sessions,
-				securitySnapshotPasswordHasher{valid: true},
-				tokens,
-				discardAuthLogger{},
-				AccessTTL(5*time.Minute),
-				RefreshTTL(time.Hour),
-				SessionTTL(24*time.Hour),
-			)
+			usecase := NewUsecase(Dependencies{
+				UserRepository:      &securitySnapshotUserRepository{user: user},
+				SecurityStateReader: states,
+				SessionUseCase:      sessions,
+				PasswordHasher:      securitySnapshotPasswordHasher{valid: true},
+				JWTService:          tokens,
+				Logger:              discardAuthLogger{},
+				AccessTTL:           AccessTTL(5 * time.Minute),
+				RefreshTTL:          RefreshTTL(time.Hour),
+				SessionTTL:          SessionTTL(24 * time.Hour),
+			})
 
 			_, err := usecase.Login(context.Background(), LoginInput{
 				Email: user.Email, Password: "Password1!",
@@ -194,7 +336,7 @@ func TestLoginRejectsPersistedInactiveUserBeforePasswordOrSessionWork(t *testing
 	user := &entity.User{
 		ID:                "user-1",
 		Email:             "inactive@example.com",
-		Password:          valueobject.PasswordFromHash("$hash"),
+		PasswordDigest:    testPasswordDigest("$hash"),
 		Status:            valueobject.StatusInactive,
 		Role:              valueobject.RoleClient,
 		CredentialVersion: 1,
@@ -202,17 +344,17 @@ func TestLoginRejectsPersistedInactiveUserBeforePasswordOrSessionWork(t *testing
 	states := &securitySnapshotStateReader{}
 	sessions := &securitySnapshotSessionUseCase{}
 	tokens := &securitySnapshotJWTService{}
-	usecase := NewUsecase(
-		&securitySnapshotUserRepository{user: user},
-		states,
-		sessions,
-		securitySnapshotPasswordHasher{valid: true},
-		tokens,
-		discardAuthLogger{},
-		AccessTTL(5*time.Minute),
-		RefreshTTL(time.Hour),
-		SessionTTL(24*time.Hour),
-	)
+	usecase := NewUsecase(Dependencies{
+		UserRepository:      &securitySnapshotUserRepository{user: user},
+		SecurityStateReader: states,
+		SessionUseCase:      sessions,
+		PasswordHasher:      securitySnapshotPasswordHasher{valid: true},
+		JWTService:          tokens,
+		Logger:              discardAuthLogger{},
+		AccessTTL:           AccessTTL(5 * time.Minute),
+		RefreshTTL:          RefreshTTL(time.Hour),
+		SessionTTL:          SessionTTL(24 * time.Hour),
+	})
 
 	_, err := usecase.Login(context.Background(), LoginInput{
 		Email: user.Email, Password: "Password1!",
@@ -237,7 +379,7 @@ func TestLoginUnknownStatusFailsClosedWithoutIssuingSecurityArtifacts(t *testing
 	user := &entity.User{
 		ID:                "user-1",
 		Email:             "unknown-status@example.com",
-		Password:          valueobject.PasswordFromHash("$hash"),
+		PasswordDigest:    testPasswordDigest("$hash"),
 		Status:            valueobject.StatusUnknown,
 		Role:              valueobject.RoleClient,
 		CredentialVersion: 1,
@@ -245,17 +387,17 @@ func TestLoginUnknownStatusFailsClosedWithoutIssuingSecurityArtifacts(t *testing
 	states := &securitySnapshotStateReader{}
 	sessions := &securitySnapshotSessionUseCase{}
 	tokens := &securitySnapshotJWTService{}
-	usecase := NewUsecase(
-		&securitySnapshotUserRepository{user: user},
-		states,
-		sessions,
-		securitySnapshotPasswordHasher{valid: true},
-		tokens,
-		discardAuthLogger{},
-		AccessTTL(5*time.Minute),
-		RefreshTTL(time.Hour),
-		SessionTTL(24*time.Hour),
-	)
+	usecase := NewUsecase(Dependencies{
+		UserRepository:      &securitySnapshotUserRepository{user: user},
+		SecurityStateReader: states,
+		SessionUseCase:      sessions,
+		PasswordHasher:      securitySnapshotPasswordHasher{valid: true},
+		JWTService:          tokens,
+		Logger:              discardAuthLogger{},
+		AccessTTL:           AccessTTL(5 * time.Minute),
+		RefreshTTL:          RefreshTTL(time.Hour),
+		SessionTTL:          SessionTTL(24 * time.Hour),
+	})
 
 	_, err := usecase.Login(context.Background(), LoginInput{
 		Email: user.Email, Password: "Password1!",
@@ -284,7 +426,7 @@ func TestLoginRejectsRedisBlockedUserAfterAuthoritativeStateWasLoaded(t *testing
 	user := &entity.User{
 		ID:                "user-1",
 		Email:             "user@example.com",
-		Password:          valueobject.PasswordFromHash("$hash"),
+		PasswordDigest:    testPasswordDigest("$hash"),
 		Status:            valueobject.StatusActive,
 		Role:              valueobject.RoleClient,
 		CredentialVersion: 4,
@@ -298,17 +440,17 @@ func TestLoginRejectsRedisBlockedUserAfterAuthoritativeStateWasLoaded(t *testing
 	}}
 	sessions := &securitySnapshotSessionUseCase{createErr: domainErrors.ErrUserAccessBlocked}
 	tokens := &securitySnapshotJWTService{}
-	usecase := NewUsecase(
-		&securitySnapshotUserRepository{user: user},
-		states,
-		sessions,
-		securitySnapshotPasswordHasher{valid: true},
-		tokens,
-		discardAuthLogger{},
-		AccessTTL(5*time.Minute),
-		RefreshTTL(time.Hour),
-		SessionTTL(24*time.Hour),
-	)
+	usecase := NewUsecase(Dependencies{
+		UserRepository:      &securitySnapshotUserRepository{user: user},
+		SecurityStateReader: states,
+		SessionUseCase:      sessions,
+		PasswordHasher:      securitySnapshotPasswordHasher{valid: true},
+		JWTService:          tokens,
+		Logger:              discardAuthLogger{},
+		AccessTTL:           AccessTTL(5 * time.Minute),
+		RefreshTTL:          RefreshTTL(time.Hour),
+		SessionTTL:          SessionTTL(24 * time.Hour),
+	})
 
 	output, err := usecase.Login(context.Background(), LoginInput{
 		Email: user.Email, Password: "Password1!",
@@ -344,17 +486,15 @@ func TestRefreshUsesOneAuthoritativeStateReadAndRebuildsSnapshot(t *testing.T) {
 		TokenType:         valueobject.TokenTypeRefresh,
 		JTI:               "old-jti",
 	}}
-	usecase := NewUsecase(
-		nil,
-		states,
-		sessions,
-		nil,
-		tokens,
-		discardAuthLogger{},
-		AccessTTL(5*time.Minute),
-		RefreshTTL(24*time.Hour),
-		SessionTTL(30*24*time.Hour),
-	)
+	usecase := NewUsecase(Dependencies{
+		SecurityStateReader: states,
+		SessionUseCase:      sessions,
+		JWTService:          tokens,
+		Logger:              discardAuthLogger{},
+		AccessTTL:           AccessTTL(5 * time.Minute),
+		RefreshTTL:          RefreshTTL(24 * time.Hour),
+		SessionTTL:          SessionTTL(30 * 24 * time.Hour),
+	})
 
 	output, err := usecase.Refresh(context.Background(), RefreshInput{
 		RefreshToken: "refresh-token", IP: "127.0.0.1", Device: "test",
@@ -444,10 +584,15 @@ func TestRefreshFailsClosedBeforeRotationForCurrentSecurityState(t *testing.T) {
 				UserID: "user-1", SessionID: "session-1", CredentialVersion: 9,
 				TokenType: valueobject.TokenTypeRefresh, JTI: "old-jti",
 			}}
-			usecase := NewUsecase(
-				nil, states, sessions, nil, tokens, discardAuthLogger{},
-				AccessTTL(5*time.Minute), RefreshTTL(time.Hour), SessionTTL(24*time.Hour),
-			)
+			usecase := NewUsecase(Dependencies{
+				SecurityStateReader: states,
+				SessionUseCase:      sessions,
+				JWTService:          tokens,
+				Logger:              discardAuthLogger{},
+				AccessTTL:           AccessTTL(5 * time.Minute),
+				RefreshTTL:          RefreshTTL(time.Hour),
+				SessionTTL:          SessionTTL(24 * time.Hour),
+			})
 
 			_, err := usecase.Refresh(context.Background(), RefreshInput{RefreshToken: "refresh-token"})
 			if !errors.Is(err, test.wantError) {
@@ -484,17 +629,15 @@ func TestRefreshUnknownStatusFailsClosedWithoutRotationOrTokenIssuance(t *testin
 		TokenType:         valueobject.TokenTypeRefresh,
 		JTI:               "old-jti",
 	}}
-	usecase := NewUsecase(
-		nil,
-		states,
-		sessions,
-		nil,
-		tokens,
-		discardAuthLogger{},
-		AccessTTL(5*time.Minute),
-		RefreshTTL(time.Hour),
-		SessionTTL(24*time.Hour),
-	)
+	usecase := NewUsecase(Dependencies{
+		SecurityStateReader: states,
+		SessionUseCase:      sessions,
+		JWTService:          tokens,
+		Logger:              discardAuthLogger{},
+		AccessTTL:           AccessTTL(5 * time.Minute),
+		RefreshTTL:          RefreshTTL(time.Hour),
+		SessionTTL:          SessionTTL(24 * time.Hour),
+	})
 
 	_, err := usecase.Refresh(
 		context.Background(),
@@ -541,10 +684,15 @@ func TestRefreshDoesNotQueryPostgreSQLAfterRedisValidationFailure(t *testing.T) 
 				UserID: "user-1", SessionID: "session-1", CredentialVersion: 9,
 				TokenType: valueobject.TokenTypeRefresh, JTI: "old-jti",
 			}}
-			usecase := NewUsecase(
-				nil, states, sessions, nil, tokens, discardAuthLogger{},
-				AccessTTL(5*time.Minute), RefreshTTL(time.Hour), SessionTTL(24*time.Hour),
-			)
+			usecase := NewUsecase(Dependencies{
+				SecurityStateReader: states,
+				SessionUseCase:      sessions,
+				JWTService:          tokens,
+				Logger:              discardAuthLogger{},
+				AccessTTL:           AccessTTL(5 * time.Minute),
+				RefreshTTL:          RefreshTTL(time.Hour),
+				SessionTTL:          SessionTTL(24 * time.Hour),
+			})
 
 			_, err := usecase.Refresh(context.Background(), RefreshInput{RefreshToken: "refresh-token"})
 			if !errors.Is(err, test.wantError) {
@@ -579,17 +727,15 @@ func TestRefreshRejectsRedisBlockDuringAtomicRotation(t *testing.T) {
 		TokenType:         valueobject.TokenTypeRefresh,
 		JTI:               "old-jti",
 	}}
-	usecase := NewUsecase(
-		nil,
-		states,
-		sessions,
-		nil,
-		tokens,
-		discardAuthLogger{},
-		AccessTTL(5*time.Minute),
-		RefreshTTL(time.Hour),
-		SessionTTL(24*time.Hour),
-	)
+	usecase := NewUsecase(Dependencies{
+		SecurityStateReader: states,
+		SessionUseCase:      sessions,
+		JWTService:          tokens,
+		Logger:              discardAuthLogger{},
+		AccessTTL:           AccessTTL(5 * time.Minute),
+		RefreshTTL:          RefreshTTL(time.Hour),
+		SessionTTL:          SessionTTL(24 * time.Hour),
+	})
 
 	output, err := usecase.Refresh(context.Background(), RefreshInput{RefreshToken: "refresh-token"})
 	if !errors.Is(err, domainErrors.ErrAccountSuspended) {
@@ -672,14 +818,33 @@ func (s *securitySnapshotSessionUseCase) RotateSessionJTI(
 type securitySnapshotPasswordHasher struct {
 	service.PasswordHasher
 	valid bool
+	err   error
+	calls *int
 }
+
+type passwordVerificationLogRecorder struct {
+	errors []string
+}
+
+func (l *passwordVerificationLogRecorder) Info(string, ...any) {}
+
+func (l *passwordVerificationLogRecorder) Error(message string, fields ...any) {
+	l.errors = append(l.errors, message+fmt.Sprint(fields...))
+}
+
+func (l *passwordVerificationLogRecorder) Warn(string, ...any)  {}
+func (l *passwordVerificationLogRecorder) Debug(string, ...any) {}
+func (l *passwordVerificationLogRecorder) Panic(string, ...any) {}
 
 func (h securitySnapshotPasswordHasher) Verify(
 	context.Context,
-	string,
-	valueobject.Password,
-) bool {
-	return h.valid
+	valueobject.PlainPassword,
+	valueobject.PasswordDigest,
+) (bool, error) {
+	if h.calls != nil {
+		(*h.calls)++
+	}
+	return h.valid, h.err
 }
 
 type securitySnapshotJWTService struct {
@@ -735,4 +900,12 @@ func authPermissionSet(
 		t.Fatalf("build permission set: %v", err)
 	}
 	return set
+}
+
+func testPasswordDigest(encoded string) valueobject.PasswordDigest {
+	digest, err := valueobject.NewPasswordDigest(encoded)
+	if err != nil {
+		panic("test password digest is invalid")
+	}
+	return digest
 }

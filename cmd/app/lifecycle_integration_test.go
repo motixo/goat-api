@@ -5,12 +5,14 @@ import (
 	"errors"
 	"net"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/motixo/goat-api/internal/config"
 	"github.com/motixo/goat-api/internal/domain/service"
+	"github.com/motixo/goat-api/internal/infra/database/postgres"
 	"github.com/motixo/goat-api/internal/pkg"
 	"github.com/redis/go-redis/v9"
 )
@@ -58,7 +60,7 @@ func TestApplicationLifecycleIntegration(t *testing.T) {
 
 	t.Run("Redis failure rolls back an already-created PostgreSQL pool", func(t *testing.T) {
 		cfg := lifecycleIntegrationConfig(t)
-		cfg.RedisPort = "1"
+		cfg.RedisPort = 1
 		dependencies := defaultBootstrapDependencies()
 		database, _ := captureIntegrationStores(&dependencies)
 
@@ -106,36 +108,48 @@ func TestApplicationLifecycleIntegration(t *testing.T) {
 func lifecycleIntegrationConfig(t *testing.T) *config.Config {
 	t.Helper()
 
-	redisHost, redisPort, err := net.SplitHostPort(envOrDefault("GOAT_REDIS_ADDR", "127.0.0.1:6380"))
+	redisHost, redisPortValue, err := net.SplitHostPort(envOrDefault("GOAT_REDIS_ADDR", "127.0.0.1:6380"))
 	if err != nil {
 		t.Fatalf("parse GOAT_REDIS_ADDR: %v", err)
 	}
+	redisPort := parseIntegrationPort(t, "GOAT_REDIS_ADDR", redisPortValue)
 	return &config.Config{
-		Env:                     "development",
-		ServerPort:              "127.0.0.1:0",
-		DBHost:                  envOrDefault("GOAT_POSTGRES_HOST", "127.0.0.1"),
-		DBPort:                  envOrDefault("GOAT_POSTGRES_PORT", "5432"),
-		DBUser:                  envOrDefault("GOAT_POSTGRES_USER", "postgres"),
-		DBPassword:              envOrDefault("GOAT_POSTGRES_PASSWORD", "postgres"),
-		DBName:                  envOrDefault("GOAT_POSTGRES_DB", "goat"),
-		DBConnectionTimeout:     2 * time.Second,
-		DBInitializationTimeout: 30 * time.Second,
-		JWTSecret:               "lifecycle-integration-secret",
-		PasswordPepper:          "lifecycle-integration-pepper",
-		RedisHost:               redisHost,
-		RedisPort:               redisPort,
-		RedisConnectionTimeout:  2 * time.Second,
-		Seed:                    0,
-		JWTExpiration:           15 * time.Minute,
-		RefreshTokenExpiration:  24 * time.Hour,
-		SessionExpiration:       30 * 24 * time.Hour,
-		RateLimitAuthLimit:      5,
-		RateLimitAuthWindow:     time.Minute,
-		RateLimitPublicLimit:    100,
-		RateLimitPublicWindow:   time.Minute,
-		RateLimitPrivateLimit:   60,
-		RateLimitPrivateWindow:  time.Minute,
+		Env:                        "development",
+		ServerPort:                 0,
+		DBHost:                     envOrDefault("GOAT_POSTGRES_HOST", "127.0.0.1"),
+		DBPort:                     parseIntegrationPort(t, "GOAT_POSTGRES_PORT", envOrDefault("GOAT_POSTGRES_PORT", "5432")),
+		DBUser:                     envOrDefault("GOAT_POSTGRES_USER", "postgres"),
+		DBPassword:                 envOrDefault("GOAT_POSTGRES_PASSWORD", "postgres"),
+		DBName:                     envOrDefault("GOAT_POSTGRES_DB", "goat"),
+		DBConnectionTimeout:        2 * time.Second,
+		DBInitializationTimeout:    30 * time.Second,
+		JWTSecret:                  "lifecycle-integration-secret",
+		PasswordPepper:             "lifecycle-integration-pepper",
+		PasswordHashMaxConcurrency: 2,
+		RedisHost:                  redisHost,
+		RedisPort:                  redisPort,
+		RedisConnectionTimeout:     2 * time.Second,
+		Seed:                       false,
+		JWTExpiration:              15 * time.Minute,
+		RefreshTokenExpiration:     24 * time.Hour,
+		SessionExpiration:          30 * 24 * time.Hour,
+		GinMode:                    "debug",
+		RateLimitAuthLimit:         5,
+		RateLimitAuthWindow:        time.Minute,
+		RateLimitPublicLimit:       100,
+		RateLimitPublicWindow:      time.Minute,
+		RateLimitPrivateLimit:      60,
+		RateLimitPrivateWindow:     time.Minute,
 	}
+}
+
+func parseIntegrationPort(t *testing.T, name string, value string) uint16 {
+	t.Helper()
+	port, err := strconv.ParseUint(value, 10, 16)
+	if err != nil || port == 0 {
+		t.Fatalf("parse %s port: %q is not a valid port", name, value)
+	}
+	return uint16(port)
 }
 
 func captureIntegrationStores(
@@ -148,7 +162,7 @@ func captureIntegrationStores(
 
 	dependencies.newPostgres = func(
 		ctx context.Context,
-		cfg *config.Config,
+		cfg postgres.ClientConfig,
 		logger pkg.Logger,
 		passwordHasher service.PasswordHasher,
 	) (postgresResource, error) {

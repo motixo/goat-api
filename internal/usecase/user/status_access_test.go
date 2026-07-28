@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/motixo/goat-api/internal/domain/entity"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
@@ -376,20 +375,20 @@ func newStatusAccessFixture() *statusAccessFixture {
 	recorder := &statusAccessRecorder{}
 	users := &statusAccessUserRepository{
 		recorder: recorder,
-		target: &entity.User{
+		target: &UserStatusSnapshot{
 			ID:     "user-1",
 			Role:   valueobject.RoleClient,
 			Status: valueobject.StatusActive,
 		},
 	}
 	sessions := &statusAccessSessionRepository{recorder: recorder}
-	usecase := NewUsecase(
-		users,
-		nil,
-		discardUserLogger{},
-		sessions,
-		nil,
-	)
+	usecase := NewUsecase(Dependencies{
+		UserRepository:    users,
+		StatusReader:      users,
+		Logger:            discardUserLogger{},
+		SessionRepository: sessions,
+	})
+
 	return &statusAccessFixture{
 		recorder: recorder,
 		users:    users,
@@ -420,18 +419,21 @@ func (r *statusAccessRecorder) record(call string) {
 type statusAccessUserRepository struct {
 	repository.UserRepository
 	recorder      *statusAccessRecorder
-	target        *entity.User
+	target        *UserStatusSnapshot
 	updateErr     error
 	updateResult  *repository.UserStatusUpdateResult
 	updatedStatus valueobject.UserStatus
 }
 
-func (r *statusAccessUserRepository) FindByID(
+func (r *statusAccessUserRepository) FindStatusSnapshotByID(
 	context.Context,
 	string,
-) (*entity.User, error) {
+) (UserStatusSnapshot, error) {
 	r.recorder.record("user.find")
-	return r.target, nil
+	if r.target == nil {
+		return UserStatusSnapshot{}, domainErrors.ErrUserNotFound
+	}
+	return *r.target, nil
 }
 
 func (r *statusAccessUserRepository) UpdateStatus(

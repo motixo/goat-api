@@ -6,26 +6,26 @@ import (
 	"testing"
 	"time"
 
-	"github.com/motixo/goat-api/internal/domain/entity"
-	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
 
 func TestGetUsersListAppliesAuthorizationScopeBeforeRepositoryPagination(t *testing.T) {
 	createdAt := time.Date(2026, time.July, 23, 8, 30, 0, 0, time.UTC)
-	repo := &recordingUserListRepository{
-		users: []*entity.User{{
-			ID:        "user-1",
-			Email:     "client@example.com",
-			Role:      valueobject.RoleClient,
-			Status:    valueobject.StatusActive,
-			CreatedAt: createdAt,
-		}},
-		total: 1,
+	reader := &recordingUserListReader{
+		result: UserListResult{
+			Items: []UserListItem{{
+				ID:        "user-1",
+				Email:     "client@example.com",
+				Role:      valueobject.RoleClient,
+				Status:    valueobject.StatusActive,
+				CreatedAt: createdAt,
+			}},
+			Total: 1,
+		},
 	}
-	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, nil)
+	usecase := NewUsecase(Dependencies{ListReader: reader, Logger: discardUserListLogger{}})
 
-	output, total, err := usecase.GetUserslist(context.Background(), GetListInput{
+	result, err := usecase.GetUserslist(context.Background(), GetListInput{
 		ActorID:   "operator-1",
 		ActorRole: valueobject.RoleOperator,
 		Filter: ListFilter{
@@ -40,40 +40,40 @@ func TestGetUsersListAppliesAuthorizationScopeBeforeRepositoryPagination(t *test
 		t.Fatalf("GetUserslist() error = %v", err)
 	}
 
-	if !repo.called {
+	if !reader.called {
 		t.Fatal("repository List was not called")
 	}
-	if repo.offset != 20 || repo.limit != 10 {
-		t.Fatalf("pagination = offset %d, limit %d; want offset 20, limit 10", repo.offset, repo.limit)
+	if reader.offset != 20 || reader.limit != 10 {
+		t.Fatalf("pagination = offset %d, limit %d; want offset 20, limit 10", reader.offset, reader.limit)
 	}
-	wantFilter := repository.UserListFilter{
+	wantCriteria := UserListCriteria{
 		Roles:    []valueobject.UserRole{valueobject.RoleClient},
 		Statuses: []valueobject.UserStatus{valueobject.StatusActive},
 		Search:   "example",
 	}
-	if !reflect.DeepEqual(repo.filter, wantFilter) {
-		t.Fatalf("repository filter = %#v, want %#v", repo.filter, wantFilter)
+	if !reflect.DeepEqual(reader.criteria, wantCriteria) {
+		t.Fatalf("reader criteria = %#v, want %#v", reader.criteria, wantCriteria)
 	}
-	if total != 1 {
-		t.Fatalf("total = %d, want 1", total)
+	if result.Total != 1 {
+		t.Fatalf("total = %d, want 1", result.Total)
 	}
-	wantOutput := []UserOutput{{
+	wantItems := []UserListItem{{
 		ID:        "user-1",
 		Email:     "client@example.com",
-		Role:      "client",
-		Status:    "active",
+		Role:      valueobject.RoleClient,
+		Status:    valueobject.StatusActive,
 		CreatedAt: createdAt,
 	}}
-	if !reflect.DeepEqual(output, wantOutput) {
-		t.Fatalf("output = %#v, want %#v", output, wantOutput)
+	if !reflect.DeepEqual(result.Items, wantItems) {
+		t.Fatalf("items = %#v, want %#v", result.Items, wantItems)
 	}
 }
 
 func TestGetUsersListReturnsEmptyBeforeRepositoryWhenActorHasNoVisibleRoles(t *testing.T) {
-	repo := &recordingUserListRepository{}
-	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, nil)
+	reader := &recordingUserListReader{}
+	usecase := NewUsecase(Dependencies{ListReader: reader, Logger: discardUserListLogger{}})
 
-	output, total, err := usecase.GetUserslist(context.Background(), GetListInput{
+	result, err := usecase.GetUserslist(context.Background(), GetListInput{
 		ActorID:   "client-1",
 		ActorRole: valueobject.RoleClient,
 		Offset:    10,
@@ -82,19 +82,19 @@ func TestGetUsersListReturnsEmptyBeforeRepositoryWhenActorHasNoVisibleRoles(t *t
 	if err != nil {
 		t.Fatalf("GetUserslist() error = %v", err)
 	}
-	if repo.called {
+	if reader.called {
 		t.Fatal("repository List was called with an empty authorization scope")
 	}
-	if len(output) != 0 || total != 0 {
-		t.Fatalf("result = (%#v, %d), want empty output and total 0", output, total)
+	if len(result.Items) != 0 || result.Total != 0 {
+		t.Fatalf("result = %#v, want empty items and total 0", result)
 	}
 }
 
 func TestGetUsersListReturnsEmptyBeforeRepositoryWhenRequestedRolesAreOutsideScope(t *testing.T) {
-	repo := &recordingUserListRepository{}
-	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, nil)
+	reader := &recordingUserListReader{}
+	usecase := NewUsecase(Dependencies{ListReader: reader, Logger: discardUserListLogger{}})
 
-	output, total, err := usecase.GetUserslist(context.Background(), GetListInput{
+	result, err := usecase.GetUserslist(context.Background(), GetListInput{
 		ActorID:   "operator-1",
 		ActorRole: valueobject.RoleOperator,
 		Filter: ListFilter{
@@ -106,19 +106,19 @@ func TestGetUsersListReturnsEmptyBeforeRepositoryWhenRequestedRolesAreOutsideSco
 	if err != nil {
 		t.Fatalf("GetUserslist() error = %v", err)
 	}
-	if repo.called {
+	if reader.called {
 		t.Fatal("repository List was called after the requested role scope became empty")
 	}
-	if len(output) != 0 || total != 0 {
-		t.Fatalf("result = (%#v, %d), want empty output and total 0", output, total)
+	if len(result.Items) != 0 || result.Total != 0 {
+		t.Fatalf("result = %#v, want empty items and total 0", result)
 	}
 }
 
 func TestGetUsersListAuthorizesBeforeReturningAnUnmatchableFilter(t *testing.T) {
-	repo := &recordingUserListRepository{}
-	usecase := NewUsecase(repo, nil, discardUserListLogger{}, nil, nil)
+	reader := &recordingUserListReader{}
+	usecase := NewUsecase(Dependencies{ListReader: reader, Logger: discardUserListLogger{}})
 
-	output, total, err := usecase.GetUserslist(context.Background(), GetListInput{
+	result, err := usecase.GetUserslist(context.Background(), GetListInput{
 		ActorID:   "operator-1",
 		ActorRole: valueobject.RoleOperator,
 		Filter:    ListFilter{MatchNone: true},
@@ -128,31 +128,34 @@ func TestGetUsersListAuthorizesBeforeReturningAnUnmatchableFilter(t *testing.T) 
 	if err != nil {
 		t.Fatalf("GetUserslist() error = %v", err)
 	}
-	if repo.called {
+	if reader.called {
 		t.Fatal("repository List was called for a filter that cannot match a user")
 	}
-	if len(output) != 0 || total != 0 {
-		t.Fatalf("result = (%#v, %d), want empty output and total 0", output, total)
+	if len(result.Items) != 0 || result.Total != 0 {
+		t.Fatalf("result = %#v, want empty items and total 0", result)
 	}
 }
 
-type recordingUserListRepository struct {
-	repository.UserRepository
-	called bool
-	offset int
-	limit  int
-	filter repository.UserListFilter
-	users  []*entity.User
-	total  int64
-	err    error
+type recordingUserListReader struct {
+	called   bool
+	offset   int
+	limit    int
+	criteria UserListCriteria
+	result   UserListResult
+	err      error
 }
 
-func (r *recordingUserListRepository) List(_ context.Context, offset, limit int, filter repository.UserListFilter) ([]*entity.User, int64, error) {
+func (r *recordingUserListReader) ListUsers(
+	_ context.Context,
+	offset int,
+	limit int,
+	criteria UserListCriteria,
+) (UserListResult, error) {
 	r.called = true
 	r.offset = offset
 	r.limit = limit
-	r.filter = filter
-	return r.users, r.total, r.err
+	r.criteria = criteria
+	return r.result, r.err
 }
 
 type discardUserListLogger struct{}

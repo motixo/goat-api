@@ -1,4 +1,4 @@
-package auth
+package authentication
 
 import (
 	"context"
@@ -16,17 +16,11 @@ import (
 func TestSignupPreservesSemanticEmailConflictAndPostgresCause(t *testing.T) {
 	postgresCause := errors.New("postgres email unique violation")
 	persistenceErr := fmt.Errorf("%w: %w", domainErrors.ErrEmailAlreadyExists, postgresCause)
-	usecase := NewUsecase(
-		&signupUserRepository{createErr: persistenceErr},
-		nil,
-		nil,
-		signupPasswordHasher{},
-		nil,
-		discardAuthLogger{},
-		0,
-		0,
-		0,
-	)
+	usecase := NewUsecase(Dependencies{
+		UserRepository: &signupUserRepository{createErr: persistenceErr},
+		PasswordHasher: signupPasswordHasher{},
+		Logger:         discardAuthLogger{},
+	})
 
 	_, err := usecase.Signup(context.Background(), RegisterInput{
 		Email:    "duplicate@example.com",
@@ -46,17 +40,11 @@ func TestSignupPreservesSemanticEmailConflictAndPostgresCause(t *testing.T) {
 
 func TestSignupCreatesInactiveUserWithoutSessionOrToken(t *testing.T) {
 	repository := &signupUserRepository{}
-	usecase := NewUsecase(
-		repository,
-		nil,
-		nil,
-		signupPasswordHasher{},
-		nil,
-		discardAuthLogger{},
-		0,
-		0,
-		0,
-	)
+	usecase := NewUsecase(Dependencies{
+		UserRepository: repository,
+		PasswordHasher: signupPasswordHasher{},
+		Logger:         discardAuthLogger{},
+	})
 
 	output, err := usecase.Signup(context.Background(), RegisterInput{
 		Email:    "new@example.com",
@@ -74,8 +62,36 @@ func TestSignupCreatesInactiveUserWithoutSessionOrToken(t *testing.T) {
 			repository.created.Status,
 		)
 	}
+	if repository.created.PasswordDigest.IsZero() ||
+		repository.created.PasswordDigest.Encoded() == "Password1!" {
+		t.Fatal("Signup() persisted plaintext or omitted the password digest")
+	}
 	if output.Status != valueobject.StatusInactive.String() {
 		t.Fatalf("output status = %q, want inactive", output.Status)
+	}
+}
+
+func TestSignupDoesNotTrustArgonPrefixAsStoredDigest(t *testing.T) {
+	repository := &signupUserRepository{}
+	hasher := &recordingSignupPasswordHasher{}
+	usecase := NewUsecase(Dependencies{
+		UserRepository: repository,
+		PasswordHasher: hasher,
+		Logger:         discardAuthLogger{},
+	})
+
+	_, err := usecase.Signup(context.Background(), RegisterInput{
+		Email:    "new@example.com",
+		Password: "$argon2id$",
+	})
+	if !errors.Is(err, domainErrors.ErrPasswordPolicyViolation) {
+		t.Fatalf("Signup() error = %v, want ErrPasswordPolicyViolation", err)
+	}
+	if hasher.calls != 0 {
+		t.Fatalf("password hashes = %d, want 0 for invalid plaintext", hasher.calls)
+	}
+	if repository.created != nil {
+		t.Fatal("Signup() persisted invalid hash-looking plaintext")
 	}
 }
 
@@ -94,6 +110,22 @@ type signupPasswordHasher struct {
 	service.PasswordHasher
 }
 
-func (signupPasswordHasher) Hash(context.Context, string) (valueobject.Password, error) {
-	return valueobject.PasswordFromHash("$argon2id$signup-test"), nil
+type recordingSignupPasswordHasher struct {
+	service.PasswordHasher
+	calls int
+}
+
+func (h *recordingSignupPasswordHasher) Hash(
+	context.Context,
+	valueobject.PlainPassword,
+) (valueobject.PasswordDigest, error) {
+	h.calls++
+	return testPasswordDigest("$argon2id$recorded-signup-test"), nil
+}
+
+func (signupPasswordHasher) Hash(
+	context.Context,
+	valueobject.PlainPassword,
+) (valueobject.PasswordDigest, error) {
+	return testPasswordDigest("$argon2id$signup-test"), nil
 }

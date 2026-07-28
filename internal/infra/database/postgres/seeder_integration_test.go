@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
+	authInfra "github.com/motixo/goat-api/internal/infra/auth"
 )
 
 func TestSeedPermissionsIntegrationIsIdempotent(t *testing.T) {
@@ -51,6 +52,62 @@ func TestSeedPermissionsIntegrationIsIdempotent(t *testing.T) {
 		if got[index].CreatedAt.IsZero() {
 			t.Fatalf("seeded permission %d has zero created_at", index)
 		}
+	}
+}
+
+func TestSeedAdminUserIntegrationIsIdempotent(t *testing.T) {
+	db := newPostgresAdminSeedIntegrationDB(t)
+	hasher, err := authInfra.NewPasswordService(authInfra.PasswordHasherConfig{
+		Pepper:         "administrator-seed-integration-pepper",
+		MaxConcurrency: 1,
+	})
+	if err != nil {
+		t.Fatalf("construct password hasher: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	const adminEmail = "administrator@goat.api"
+	const adminPassword = "SeedPassword1!"
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := SeedAdminUser(ctx, db, hasher, adminEmail, adminPassword); err != nil {
+			t.Fatalf("SeedAdminUser(attempt %d) error = %v", attempt+1, err)
+		}
+	}
+
+	type seededAdmin struct {
+		Email             string `db:"email"`
+		Password          string `db:"password"`
+		Status            int16  `db:"status"`
+		Role              int16  `db:"role"`
+		CredentialVersion int64  `db:"credential_version"`
+	}
+	var got []seededAdmin
+	if err := db.Select(
+		&got,
+		`SELECT email, password, status, role, credential_version FROM users`,
+	); err != nil {
+		t.Fatalf("select seeded administrator: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("seeded administrator count = %d, want 1", len(got))
+	}
+	if got[0].Email != adminEmail ||
+		got[0].Status != int16(valueobject.StatusActive) ||
+		got[0].Role != int16(valueobject.RoleAdmin) ||
+		got[0].CredentialVersion != 1 {
+		t.Fatal("seeded administrator did not preserve the expected identity, credentials, role, status, and credential version")
+	}
+	passwordMatches, err := hasher.Verify(
+		ctx,
+		testPlainPassword(adminPassword),
+		testPasswordDigest(got[0].Password),
+	)
+	if err != nil {
+		t.Fatalf("verify seeded administrator password: %v", err)
+	}
+	if !passwordMatches {
+		t.Fatal("seeded administrator password is incompatible with the runtime hasher")
 	}
 }
 
@@ -237,4 +294,56 @@ func newPostgresSeedIntegrationDB(t *testing.T, rejectUserUpdate bool) *sqlx.DB 
 		t.Fatalf("create temporary permissions table: %v", err)
 	}
 	return db
+}
+
+func newPostgresAdminSeedIntegrationDB(t *testing.T) *sqlx.DB {
+	t.Helper()
+	dsn := os.Getenv("GOAT_POSTGRES_TEST_DSN")
+	if dsn == "" {
+		t.Skip("set GOAT_POSTGRES_TEST_DSN to run PostgreSQL integration tests")
+	}
+
+	db, err := sqlx.Connect("pgx", dsn)
+	if err != nil {
+		t.Fatalf("connect to PostgreSQL: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close PostgreSQL: %v", err)
+		}
+	})
+
+	if _, err := db.Exec(`
+		CREATE TEMP TABLE users (
+			id UUID PRIMARY KEY,
+			email TEXT NOT NULL UNIQUE,
+			password TEXT NOT NULL,
+			status SMALLINT NOT NULL,
+			role SMALLINT NOT NULL,
+			credential_version BIGINT NOT NULL DEFAULT 1 CHECK (credential_version > 0),
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMP NULL
+		) ON COMMIT PRESERVE ROWS
+	`); err != nil {
+		t.Fatalf("create temporary users table: %v", err)
+	}
+	return db
+}
+
+func testPlainPassword(raw string) valueobject.PlainPassword {
+	password, err := valueobject.NewPlainPassword(raw)
+	if err != nil {
+		panic("test plaintext password is invalid")
+	}
+	return password
+}
+
+func testPasswordDigest(encoded string) valueobject.PasswordDigest {
+	digest, err := valueobject.NewPasswordDigest(encoded)
+	if err != nil {
+		panic("test password digest is invalid")
+	}
+	return digest
 }

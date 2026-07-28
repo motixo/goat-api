@@ -6,7 +6,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/motixo/goat-api/internal/domain/entity"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
@@ -17,13 +16,11 @@ func TestChangeStatusDoesNotOverwriteStatusCommittedAfterItsRead(t *testing.T) {
 		status:               valueobject.StatusInactive,
 		statusBeforeCASWrite: valueobject.StatusSuspended,
 	}
-	usecase := NewUsecase(
-		users,
-		nil,
-		discardUserLogger{},
-		nil,
-		nil,
-	)
+	usecase := NewUsecase(Dependencies{
+		UserRepository: users,
+		StatusReader:   users,
+		Logger:         discardUserLogger{},
+	})
 
 	err := usecase.ChangeStatus(context.Background(), UpdateStatusInput{
 		UserID:    "user-1",
@@ -181,13 +178,12 @@ func TestConcurrentIdenticalStatusChangesCommitOnce(t *testing.T) {
 				releaseReads: releaseReads,
 			}
 			sessions := &concurrentStatusSessionRepository{}
-			usecase := NewUsecase(
-				users,
-				nil,
-				discardUserLogger{},
-				sessions,
-				nil,
-			)
+			usecase := NewUsecase(Dependencies{
+				UserRepository:    users,
+				StatusReader:      users,
+				Logger:            discardUserLogger{},
+				SessionRepository: sessions,
+			})
 
 			start := make(chan struct{})
 			results := make(chan error, 2)
@@ -243,30 +239,18 @@ type staleStatusUserRepository struct {
 	statusBeforeCASWrite valueobject.UserStatus
 }
 
-func (r *staleStatusUserRepository) FindByID(
+func (r *staleStatusUserRepository) FindStatusSnapshotByID(
 	context.Context,
 	string,
-) (*entity.User, error) {
+) (UserStatusSnapshot, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	return &entity.User{
+	return UserStatusSnapshot{
 		ID:     "user-1",
 		Role:   valueobject.RoleClient,
 		Status: r.status,
 	}, nil
-}
-
-func (r *staleStatusUserRepository) Update(
-	_ context.Context,
-	user *entity.User,
-) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.status = r.statusBeforeCASWrite
-	r.status = user.Status
-	return nil
 }
 
 func (r *staleStatusUserRepository) UpdateStatus(
@@ -315,17 +299,17 @@ type concurrentStatusUserRepository struct {
 	releaseReads <-chan struct{}
 }
 
-func (r *concurrentStatusUserRepository) FindByID(
+func (r *concurrentStatusUserRepository) FindStatusSnapshotByID(
 	context.Context,
 	string,
-) (*entity.User, error) {
+) (UserStatusSnapshot, error) {
 	r.mu.Lock()
 	status := r.status
 	r.mu.Unlock()
 
 	r.readsReady.Done()
 	<-r.releaseReads
-	return &entity.User{
+	return UserStatusSnapshot{
 		ID:     "user-1",
 		Role:   valueobject.RoleClient,
 		Status: status,

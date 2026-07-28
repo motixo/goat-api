@@ -40,8 +40,6 @@ func TestUserEmailWriteUseCasesPreserveSemanticConflictAndPostgresCause(t *testi
 					UserID:   "user-1",
 					Email:    "duplicate@example.com",
 					Password: "Password1!",
-					Status:   valueobject.StatusActive,
-					Role:     valueobject.RoleClient,
 				})
 			},
 		},
@@ -59,18 +57,20 @@ func TestUserEmailWriteUseCasesPreserveSemanticConflictAndPostgresCause(t *testi
 			repo := &emailConflictUserRepository{
 				createErr: persistenceErr,
 				updateErr: persistenceErr,
-				user: &entity.User{
+				snapshot: UserStatusSnapshot{
 					ID:     "user-1",
+					Role:   valueobject.RoleClient,
 					Status: valueobject.StatusActive,
 				},
 			}
-			usecase := NewUsecase(
-				repo,
-				emailConflictPasswordHasher{},
-				discardUserLogger{},
-				nil,
-				nil,
-			)
+			usecase := NewUsecase(Dependencies{
+				UserRepository: repo,
+				StatusReader:   repo,
+				UpdateWriter:   repo,
+				EmailWriter:    repo,
+				PasswordHasher: emailConflictPasswordHasher{},
+				Logger:         discardUserLogger{},
+			})
 
 			err := test.run(usecase)
 
@@ -91,28 +91,41 @@ type emailConflictUserRepository struct {
 	repository.UserRepository
 	createErr error
 	updateErr error
-	user      *entity.User
+	snapshot  UserStatusSnapshot
 }
 
 func (r *emailConflictUserRepository) Create(context.Context, *entity.User) error {
 	return r.createErr
 }
 
-func (r *emailConflictUserRepository) Update(context.Context, *entity.User) error {
+func (r *emailConflictUserRepository) FindStatusSnapshotByID(
+	context.Context,
+	string,
+) (UserStatusSnapshot, error) {
+	return r.snapshot, nil
+}
+
+func (r *emailConflictUserRepository) UpdateUser(
+	context.Context,
+	UserUpdateCommand,
+) error {
 	return r.updateErr
 }
 
-func (r *emailConflictUserRepository) FindByID(
+func (r *emailConflictUserRepository) UpdateEmail(
 	context.Context,
-	string,
-) (*entity.User, error) {
-	return r.user, nil
+	UserEmailUpdateCommand,
+) error {
+	return r.updateErr
 }
 
 type emailConflictPasswordHasher struct {
 	service.PasswordHasher
 }
 
-func (emailConflictPasswordHasher) Hash(context.Context, string) (valueobject.Password, error) {
-	return valueobject.PasswordFromHash("$argon2id$email-conflict-test"), nil
+func (emailConflictPasswordHasher) Hash(
+	context.Context,
+	valueobject.PlainPassword,
+) (valueobject.PasswordDigest, error) {
+	return testPasswordDigest("$argon2id$email-conflict-test"), nil
 }

@@ -130,13 +130,11 @@ func newDeletionFixture() *deletionFixture {
 		recorder:    recorder,
 		userRepo:    userRepo,
 		sessionRepo: sessionRepo,
-		usecase: NewUsecase(
-			userRepo,
-			nil,
-			discardUserLogger{},
-			sessionRepo,
-			nil,
-		),
+		usecase: NewUsecase(Dependencies{
+			UserRepository:    userRepo,
+			Logger:            discardUserLogger{},
+			SessionRepository: sessionRepo,
+		}),
 	}
 }
 

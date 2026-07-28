@@ -15,7 +15,7 @@ import (
 	authInfra "github.com/motixo/goat-api/internal/infra/auth"
 	redisSession "github.com/motixo/goat-api/internal/infra/storage/redis/session"
 	"github.com/motixo/goat-api/internal/pkg"
-	authUseCase "github.com/motixo/goat-api/internal/usecase/auth"
+	"github.com/motixo/goat-api/internal/usecase/authentication"
 	"github.com/motixo/goat-api/internal/usecase/authorization"
 	sessionUseCase "github.com/motixo/goat-api/internal/usecase/session"
 	"github.com/redis/go-redis/v9"
@@ -27,21 +27,21 @@ func TestStatusStateMachineIntegrationActivatesBeforeFirstSession(t *testing.T) 
 	sessionRepository := redisSession.NewRepository(redisClient, logger)
 	sessions := sessionUseCase.NewUsecase(sessionRepository, logger)
 	jwtManager := authInfra.NewJWTManager("status-state-machine-integration-secret")
-	authUsecase := authUseCase.NewUsecase(
-		userRepository,
-		userRepository,
-		sessions,
-		passwordHasher,
-		jwtManager,
-		logger,
-		authUseCase.AccessTTL(5*time.Minute),
-		authUseCase.RefreshTTL(time.Hour),
-		authUseCase.SessionTTL(time.Hour),
-	)
+	authenticationUseCase := authentication.NewUsecase(authentication.Dependencies{
+		UserRepository:      userRepository,
+		SecurityStateReader: userRepository,
+		SessionUseCase:      sessions,
+		PasswordHasher:      passwordHasher,
+		JWTService:          jwtManager,
+		Logger:              logger,
+		AccessTTL:           authentication.AccessTTL(5 * time.Minute),
+		RefreshTTL:          authentication.RefreshTTL(time.Hour),
+		SessionTTL:          authentication.SessionTTL(time.Hour),
+	})
 
 	const password = "Password1!"
 	email := "inactive-" + uuid.NewString() + "@example.com"
-	registered, err := authUsecase.Signup(ctx, authUseCase.RegisterInput{
+	registered, err := authenticationUseCase.Signup(ctx, authentication.RegisterInput{
 		Email:    email,
 		Password: password,
 	})
@@ -59,7 +59,7 @@ func TestStatusStateMachineIntegrationActivatesBeforeFirstSession(t *testing.T) 
 	})
 	assertStatusRedisKeysAbsent(t, ctx, redisClient, accessKey, userIndexKey)
 
-	inactiveLogin, err := authUsecase.Login(ctx, authUseCase.LoginInput{
+	inactiveLogin, err := authenticationUseCase.Login(ctx, authentication.LoginInput{
 		Email:    email,
 		Password: password,
 		IP:       "127.0.0.1",
@@ -73,13 +73,14 @@ func TestStatusStateMachineIntegrationActivatesBeforeFirstSession(t *testing.T) 
 	}
 	assertStatusRedisKeysAbsent(t, ctx, redisClient, accessKey, userIndexKey)
 
-	statusChange := NewUsecase(
-		userRepository,
-		passwordHasher,
-		logger,
-		sessionRepository,
-		nil,
-	)
+	statusChange := NewUsecase(Dependencies{
+		UserRepository:    userRepository,
+		StatusReader:      userRepository,
+		PasswordHasher:    passwordHasher,
+		Logger:            logger,
+		SessionRepository: sessionRepository,
+	})
+
 	if err := statusChange.ChangeStatus(ctx, UpdateStatusInput{
 		UserID:    registered.ID,
 		ActorID:   uuid.NewString(),
@@ -98,7 +99,7 @@ func TestStatusStateMachineIntegrationActivatesBeforeFirstSession(t *testing.T) 
 	}
 	assertStatusRedisKeysAbsent(t, ctx, redisClient, accessKey, userIndexKey)
 
-	activeLogin, err := authUsecase.Login(ctx, authUseCase.LoginInput{
+	activeLogin, err := authenticationUseCase.Login(ctx, authentication.LoginInput{
 		Email:    email,
 		Password: password,
 		IP:       "127.0.0.1",
@@ -177,13 +178,14 @@ func TestStatusStateMachineIntegrationSuspensionCASFailureRemainsBlocked(
 		requested:      valueobject.StatusSuspended,
 		firstFailure:   postgresErr,
 	}
-	statusChange := NewUsecase(
-		failingRepository,
-		passwordHasher,
-		logger,
-		sessionRepository,
-		nil,
-	)
+	statusChange := NewUsecase(Dependencies{
+		UserRepository:    failingRepository,
+		StatusReader:      userRepository,
+		PasswordHasher:    passwordHasher,
+		Logger:            logger,
+		SessionRepository: sessionRepository,
+	})
+
 	input := UpdateStatusInput{
 		UserID:    userID,
 		ActorID:   uuid.NewString(),
@@ -251,17 +253,17 @@ func TestStatusStateMachineIntegrationReactivationIsSafelyRetryable(
 	sessionRepository := redisSession.NewRepository(redisClient, logger)
 	sessions := sessionUseCase.NewUsecase(sessionRepository, logger)
 	jwtManager := authInfra.NewJWTManager("reactivation-retry-integration-secret")
-	authUsecase := authUseCase.NewUsecase(
-		userRepository,
-		userRepository,
-		sessions,
-		passwordHasher,
-		jwtManager,
-		logger,
-		authUseCase.AccessTTL(5*time.Minute),
-		authUseCase.RefreshTTL(time.Hour),
-		authUseCase.SessionTTL(time.Hour),
-	)
+	authenticationUseCase := authentication.NewUsecase(authentication.Dependencies{
+		UserRepository:      userRepository,
+		SecurityStateReader: userRepository,
+		SessionUseCase:      sessions,
+		PasswordHasher:      passwordHasher,
+		JWTService:          jwtManager,
+		Logger:              logger,
+		AccessTTL:           authentication.AccessTTL(5 * time.Minute),
+		RefreshTTL:          authentication.RefreshTTL(time.Hour),
+		SessionTTL:          authentication.SessionTTL(time.Hour),
+	})
 
 	userID := createCredentialVersionIntegrationUser(
 		t,
@@ -274,7 +276,7 @@ func TestStatusStateMachineIntegrationReactivationIsSafelyRetryable(
 		t.Fatalf("FindByID(before login) error = %v", err)
 	}
 
-	oldLogin, err := authUsecase.Login(ctx, authUseCase.LoginInput{
+	oldLogin, err := authenticationUseCase.Login(ctx, authentication.LoginInput{
 		Email:    persisted.Email,
 		Password: passwordChangeOldPassword,
 		IP:       "127.0.0.1",
@@ -301,13 +303,14 @@ func TestStatusStateMachineIntegrationReactivationIsSafelyRetryable(
 	})
 	initialState := readStatusIntegrationAccessState(t, ctx, redisClient, userID)
 
-	statusChange := NewUsecase(
-		userRepository,
-		passwordHasher,
-		logger,
-		sessionRepository,
-		nil,
-	)
+	statusChange := NewUsecase(Dependencies{
+		UserRepository:    userRepository,
+		StatusReader:      userRepository,
+		PasswordHasher:    passwordHasher,
+		Logger:            logger,
+		SessionRepository: sessionRepository,
+	})
+
 	if err := statusChange.ChangeStatus(ctx, UpdateStatusInput{
 		UserID:    userID,
 		ActorID:   uuid.NewString(),
@@ -349,13 +352,13 @@ func TestStatusStateMachineIntegrationReactivationIsSafelyRetryable(
 		continueUpdate: continueActivation,
 		firstFailure:   postgresErr,
 	}
-	retryStatusChange := NewUsecase(
-		retryRepository,
-		passwordHasher,
-		logger,
-		sessionRepository,
-		nil,
-	)
+	retryStatusChange := NewUsecase(Dependencies{
+		UserRepository:    retryRepository,
+		StatusReader:      userRepository,
+		PasswordHasher:    passwordHasher,
+		Logger:            logger,
+		SessionRepository: sessionRepository,
+	})
 
 	activationResult := make(chan error, 1)
 	go func() {
@@ -393,7 +396,7 @@ func TestStatusStateMachineIntegrationReactivationIsSafelyRetryable(
 		)
 	}
 
-	midpointLogin, loginErr := authUsecase.Login(ctx, authUseCase.LoginInput{
+	midpointLogin, loginErr := authenticationUseCase.Login(ctx, authentication.LoginInput{
 		Email:    persisted.Email,
 		Password: passwordChangeOldPassword,
 		IP:       "127.0.0.1",
@@ -475,7 +478,7 @@ func TestStatusStateMachineIntegrationReactivationIsSafelyRetryable(
 		)
 	}
 
-	newLogin, err := authUsecase.Login(ctx, authUseCase.LoginInput{
+	newLogin, err := authenticationUseCase.Login(ctx, authentication.LoginInput{
 		Email:    persisted.Email,
 		Password: passwordChangeOldPassword,
 		IP:       "127.0.0.1",

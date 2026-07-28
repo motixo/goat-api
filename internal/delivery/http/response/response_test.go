@@ -14,9 +14,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgconn"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
-	"github.com/motixo/goat-api/internal/usecase/auth"
+	"github.com/motixo/goat-api/internal/usecase/authentication"
 	"github.com/motixo/goat-api/internal/usecase/authorization"
 	"github.com/motixo/goat-api/internal/usecase/session"
+	"github.com/motixo/goat-api/internal/usecase/user/rolechange"
 )
 
 type mappedProblemCase struct {
@@ -41,7 +42,7 @@ var mappedProblemCases = []mappedProblemCase{
 	{name: "unauthorized", err: domainErrors.ErrUnauthorized, status: http.StatusUnauthorized, typ: "/errors/internal", titleKey: titleUnauthorized, detailKey: detailProcessingError, title: "Unauthorized", detail: "An error occurred while processing your request."},
 	{name: "token expired", err: domainErrors.ErrTokenExpired, status: http.StatusUnauthorized, typ: "/errors/unauthorized", titleKey: titleUnauthorized, detailKey: detailTokenExpired, title: "Unauthorized", detail: "token has expired"},
 	{name: "token invalid", err: domainErrors.ErrTokenInvalid, status: http.StatusUnauthorized, typ: "/errors/unauthorized", titleKey: titleUnauthorized, detailKey: detailTokenInvalid, title: "Unauthorized", detail: "invalid or malformed token"},
-	{name: "current session invalid", err: auth.NewCurrentSessionInvalidError(domainErrors.ErrNotFound), status: http.StatusUnauthorized, typ: "/errors/unauthorized", titleKey: titleUnauthorized, detailKey: detailCurrentSessionNotFound, title: "Unauthorized", detail: "not found"},
+	{name: "current session invalid", err: authentication.NewCurrentSessionInvalidError(domainErrors.ErrNotFound), status: http.StatusUnauthorized, typ: "/errors/unauthorized", titleKey: titleUnauthorized, detailKey: detailCurrentSessionNotFound, title: "Unauthorized", detail: "not found"},
 	{name: "security state changed", err: authorization.ErrPrincipalSecurityStateChanged, status: http.StatusUnauthorized, typ: "/errors/unauthorized", titleKey: titleUnauthorized, detailKey: DetailTokenRevoked, title: "Unauthorized", detail: "token has been revoked"},
 	{name: "blocked user access state", err: domainErrors.ErrUserAccessBlocked, status: http.StatusUnauthorized, typ: "/errors/unauthorized", titleKey: titleUnauthorized, detailKey: DetailTokenRevoked, title: "Unauthorized", detail: "token has been revoked"},
 	{name: "fresh inactive principal", err: authorization.ErrPrincipalInactive, status: http.StatusUnauthorized, typ: "/errors/unauthorized", titleKey: titleUnauthorized, detailKey: DetailAccountNotActivated, title: "Unauthorized", detail: "account not activated."},
@@ -54,6 +55,7 @@ var mappedProblemCases = []mappedProblemCase{
 	{name: "user not found", err: domainErrors.ErrUserNotFound, status: http.StatusNotFound, typ: "/errors/not-found", titleKey: titleNotFound, detailKey: detailResourceNotFound, title: "Not Found", detail: "The requested resource was not found."},
 	{name: "permission not found", err: domainErrors.ErrPermissionNotFound, status: http.StatusNotFound, typ: "/errors/not-found", titleKey: titleNotFound, detailKey: detailResourceNotFound, title: "Not Found", detail: "The requested resource was not found."},
 	{name: "conflict", err: domainErrors.ErrConflict, status: http.StatusConflict, typ: "/errors/conflict", titleKey: titleConflict, detailKey: detailConflict, title: "Conflict", detail: "The request conflicts with current state."},
+	{name: "concurrent user role change", err: rolechange.ErrConcurrentRoleChange, status: http.StatusConflict, typ: "/errors/conflict", titleKey: titleConflict, detailKey: detailConflict, title: "Conflict", detail: "The request conflicts with current state."},
 	{name: "invalid user status transition", err: domainErrors.ErrInvalidUserStatusTransition, status: http.StatusConflict, typ: "/errors/conflict", titleKey: titleConflict, detailKey: detailConflict, title: "Conflict", detail: "The request conflicts with current state."},
 	{name: "email exists", err: domainErrors.ErrEmailAlreadyExists, status: http.StatusConflict, typ: "/errors/email-already-exists", titleKey: titleConflict, detailKey: detailEmailAlreadyExists, title: "Conflict", detail: "This email is already registered."},
 	{name: "permission exists", err: domainErrors.ErrPermissionAlreadyExists, status: http.StatusConflict, typ: "/errors/conflict", titleKey: titleConflict, detailKey: detailConflict, title: "Conflict", detail: "The request conflicts with current state."},

@@ -2,33 +2,11 @@ package config
 
 import (
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
-
-func TestRedisOptionsRespectContextTimeouts(t *testing.T) {
-	cfg := &Config{
-		RedisHost: "redis.internal",
-		RedisPort: "6380",
-	}
-
-	options := cfg.RedisOptions()
-
-	if !options.ContextTimeoutEnabled {
-		t.Fatal("RedisOptions().ContextTimeoutEnabled = false, want true")
-	}
-	if options.DialTimeout != 0 ||
-		options.ReadTimeout != 0 ||
-		options.WriteTimeout != 0 {
-		t.Fatalf(
-			"RedisOptions() runtime timeouts = (%s, %s, %s), want unchanged library defaults",
-			options.DialTimeout,
-			options.ReadTimeout,
-			options.WriteTimeout,
-		)
-	}
-}
 
 func TestValidateBoundsAccessTokenLifetime(t *testing.T) {
 	tests := []struct {
@@ -45,13 +23,8 @@ func TestValidateBoundsAccessTokenLifetime(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			cfg := &Config{
-				Env:                     "development",
-				JWTExpiration:           test.lifetime,
-				DBConnectionTimeout:     5 * time.Second,
-				DBInitializationTimeout: 2 * time.Minute,
-				RedisConnectionTimeout:  5 * time.Second,
-			}
+			cfg := validConfig()
+			cfg.JWTExpiration = test.lifetime
 			err := cfg.validate()
 			if (err != nil) != test.wantErr {
 				t.Fatalf("validate() error = %v, wantErr %t", err, test.wantErr)
@@ -105,13 +78,9 @@ func TestValidateBoundsDatabaseStartupTimeouts(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			cfg := &Config{
-				Env:                     "development",
-				JWTExpiration:           5 * time.Minute,
-				DBConnectionTimeout:     test.connectionTimeout,
-				DBInitializationTimeout: test.initializationTimeout,
-				RedisConnectionTimeout:  5 * time.Second,
-			}
+			cfg := validConfig()
+			cfg.DBConnectionTimeout = test.connectionTimeout
+			cfg.DBInitializationTimeout = test.initializationTimeout
 			err := cfg.validate()
 			if (err != nil) != test.wantErr {
 				t.Fatalf("validate() error = %v, wantErr %t", err, test.wantErr)
@@ -139,13 +108,34 @@ func TestValidateBoundsRedisConnectionTimeout(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			cfg := &Config{
-				Env:                     "development",
-				JWTExpiration:           5 * time.Minute,
-				DBConnectionTimeout:     5 * time.Second,
-				DBInitializationTimeout: 2 * time.Minute,
-				RedisConnectionTimeout:  test.timeout,
+			cfg := validConfig()
+			cfg.RedisConnectionTimeout = test.timeout
+			err := cfg.validate()
+			if (err != nil) != test.wantErr {
+				t.Fatalf("validate() error = %v, wantErr %t", err, test.wantErr)
 			}
+		})
+	}
+}
+
+func TestValidateBoundsPasswordHashConcurrency(t *testing.T) {
+	tests := []struct {
+		name           string
+		maxConcurrency int
+		wantErr        bool
+	}{
+		{name: "negative", maxConcurrency: -1, wantErr: true},
+		{name: "zero", maxConcurrency: 0, wantErr: true},
+		{name: "minimum", maxConcurrency: 1},
+		{name: "default", maxConcurrency: 2},
+		{name: "maximum", maxConcurrency: maximumPasswordHashConcurrency},
+		{name: "above maximum", maxConcurrency: maximumPasswordHashConcurrency + 1, wantErr: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.PasswordHashMaxConcurrency = test.maxConcurrency
 			err := cfg.validate()
 			if (err != nil) != test.wantErr {
 				t.Fatalf("validate() error = %v, wantErr %t", err, test.wantErr)
@@ -212,6 +202,7 @@ func TestLoadRejectsMalformedRedisConnectionTimeout(t *testing.T) {
 
 func setValidLoadEnvironment(t *testing.T) {
 	t.Helper()
+	clearConfigEnvironment(t)
 	for name, value := range map[string]string{
 		"ENV":                       "development",
 		"DB_HOST":                   "127.0.0.1",
@@ -228,6 +219,56 @@ func setValidLoadEnvironment(t *testing.T) {
 	} {
 		t.Setenv(name, value)
 	}
+}
+
+func validConfig() *Config {
+	return &Config{
+		Env:                        "development",
+		ServerPort:                 8080,
+		DBHost:                     "127.0.0.1",
+		DBPort:                     5432,
+		DBUser:                     "postgres",
+		DBPassword:                 "postgres",
+		DBName:                     "goat",
+		DBConnectionTimeout:        5 * time.Second,
+		DBInitializationTimeout:    2 * time.Minute,
+		JWTSecret:                  "config-test-secret",
+		PasswordPepper:             "config-test-pepper",
+		PasswordHashMaxConcurrency: 2,
+		RedisHost:                  "127.0.0.1",
+		RedisPort:                  6379,
+		RedisConnectionTimeout:     5 * time.Second,
+		JWTExpiration:              5 * time.Minute,
+		RefreshTokenExpiration:     7 * 24 * time.Hour,
+		SessionExpiration:          30 * 24 * time.Hour,
+		GinMode:                    "debug",
+		Seed:                       false,
+		RateLimitAuthLimit:         5,
+		RateLimitAuthWindow:        time.Minute,
+		RateLimitPublicLimit:       100,
+		RateLimitPublicWindow:      time.Minute,
+		RateLimitPrivateLimit:      60,
+		RateLimitPrivateWindow:     time.Minute,
+	}
+}
+
+func clearConfigEnvironment(t *testing.T) {
+	t.Helper()
+	for _, name := range configEnvironmentNames() {
+		unsetEnvironment(t, name)
+	}
+}
+
+func configEnvironmentNames() []string {
+	configType := reflect.TypeOf(Config{})
+	names := make([]string, 0, configType.NumField())
+	for index := range configType.NumField() {
+		name, _, _ := strings.Cut(configType.Field(index).Tag.Get("env"), ",")
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 func unsetEnvironment(t *testing.T, name string) {

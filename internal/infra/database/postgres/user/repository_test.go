@@ -12,7 +12,7 @@ import (
 
 func TestBuildUserListSelectQueryUsesStableTieBreaker(t *testing.T) {
 	query := buildUserListSelectQuery(" WHERE role = ANY($1)", 2)
-	want := "SELECT id, email, role, status, credential_version, created_at, updated_at FROM users" +
+	want := "SELECT id, email, role, status, created_at FROM users" +
 		" WHERE role = ANY($1)" +
 		" ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3"
 

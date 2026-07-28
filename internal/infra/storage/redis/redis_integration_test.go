@@ -4,10 +4,9 @@ import (
 	"context"
 	"net"
 	"os"
+	"strconv"
 	"testing"
 	"time"
-
-	"github.com/motixo/goat-api/internal/config"
 )
 
 func TestNewClientIntegrationValidatesScriptsAndCloses(t *testing.T) {
@@ -19,13 +18,17 @@ func TestNewClientIntegrationValidatesScriptsAndCloses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse GOAT_REDIS_ADDR: %v", err)
 	}
+	parsedPort, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || parsedPort == 0 {
+		t.Fatalf("parse GOAT_REDIS_ADDR port: %q is not a valid port", port)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	client, err := NewClient(ctx, &config.Config{
-		RedisHost:              host,
-		RedisPort:              port,
-		RedisConnectionTimeout: 2 * time.Second,
+	client, err := NewClient(ctx, ClientConfig{
+		Host:              host,
+		Port:              uint16(parsedPort),
+		ConnectionTimeout: 2 * time.Second,
 	}, &startupTestLogger{})
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)

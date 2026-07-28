@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
-	"github.com/motixo/goat-api/internal/config"
 	"github.com/motixo/goat-api/internal/domain/entity"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
@@ -21,7 +20,7 @@ import (
 	postgresUser "github.com/motixo/goat-api/internal/infra/database/postgres/user"
 	redisSession "github.com/motixo/goat-api/internal/infra/storage/redis/session"
 	"github.com/motixo/goat-api/internal/pkg"
-	authUseCase "github.com/motixo/goat-api/internal/usecase/auth"
+	"github.com/motixo/goat-api/internal/usecase/authentication"
 	"github.com/motixo/goat-api/internal/usecase/authorization"
 	sessionUseCase "github.com/motixo/goat-api/internal/usecase/session"
 	"github.com/redis/go-redis/v9"
@@ -45,13 +44,14 @@ func TestCredentialVersionIntegrationRetainedSessionPassesSnapshotButFailsFreshA
 		t.Fatalf("close cleanup Redis client: %v", err)
 	}
 
-	changePassword := NewUsecase(
-		userRepository,
-		passwordHasher,
-		logger,
-		sessionRepository,
-		cleanupMetrics,
-	)
+	changePassword := NewUsecase(Dependencies{
+		UserRepository:               userRepository,
+		PasswordHasher:               passwordHasher,
+		Logger:                       logger,
+		SessionRepository:            sessionRepository,
+		PasswordChangeCleanupMetrics: cleanupMetrics,
+	})
+
 	err := changePassword.ChangePassword(ctx, UpdatePassInput{
 		UserID:      userID,
 		OldPassword: passwordChangeOldPassword,
@@ -74,7 +74,15 @@ func TestCredentialVersionIntegrationRetainedSessionPassesSnapshotButFailsFreshA
 	if persisted.CredentialVersion != entity.InitialCredentialVersion+1 {
 		t.Fatalf("credential version = %d, want 2", persisted.CredentialVersion)
 	}
-	if !passwordHasher.Verify(ctx, passwordChangeNewPassword, persisted.Password) {
+	newPassword, err := valueobject.NewPlainPassword(passwordChangeNewPassword)
+	if err != nil {
+		t.Fatalf("construct new plaintext password: %v", err)
+	}
+	passwordMatches, err := passwordHasher.Verify(ctx, newPassword, persisted.PasswordDigest)
+	if err != nil {
+		t.Fatalf("verify committed password: %v", err)
+	}
+	if !passwordMatches {
 		t.Fatal("new password was not committed before Redis cleanup failure")
 	}
 
@@ -150,25 +158,25 @@ func TestCredentialVersionIntegrationBoundsConcurrentLoginPasswordChangeRace(t *
 		continueLogin:       continueLogin,
 	}
 	jwtManager := authInfra.NewJWTManager("credential-version-integration-secret")
-	login := authUseCase.NewUsecase(
-		userRepository,
-		securityStates,
-		sessions,
-		passwordHasher,
-		jwtManager,
-		logger,
-		authUseCase.AccessTTL(5*time.Minute),
-		authUseCase.RefreshTTL(time.Hour),
-		authUseCase.SessionTTL(time.Hour),
-	)
+	login := authentication.NewUsecase(authentication.Dependencies{
+		UserRepository:      userRepository,
+		SecurityStateReader: securityStates,
+		SessionUseCase:      sessions,
+		PasswordHasher:      passwordHasher,
+		JWTService:          jwtManager,
+		Logger:              logger,
+		AccessTTL:           authentication.AccessTTL(5 * time.Minute),
+		RefreshTTL:          authentication.RefreshTTL(time.Hour),
+		SessionTTL:          authentication.SessionTTL(time.Hour),
+	})
 
 	type loginResult struct {
-		output authUseCase.LoginOutput
+		output authentication.LoginOutput
 		err    error
 	}
 	loginDone := make(chan loginResult, 1)
 	go func() {
-		output, loginErr := login.Login(ctx, authUseCase.LoginInput{
+		output, loginErr := login.Login(ctx, authentication.LoginInput{
 			Email:    persistedBefore.Email,
 			Password: passwordChangeOldPassword,
 			IP:       "127.0.0.1",
@@ -183,13 +191,13 @@ func TestCredentialVersionIntegrationBoundsConcurrentLoginPasswordChangeRace(t *
 		t.Fatalf("wait for login authorization snapshot: %v", ctx.Err())
 	}
 
-	changePassword := NewUsecase(
-		userRepository,
-		passwordHasher,
-		logger,
-		sessionRepository,
-		nil,
-	)
+	changePassword := NewUsecase(Dependencies{
+		UserRepository:    userRepository,
+		PasswordHasher:    passwordHasher,
+		Logger:            logger,
+		SessionRepository: sessionRepository,
+	})
+
 	if err := changePassword.ChangePassword(ctx, UpdatePassInput{
 		UserID:      userID,
 		OldPassword: passwordChangeOldPassword,
@@ -278,7 +286,7 @@ func TestCredentialVersionIntegrationBoundsConcurrentLoginPasswordChangeRace(t *
 		t.Fatalf("fresh authorization error = %v, want credential-version rejection", err)
 	}
 
-	if _, err := login.Refresh(ctx, authUseCase.RefreshInput{
+	if _, err := login.Refresh(ctx, authentication.RefreshInput{
 		RefreshToken: result.output.RefreshToken,
 		IP:           "127.0.0.1",
 		Device:       "concurrent-refresh",
@@ -321,25 +329,25 @@ func TestSuspensionIntegrationBlocksLoginAfterAuthoritativeStateWasLoaded(t *tes
 		continueLogin:       continueLogin,
 	}
 	jwtManager := authInfra.NewJWTManager("suspension-integration-secret")
-	login := authUseCase.NewUsecase(
-		userRepository,
-		securityStates,
-		sessions,
-		passwordHasher,
-		jwtManager,
-		logger,
-		authUseCase.AccessTTL(5*time.Minute),
-		authUseCase.RefreshTTL(time.Hour),
-		authUseCase.SessionTTL(time.Hour),
-	)
+	login := authentication.NewUsecase(authentication.Dependencies{
+		UserRepository:      userRepository,
+		SecurityStateReader: securityStates,
+		SessionUseCase:      sessions,
+		PasswordHasher:      passwordHasher,
+		JWTService:          jwtManager,
+		Logger:              logger,
+		AccessTTL:           authentication.AccessTTL(5 * time.Minute),
+		RefreshTTL:          authentication.RefreshTTL(time.Hour),
+		SessionTTL:          authentication.SessionTTL(time.Hour),
+	})
 
 	type loginResult struct {
-		output authUseCase.LoginOutput
+		output authentication.LoginOutput
 		err    error
 	}
 	loginDone := make(chan loginResult, 1)
 	go func() {
-		output, loginErr := login.Login(ctx, authUseCase.LoginInput{
+		output, loginErr := login.Login(ctx, authentication.LoginInput{
 			Email:    persisted.Email,
 			Password: passwordChangeOldPassword,
 			IP:       "127.0.0.1",
@@ -354,13 +362,14 @@ func TestSuspensionIntegrationBlocksLoginAfterAuthoritativeStateWasLoaded(t *tes
 		t.Fatalf("wait for login authorization snapshot: %v", ctx.Err())
 	}
 
-	statusChange := NewUsecase(
-		userRepository,
-		passwordHasher,
-		logger,
-		sessionRepository,
-		nil,
-	)
+	statusChange := NewUsecase(Dependencies{
+		UserRepository:    userRepository,
+		StatusReader:      userRepository,
+		PasswordHasher:    passwordHasher,
+		Logger:            logger,
+		SessionRepository: sessionRepository,
+	})
+
 	if err := statusChange.ChangeStatus(ctx, UpdateStatusInput{
 		UserID:    userID,
 		ActorID:   uuid.NewString(),
@@ -518,7 +527,13 @@ func newCredentialVersionIntegration(
 		t.Fatalf("create temporary users table: %v", err)
 	}
 
-	passwordHasher := authInfra.NewPasswordService(&config.Config{PasswordPepper: "credential-version-pepper"})
+	passwordHasher, err := authInfra.NewPasswordService(authInfra.PasswordHasherConfig{
+		Pepper:         "credential-version-pepper",
+		MaxConcurrency: 2,
+	})
+	if err != nil {
+		t.Fatalf("construct password hasher: %v", err)
+	}
 	return ctx, postgresUser.NewRepository(db), passwordHasher, newCredentialVersionRedisClient(t)
 }
 
@@ -544,7 +559,11 @@ func createCredentialVersionIntegrationUser(
 	passwordHasher service.PasswordHasher,
 ) string {
 	t.Helper()
-	password, err := passwordHasher.Hash(ctx, passwordChangeOldPassword)
+	plainPassword, err := valueobject.NewPlainPassword(passwordChangeOldPassword)
+	if err != nil {
+		t.Fatalf("construct old plaintext password: %v", err)
+	}
+	password, err := passwordHasher.Hash(ctx, plainPassword)
 	if err != nil {
 		t.Fatalf("hash old password: %v", err)
 	}
@@ -552,7 +571,7 @@ func createCredentialVersionIntegrationUser(
 	if err := users.Create(ctx, &entity.User{
 		ID:                userID,
 		Email:             "credential-version-" + userID + "@example.com",
-		Password:          password,
+		PasswordDigest:    password,
 		Status:            valueobject.StatusActive,
 		Role:              valueobject.RoleClient,
 		CredentialVersion: entity.InitialCredentialVersion,

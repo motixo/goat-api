@@ -4,14 +4,51 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/motixo/goat-api/internal/config"
 	"github.com/motixo/goat-api/internal/domain/service"
+	"github.com/motixo/goat-api/internal/domain/valueobject"
+	authInfra "github.com/motixo/goat-api/internal/infra/auth"
+	"github.com/motixo/goat-api/internal/infra/database/postgres"
 	"github.com/motixo/goat-api/internal/pkg"
 	"github.com/redis/go-redis/v9"
 )
+
+func TestInitializeAppStopsAfterPasswordHasherConstructionFailure(t *testing.T) {
+	t.Parallel()
+
+	recorder := &lifecycleRecorder{}
+	dependencies := bootstrapDependencies{
+		newLogger: func() (loggerResource, error) {
+			recorder.append("logger.create")
+			return loggerResource{
+				logger: discardLogger{},
+				sync:   recorder.action("logger.sync", nil),
+			}, nil
+		},
+		newPostgres: func(context.Context, postgres.ClientConfig, pkg.Logger, service.PasswordHasher) (postgresResource, error) {
+			t.Fatal("newPostgres() called after password hasher construction failed")
+			return postgresResource{}, nil
+		},
+	}
+	cfg := bootstrapTestConfig()
+	cfg.PasswordHashMaxConcurrency = 0
+
+	app, err := initializeApp(context.Background(), cfg, dependencies)
+	if app != nil {
+		t.Fatal("initializeApp() returned an application after password hasher construction failed")
+	}
+	if err == nil || !strings.Contains(err.Error(), "password hasher max concurrency") {
+		t.Fatalf("initializeApp() error = %v, want password hasher configuration error", err)
+	}
+	want := []string{"logger.create", "logger.sync"}
+	if got := recorder.snapshot(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("password hasher failure cleanup order = %v, want %v", got, want)
+	}
+}
 
 func TestInitializeAppRollsBackPostgresWhenRedisConstructionFails(t *testing.T) {
 	t.Parallel()
@@ -28,7 +65,7 @@ func TestInitializeAppRollsBackPostgresWhenRedisConstructionFails(t *testing.T) 
 				sync:   recorder.action("logger.sync", nil),
 			}, nil
 		},
-		newPostgres: func(context.Context, *config.Config, pkg.Logger, service.PasswordHasher) (postgresResource, error) {
+		newPostgres: func(context.Context, postgres.ClientConfig, pkg.Logger, service.PasswordHasher) (postgresResource, error) {
 			recorder.append("postgres.create")
 			return postgresResource{
 				close: recorder.action("postgres.close", nil),
@@ -51,7 +88,7 @@ func TestInitializeAppRollsBackPostgresWhenRedisConstructionFails(t *testing.T) 
 		},
 	}
 
-	app, err := initializeApp(startupCtx, &config.Config{}, dependencies)
+	app, err := initializeApp(startupCtx, bootstrapTestConfig(), dependencies)
 	if app != nil {
 		t.Fatal("initializeApp() returned an application after Redis failure")
 	}
@@ -106,7 +143,7 @@ func TestInitializeAppPreservesRedisStartupCancellationCause(t *testing.T) {
 		return runtimeResources{}, nil
 	}
 
-	app, err := initializeApp(ctx, &config.Config{}, dependencies)
+	app, err := initializeApp(ctx, bootstrapTestConfig(), dependencies)
 	if app != nil {
 		t.Fatal("initializeApp() returned an application after Redis startup cancellation")
 	}
@@ -145,7 +182,7 @@ func TestInitializeAppSuccessfulBootstrapAndCleanup(t *testing.T) {
 
 	app, err := initializeApp(
 		context.Background(),
-		&config.Config{ServerPort: "127.0.0.1:0"},
+		bootstrapTestConfig(),
 		dependencies,
 	)
 	if err != nil {
@@ -173,6 +210,86 @@ func TestInitializeAppSuccessfulBootstrapAndCleanup(t *testing.T) {
 	}
 }
 
+func TestInitializeAppReceivesParsedConfigurationUnchanged(t *testing.T) {
+	t.Parallel()
+
+	const compositionPassword = "Composition1!"
+	cfg := &config.Config{
+		ServerPort:                 9090,
+		PasswordPepper:             "bootstrap-config-pepper",
+		PasswordHashMaxConcurrency: 2,
+	}
+	expectedHasher, err := authInfra.NewPasswordService(newPasswordHasherConfig(cfg))
+	if err != nil {
+		t.Fatalf("construct expected password hasher: %v", err)
+	}
+	expectedHash, err := expectedHasher.Hash(context.Background(), testPlainPassword(compositionPassword))
+	if err != nil {
+		t.Fatalf("create composition password fixture: %v", err)
+	}
+	want := *cfg
+	recorder := &lifecycleRecorder{}
+	dependencies := successfulBootstrapDependencies(recorder)
+	newPostgres := dependencies.newPostgres
+	wantPostgresConfig := newPostgresClientConfig(cfg)
+	dependencies.newPostgres = func(
+		ctx context.Context,
+		got postgres.ClientConfig,
+		logger pkg.Logger,
+		passwordHasher service.PasswordHasher,
+	) (postgresResource, error) {
+		if got != wantPostgresConfig {
+			t.Fatal("newPostgres() did not receive the mapped PostgreSQL client configuration")
+		}
+		verified, verifyErr := passwordHasher.Verify(ctx, testPlainPassword(compositionPassword), expectedHash)
+		if verifyErr != nil {
+			t.Fatalf("verify composition password: %v", verifyErr)
+		}
+		if !verified {
+			t.Fatal("newPostgres() password hasher did not receive the configured password pepper")
+		}
+		return newPostgres(ctx, got, logger, passwordHasher)
+	}
+	newRedis := dependencies.newRedis
+	dependencies.newRedis = func(
+		ctx context.Context,
+		got *config.Config,
+		logger pkg.Logger,
+	) (redisResource, error) {
+		if got != cfg {
+			t.Fatal("newRedis() did not receive the parsed configuration pointer")
+		}
+		return newRedis(ctx, got, logger)
+	}
+	dependencies.buildRuntime = func(
+		got *config.Config,
+		_ pkg.Logger,
+		_ *sqlx.DB,
+		_ *redis.Client,
+		_ service.PasswordHasher,
+	) (runtimeResources, error) {
+		if got != cfg {
+			t.Fatal("buildRuntime() did not receive the parsed configuration pointer")
+		}
+		recorder.append("runtime.create")
+		return runtimeResources{}, nil
+	}
+
+	app, err := initializeApp(context.Background(), cfg, dependencies)
+	if err != nil {
+		t.Fatalf("initializeApp() error = %v", err)
+	}
+	if !reflect.DeepEqual(*cfg, want) {
+		t.Fatalf("configuration changed during bootstrap: got %#v, want %#v", *cfg, want)
+	}
+	if app.address != ":9090" {
+		t.Fatalf("application address = %q, want %q", app.address, ":9090")
+	}
+	if err := app.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+}
+
 func TestInitializeAppRollsBackRedisPostgresAndLoggerAfterRuntimeFailure(t *testing.T) {
 	t.Parallel()
 
@@ -184,7 +301,7 @@ func TestInitializeAppRollsBackRedisPostgresAndLoggerAfterRuntimeFailure(t *test
 		return runtimeResources{}, runtimeErr
 	}
 
-	app, err := initializeApp(context.Background(), &config.Config{}, dependencies)
+	app, err := initializeApp(context.Background(), bootstrapTestConfig(), dependencies)
 	if app != nil {
 		t.Fatal("initializeApp() returned an application after runtime failure")
 	}
@@ -222,7 +339,7 @@ func TestInitializeAppValidatesAssetsBeforeRuntimeAndRollsBackInReverseOrder(t *
 		return runtimeResources{}, nil
 	}
 
-	app, err := initializeApp(context.Background(), &config.Config{}, dependencies)
+	app, err := initializeApp(context.Background(), bootstrapTestConfig(), dependencies)
 	if app != nil {
 		t.Fatal("initializeApp() returned an application after asset validation failure")
 	}
@@ -252,7 +369,7 @@ func TestInitializeAppPreservesPrimaryAndRollbackErrors(t *testing.T) {
 	loggerSyncErr := errors.New("logger sync failed")
 	recorder := &lifecycleRecorder{}
 	dependencies := successfulBootstrapDependencies(recorder)
-	dependencies.newPostgres = func(context.Context, *config.Config, pkg.Logger, service.PasswordHasher) (postgresResource, error) {
+	dependencies.newPostgres = func(context.Context, postgres.ClientConfig, pkg.Logger, service.PasswordHasher) (postgresResource, error) {
 		recorder.append("postgres.create")
 		return postgresResource{
 			close: recorder.action("postgres.close", postgresCloseErr),
@@ -270,7 +387,7 @@ func TestInitializeAppPreservesPrimaryAndRollbackErrors(t *testing.T) {
 		}, nil
 	}
 
-	_, err := initializeApp(context.Background(), &config.Config{}, dependencies)
+	_, err := initializeApp(context.Background(), bootstrapTestConfig(), dependencies)
 	for name, target := range map[string]error{
 		"Redis construction": redisErr,
 		"PostgreSQL close":   postgresCloseErr,
@@ -298,7 +415,7 @@ func TestInitializeAppStopsAfterPostgresFailureAndPreservesLoggerCleanupError(t 
 		},
 		newPostgres: func(
 			ctx context.Context,
-			_ *config.Config,
+			_ postgres.ClientConfig,
 			_ pkg.Logger,
 			_ service.PasswordHasher,
 		) (postgresResource, error) {
@@ -318,7 +435,7 @@ func TestInitializeAppStopsAfterPostgresFailureAndPreservesLoggerCleanupError(t 
 		},
 	}
 
-	app, err := initializeApp(context.Background(), &config.Config{}, dependencies)
+	app, err := initializeApp(context.Background(), bootstrapTestConfig(), dependencies)
 	if app != nil {
 		t.Fatal("initializeApp() returned an application after PostgreSQL failure")
 	}
@@ -343,7 +460,7 @@ func TestInitializeAppCancellationAfterPostgresStopsRemainingConstruction(t *tes
 	dependencies := successfulBootstrapDependencies(recorder)
 	dependencies.newPostgres = func(
 		startupCtx context.Context,
-		_ *config.Config,
+		_ postgres.ClientConfig,
 		_ pkg.Logger,
 		_ service.PasswordHasher,
 	) (postgresResource, error) {
@@ -361,7 +478,7 @@ func TestInitializeAppCancellationAfterPostgresStopsRemainingConstruction(t *tes
 		return redisResource{}, nil
 	}
 
-	app, err := initializeApp(ctx, &config.Config{}, dependencies)
+	app, err := initializeApp(ctx, bootstrapTestConfig(), dependencies)
 	if app != nil {
 		t.Fatal("initializeApp() returned an application after startup cancellation")
 	}
@@ -400,7 +517,7 @@ func TestInitializeAppAssetValidationInheritsStartupCancellation(t *testing.T) {
 		return validationCtx.Err()
 	}
 
-	app, err := initializeApp(ctx, &config.Config{}, dependencies)
+	app, err := initializeApp(ctx, bootstrapTestConfig(), dependencies)
 	if app != nil {
 		t.Fatal("initializeApp() returned an application after asset validation cancellation")
 	}
@@ -430,7 +547,7 @@ func successfulBootstrapDependencies(recorder *lifecycleRecorder) bootstrapDepen
 				sync:   recorder.action("logger.sync", nil),
 			}, nil
 		},
-		newPostgres: func(context.Context, *config.Config, pkg.Logger, service.PasswordHasher) (postgresResource, error) {
+		newPostgres: func(context.Context, postgres.ClientConfig, pkg.Logger, service.PasswordHasher) (postgresResource, error) {
 			recorder.append("postgres.create")
 			return postgresResource{
 				close: recorder.action("postgres.close", nil),
@@ -451,4 +568,19 @@ func successfulBootstrapDependencies(recorder *lifecycleRecorder) bootstrapDepen
 			return runtimeResources{}, nil
 		},
 	}
+}
+
+func bootstrapTestConfig() *config.Config {
+	return &config.Config{
+		PasswordPepper:             "bootstrap-test-pepper",
+		PasswordHashMaxConcurrency: 2,
+	}
+}
+
+func testPlainPassword(raw string) valueobject.PlainPassword {
+	password, err := valueobject.NewPlainPassword(raw)
+	if err != nil {
+		panic("test plaintext password is invalid")
+	}
+	return password
 }

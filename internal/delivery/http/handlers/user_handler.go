@@ -64,7 +64,7 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 		response.WriteProblem(c, response.MapError(err))
 		return
 	}
-	response.OK(c, newUserResponse(output))
+	response.OK(c, newUserDetailResponse(output))
 }
 
 func (h *UserHandler) GetUserList(c *gin.Context) {
@@ -84,14 +84,14 @@ func (h *UserHandler) GetUserList(c *gin.Context) {
 
 	usecaseInput := input.toInput(principal.UserID())
 	usecaseInput.ActorRole = principal.Role()
-	output, total, err := h.usecase.GetUserslist(c, usecaseInput)
+	result, err := h.usecase.GetUserslist(c, usecaseInput)
 	if err != nil {
 		response.WriteProblem(c, response.MapError(err))
 		return
 	}
 
-	meta := helper.NewPaginationMeta(total, input.PaginationInput)
-	response.OK(c, gin.H{"data": newUserResponses(output), "meta": meta})
+	meta := helper.NewPaginationMeta(result.Total, input.PaginationInput)
+	response.OK(c, gin.H{"data": newUserListResponses(result.Items), "meta": meta})
 }
 
 func (h *UserHandler) DeleteUser(c *gin.Context) {
@@ -214,6 +214,13 @@ func (h *UserHandler) ChangeRole(c *gin.Context) {
 		response.BadRequest(c, response.DetailInvalidRequestPayload)
 		return
 	}
+	principal, ok := middleware.PrincipalFrom(c)
+	if !ok {
+		response.Unauthorized(c, response.DetailAuthenticationContextMissing)
+		return
+	}
+	input.ActorID = principal.UserID()
+	input.ActorRole = principal.Role()
 
 	if err := h.usecase.ChangeRole(c, input); err != nil {
 		response.WriteProblem(c, response.MapError(err))

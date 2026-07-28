@@ -16,6 +16,7 @@ import (
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 	"github.com/motixo/goat-api/internal/usecase/user"
+	"github.com/motixo/goat-api/internal/usecase/user/rolechange"
 )
 
 const userHandlerTargetID = "11111111-1111-4111-8111-111111111111"
@@ -95,13 +96,13 @@ func TestUserHandlerGetPreservesResponseContract(t *testing.T) {
 	createdAt := time.Date(2026, time.July, 22, 9, 15, 0, 0, time.UTC)
 	var gotUserID string
 	usecase := &stubUserHandlerUseCase{
-		getUser: func(_ context.Context, userID string) (user.UserOutput, error) {
+		getUser: func(_ context.Context, userID string) (user.UserDetail, error) {
 			gotUserID = userID
-			return user.UserOutput{
+			return user.UserDetail{
 				ID:        userID,
 				Email:     "target@example.com",
-				Role:      "client",
-				Status:    "suspended",
+				Role:      valueobject.RoleClient,
+				Status:    valueobject.StatusSuspended,
 				CreatedAt: createdAt,
 			}, nil
 		},
@@ -128,11 +129,18 @@ func TestUserHandlerGetPreservesResponseContract(t *testing.T) {
 }
 
 func TestUserHandlerGetCurrentUserUsesAuthenticatedPrincipal(t *testing.T) {
+	createdAt := time.Date(2026, time.July, 22, 10, 30, 0, 0, time.UTC)
 	var gotUserID string
 	usecase := &stubUserHandlerUseCase{
-		getUser: func(_ context.Context, userID string) (user.UserOutput, error) {
+		getUser: func(_ context.Context, userID string) (user.UserDetail, error) {
 			gotUserID = userID
-			return user.UserOutput{ID: userID}, nil
+			return user.UserDetail{
+				ID:        userID,
+				Email:     "self@example.com",
+				Role:      valueobject.RoleClient,
+				Status:    valueobject.StatusActive,
+				CreatedAt: createdAt,
+			}, nil
 		},
 	}
 	router := newUserHandlerTestRouter(usecase)
@@ -145,21 +153,33 @@ func TestUserHandlerGetCurrentUserUsesAuthenticatedPrincipal(t *testing.T) {
 	if gotUserID != "authenticated-user" {
 		t.Fatalf("GetUser ID = %q, want authenticated-user", gotUserID)
 	}
+	assertUserHandlerJSONEqual(t, recorder.Body.Bytes(), `{
+		"data": {
+			"id":"authenticated-user",
+			"email":"self@example.com",
+			"Role":"client",
+			"Status":"active",
+			"createdAt":"2026-07-22T10:30:00Z"
+		}
+	}`)
 }
 
 func TestUserHandlerListPreservesFiltersPaginationAndResponseContract(t *testing.T) {
 	createdAt := time.Date(2026, time.July, 21, 7, 0, 0, 0, time.UTC)
 	var gotInput user.GetListInput
 	usecase := &stubUserHandlerUseCase{
-		getUsersList: func(_ context.Context, input user.GetListInput) ([]user.UserOutput, int64, error) {
+		getUsersList: func(_ context.Context, input user.GetListInput) (user.UserListResult, error) {
 			gotInput = input
-			return []user.UserOutput{{
-				ID:        "user-2",
-				Email:     "Example@domain.test",
-				Role:      "admin",
-				Status:    "active",
-				CreatedAt: createdAt,
-			}}, 101, nil
+			return user.UserListResult{
+				Items: []user.UserListItem{{
+					ID:        "user-2",
+					Email:     "Example@domain.test",
+					Role:      valueobject.RoleAdmin,
+					Status:    valueobject.StatusActive,
+					CreatedAt: createdAt,
+				}},
+				Total: 101,
+			}, nil
 		},
 	}
 	router := newUserHandlerTestRouter(usecase)
@@ -201,9 +221,9 @@ func TestUserHandlerListPreservesFiltersPaginationAndResponseContract(t *testing
 func TestUserHandlerListPreservesInvalidFilterContract(t *testing.T) {
 	var gotInput user.GetListInput
 	usecase := &stubUserHandlerUseCase{
-		getUsersList: func(_ context.Context, input user.GetListInput) ([]user.UserOutput, int64, error) {
+		getUsersList: func(_ context.Context, input user.GetListInput) (user.UserListResult, error) {
 			gotInput = input
-			return []user.UserOutput{}, 0, nil
+			return user.UserListResult{Items: []user.UserListItem{}}, nil
 		},
 	}
 	router := newUserHandlerTestRouter(usecase)
@@ -229,9 +249,9 @@ func TestUserHandlerListPreservesInvalidFilterContract(t *testing.T) {
 
 func TestUserHandlerListPreservesMalformedPaginationProblem(t *testing.T) {
 	usecase := &stubUserHandlerUseCase{
-		getUsersList: func(context.Context, user.GetListInput) ([]user.UserOutput, int64, error) {
+		getUsersList: func(context.Context, user.GetListInput) (user.UserListResult, error) {
 			t.Fatal("GetUserslist called for malformed pagination")
-			return nil, 0, nil
+			return user.UserListResult{}, nil
 		},
 	}
 	router := newUserHandlerTestRouter(usecase)
@@ -250,7 +270,7 @@ func TestUserHandlerListPreservesMalformedPaginationProblem(t *testing.T) {
 	}`)
 }
 
-func TestUserHandlerUpdatePreservesRequestAndResponseContract(t *testing.T) {
+func TestUserHandlerUpdateIgnoresObsoleteRoleAndStatusUnderExistingUnknownFieldPolicy(t *testing.T) {
 	var gotInput user.UpdateInput
 	usecase := &stubUserHandlerUseCase{
 		updateUser: func(_ context.Context, input user.UpdateInput) error {
@@ -264,8 +284,8 @@ func TestUserHandlerUpdatePreservesRequestAndResponseContract(t *testing.T) {
 		"UserID":"client-controlled",
 		"email":"updated@example.com",
 		"password":"NewPassword1!",
-		"status":"inactive",
-		"role":"operator"
+		"status":"not-a-valid-status",
+		"role":"not-a-valid-role"
 	}`)
 
 	if recorder.Code != http.StatusOK {
@@ -275,13 +295,20 @@ func TestUserHandlerUpdatePreservesRequestAndResponseContract(t *testing.T) {
 		UserID:   userHandlerTargetID,
 		Email:    "updated@example.com",
 		Password: "NewPassword1!",
-		Status:   valueobject.StatusInactive,
-		Role:     valueobject.RoleOperator,
 	}
 	if !reflect.DeepEqual(gotInput, wantInput) {
 		t.Fatalf("UpdateUser input = %#v, want %#v", gotInput, wantInput)
 	}
 	assertUserHandlerJSONEqual(t, recorder.Body.Bytes(), `{"data":"user updated successfully"}`)
+}
+
+func TestUpdateUserRequestDoesNotDeclareRoleOrStatus(t *testing.T) {
+	requestType := reflect.TypeOf(updateUserRequest{})
+	for _, forbidden := range []string{"Role", "Status"} {
+		if _, exists := requestType.FieldByName(forbidden); exists {
+			t.Fatalf("updateUserRequest must not expose %s", forbidden)
+		}
+	}
 }
 
 func TestUserHandlerCreateAcceptsEverySupportedRoleAndStatus(t *testing.T) {
@@ -326,7 +353,7 @@ func TestUserHandlerCreateAcceptsEverySupportedRoleAndStatus(t *testing.T) {
 	}
 }
 
-func TestUserHandlerUpdatePreservesOmittedOptionalRoleAndStatus(t *testing.T) {
+func TestUserHandlerUpdatePreservesRequestAndResponseContract(t *testing.T) {
 	var gotInput user.UpdateInput
 	usecase := &stubUserHandlerUseCase{
 		updateUser: func(_ context.Context, input user.UpdateInput) error {
@@ -351,8 +378,6 @@ func TestUserHandlerUpdatePreservesOmittedOptionalRoleAndStatus(t *testing.T) {
 		UserID:   userHandlerTargetID,
 		Email:    "updated@example.com",
 		Password: "NewPassword1!",
-		Status:   valueobject.StatusUnknown,
-		Role:     valueobject.RoleUnknown,
 	}
 	if !reflect.DeepEqual(gotInput, wantInput) {
 		t.Fatalf("UpdateUser input = %#v, want %#v", gotInput, wantInput)
@@ -401,18 +426,6 @@ func TestUserHandlerRejectsInvalidRoleAndStatusJSONWithExistingProblemContract(t
 			method: http.MethodPatch,
 			path:   "/user/" + userHandlerTargetID + "/change-status",
 			body:   `{"status":2}`,
-		},
-		{
-			name:   "null optional role",
-			method: http.MethodPut,
-			path:   "/user/" + userHandlerTargetID,
-			body:   `{"role":null}`,
-		},
-		{
-			name:   "null optional status",
-			method: http.MethodPut,
-			path:   "/user/" + userHandlerTargetID,
-			body:   `{"status":null}`,
 		},
 		{
 			name:   "malformed JSON",
@@ -465,6 +478,169 @@ func TestUserHandlerChangeStatusPreservesValidationBeforeAuthenticationContext(t
 		"detail":"authentication context missing",
 		"instance":"`+path+`"
 	}`)
+}
+
+func TestUserHandlerChangeRolePreservesValidationBeforeAuthenticationContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	usecase := &stubUserHandlerUseCase{
+		changeRole: func(context.Context, user.UpdateRoleInput) error {
+			t.Fatal("ChangeRole called without an authenticated principal")
+			return nil
+		},
+	}
+	handler := NewUserHandler(usecase, discardUserHandlerLogger{})
+	path := "/user/" + userHandlerTargetID + "/change-role"
+	router.PATCH("/user/:id/change-role", handler.ChangeRole)
+
+	invalid := performUserHandlerRequest(t, router, http.MethodPatch, path, `{"role":"owner"}`)
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid role response = %d, want %d; body = %s", invalid.Code, http.StatusBadRequest, invalid.Body.String())
+	}
+	assertUserHandlerValidationProblem(t, invalid, path)
+
+	valid := performUserHandlerRequest(t, router, http.MethodPatch, path, `{"role":"client"}`)
+	if valid.Code != http.StatusUnauthorized {
+		t.Fatalf("valid unauthenticated response = %d, want %d; body = %s", valid.Code, http.StatusUnauthorized, valid.Body.String())
+	}
+	assertUserHandlerJSONEqual(t, valid.Body.Bytes(), `{
+		"type":"/errors/unauthorized",
+		"title":"Unauthorized",
+		"status":401,
+		"detail":"authentication context missing",
+		"instance":"`+path+`"
+	}`)
+}
+
+func TestUserHandlerChangeRoleLocalizesWrappedHierarchyFailure(t *testing.T) {
+	tests := []struct {
+		name           string
+		acceptLanguage string
+		wantLanguage   string
+		wantTitle      string
+		wantDetail     string
+	}{
+		{
+			name:         "English",
+			wantLanguage: "en",
+			wantTitle:    "Forbidden",
+			wantDetail:   "An error occurred while processing your request.",
+		},
+		{
+			name:           "Persian",
+			acceptLanguage: "fa-IR",
+			wantLanguage:   "fa",
+			wantTitle:      "اجازه دسترسی ندارید",
+			wantDetail:     "هنگام انجام درخواست مشکلی پیش آمد. لطفاً دوباره تلاش کنید.",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			usecase := &stubUserHandlerUseCase{
+				changeRole: func(context.Context, user.UpdateRoleInput) error {
+					return fmt.Errorf("authorize target role: %w", domainErrors.ErrForbidden)
+				},
+			}
+			path := "/user/" + userHandlerTargetID + "/change-role"
+			recorder := performUserHandlerRequestWithLanguage(
+				t,
+				newUserHandlerTestRouter(usecase),
+				http.MethodPatch,
+				path,
+				`{"role":"operator"}`,
+				test.acceptLanguage,
+			)
+
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf(
+					"status = %d, want %d; body = %s",
+					recorder.Code,
+					http.StatusForbidden,
+					recorder.Body.String(),
+				)
+			}
+			if got := recorder.Header().Get("Content-Language"); got != test.wantLanguage {
+				t.Fatalf("Content-Language = %q, want %q", got, test.wantLanguage)
+			}
+			assertUserHandlerJSONEqual(t, recorder.Body.Bytes(), `{
+				"type":"/errors/internal",
+				"title":`+strconv.Quote(test.wantTitle)+`,
+				"status":403,
+				"detail":`+strconv.Quote(test.wantDetail)+`,
+				"instance":"`+path+`"
+			}`)
+		})
+	}
+}
+
+func TestUserHandlerChangeRoleLocalizesConcurrentConflict(t *testing.T) {
+	tests := []struct {
+		name           string
+		acceptLanguage string
+		wantLanguage   string
+		wantTitle      string
+		wantDetail     string
+	}{
+		{
+			name:         "English",
+			wantLanguage: "en",
+			wantTitle:    "Conflict",
+			wantDetail:   "The request conflicts with current state.",
+		},
+		{
+			name:           "Persian",
+			acceptLanguage: "fa-IR",
+			wantLanguage:   "fa",
+			wantTitle:      "امکان انجام درخواست وجود ندارد",
+			wantDetail:     "در شرایط فعلی امکان انجام این درخواست وجود ندارد.",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			usecase := &stubUserHandlerUseCase{
+				changeRole: func(context.Context, user.UpdateRoleInput) error {
+					return fmt.Errorf(
+						"compare-and-set role with internal snapshots: %w",
+						rolechange.ErrConcurrentRoleChange,
+					)
+				},
+			}
+			path := "/user/" + userHandlerTargetID + "/change-role"
+			recorder := performUserHandlerRequestWithLanguage(
+				t,
+				newUserHandlerTestRouter(usecase),
+				http.MethodPatch,
+				path,
+				`{"role":"operator"}`,
+				test.acceptLanguage,
+			)
+
+			if recorder.Code != http.StatusConflict {
+				t.Fatalf(
+					"status = %d, want %d; body = %s",
+					recorder.Code,
+					http.StatusConflict,
+					recorder.Body.String(),
+				)
+			}
+			if got := recorder.Header().Get("Content-Language"); got != test.wantLanguage {
+				t.Fatalf("Content-Language = %q, want %q", got, test.wantLanguage)
+			}
+			assertUserHandlerJSONEqual(t, recorder.Body.Bytes(), `{
+				"type":"/errors/conflict",
+				"title":`+strconv.Quote(test.wantTitle)+`,
+				"status":409,
+				"detail":`+strconv.Quote(test.wantDetail)+`,
+				"instance":"`+path+`"
+			}`)
+			if strings.Contains(recorder.Body.String(), "internal snapshots") ||
+				strings.Contains(recorder.Body.String(), "concurrently") {
+				t.Fatalf("role conflict leaked internal detail: %s", recorder.Body.String())
+			}
+		})
+	}
 }
 
 func TestUserHandlerChangeStatusLocalizesInvalidTransitionProblem(t *testing.T) {
@@ -603,7 +779,12 @@ func TestUserHandlerChangeCommandsPreserveMappingsAndContracts(t *testing.T) {
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
 		}
-		wantInput := user.UpdateRoleInput{UserID: userHandlerTargetID, Role: valueobject.RoleAdmin}
+		wantInput := user.UpdateRoleInput{
+			UserID:    userHandlerTargetID,
+			ActorID:   "authenticated-user",
+			ActorRole: valueobject.RoleAdmin,
+			Role:      valueobject.RoleAdmin,
+		}
 		if !reflect.DeepEqual(gotInput, wantInput) {
 			t.Fatalf("ChangeRole input = %#v, want %#v", gotInput, wantInput)
 		}
@@ -751,10 +932,10 @@ func newUserHandlerTestRouter(usecase user.UseCase) *gin.Engine {
 	router.GET("/user", authenticated, handler.GetUser)
 	router.GET("/user/list", authenticated, handler.GetUserList)
 	router.GET("/user/:id", handler.GetUser)
-	router.PUT("/user/:id", handler.UpdateUser)
+	router.PUT("/user/:id", authenticated, handler.UpdateUser)
 	router.PATCH("/user/change-email", authenticated, handler.ChangeEmail)
 	router.PATCH("/user/change-password", authenticated, handler.ChangePassword)
-	router.PATCH("/user/:id/change-role", handler.ChangeRole)
+	router.PATCH("/user/:id/change-role", authenticated, handler.ChangeRole)
 	router.PATCH("/user/:id/change-status", authenticated, handler.ChangeStatus)
 	return router
 }
@@ -799,8 +980,8 @@ func assertUserHandlerJSONEqual(t *testing.T, got []byte, want string) {
 type stubUserHandlerUseCase struct {
 	user.UseCase
 	createUser     func(context.Context, user.CreateInput) (user.UserOutput, error)
-	getUser        func(context.Context, string) (user.UserOutput, error)
-	getUsersList   func(context.Context, user.GetListInput) ([]user.UserOutput, int64, error)
+	getUser        func(context.Context, string) (user.UserDetail, error)
+	getUsersList   func(context.Context, user.GetListInput) (user.UserListResult, error)
 	updateUser     func(context.Context, user.UpdateInput) error
 	changeEmail    func(context.Context, user.UpdateEmailInput) error
 	changePassword func(context.Context, user.UpdatePassInput) error
@@ -812,11 +993,11 @@ func (s *stubUserHandlerUseCase) CreateUser(ctx context.Context, input user.Crea
 	return s.createUser(ctx, input)
 }
 
-func (s *stubUserHandlerUseCase) GetUser(ctx context.Context, userID string) (user.UserOutput, error) {
+func (s *stubUserHandlerUseCase) GetUser(ctx context.Context, userID string) (user.UserDetail, error) {
 	return s.getUser(ctx, userID)
 }
 
-func (s *stubUserHandlerUseCase) GetUserslist(ctx context.Context, input user.GetListInput) ([]user.UserOutput, int64, error) {
+func (s *stubUserHandlerUseCase) GetUserslist(ctx context.Context, input user.GetListInput) (user.UserListResult, error) {
 	return s.getUsersList(ctx, input)
 }
 

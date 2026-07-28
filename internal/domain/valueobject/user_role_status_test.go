@@ -39,6 +39,58 @@ func TestParseUserRoleRejectsUnknownAndCaseVariants(t *testing.T) {
 	}
 }
 
+func TestUserRoleKnownValuesAndModificationHierarchy(t *testing.T) {
+	for _, role := range AllRoles() {
+		if !role.IsKnown() {
+			t.Errorf("%s.IsKnown() = false, want true", role)
+		}
+	}
+	for _, role := range []UserRole{RoleUnknown, UserRole(255)} {
+		if role.IsKnown() {
+			t.Errorf("UserRole(%d).IsKnown() = true, want false", role)
+		}
+	}
+
+	tests := []struct {
+		actor  UserRole
+		target UserRole
+		want   bool
+	}{
+		{actor: RoleAdmin, target: RoleAdmin, want: true},
+		{actor: RoleAdmin, target: RoleOperator, want: true},
+		{actor: RoleAdmin, target: RoleClient, want: true},
+		{actor: RoleOperator, target: RoleAdmin, want: false},
+		{actor: RoleOperator, target: RoleOperator, want: false},
+		{actor: RoleOperator, target: RoleClient, want: true},
+		{actor: RoleClient, target: RoleClient, want: false},
+	}
+	for _, test := range tests {
+		if got := test.actor.CanModifyTargetRole(test.target); got != test.want {
+			t.Errorf(
+				"%s.CanModifyTargetRole(%s) = %t, want %t",
+				test.actor,
+				test.target,
+				got,
+				test.want,
+			)
+		}
+		if got := test.actor.CanAssignRole(test.target); got != test.want {
+			t.Errorf(
+				"%s.CanAssignRole(%s) = %t, want %t",
+				test.actor,
+				test.target,
+				got,
+				test.want,
+			)
+		}
+	}
+	for _, requested := range []UserRole{RoleUnknown, UserRole(255)} {
+		if RoleAdmin.CanAssignRole(requested) {
+			t.Errorf("admin CanAssignRole(UserRole(%d)) = true, want false", requested)
+		}
+	}
+}
+
 func TestParseUserStatus(t *testing.T) {
 	tests := []struct {
 		input string

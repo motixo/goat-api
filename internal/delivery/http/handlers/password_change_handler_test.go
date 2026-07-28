@@ -10,11 +10,16 @@ import (
 	"testing"
 
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
+	domainService "github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/usecase/user"
 )
 
 func TestUserHandlerChangePasswordPreservesLocalizedErrorContracts(t *testing.T) {
 	infrastructureErr := errors.New("redis connection details must not be exposed")
+	invalidStoredPasswordHashErr := fmt.Errorf(
+		"verify persisted credential: %w",
+		domainService.ErrInvalidStoredPasswordHash,
+	)
 	tests := []struct {
 		name       string
 		locale     string
@@ -117,6 +122,32 @@ func TestUserHandlerChangePasswordPreservesLocalizedErrorContracts(t *testing.T)
 			name:       "infrastructure failure is safe in Persian",
 			locale:     "fa",
 			err:        infrastructureErr,
+			wantStatus: http.StatusInternalServerError,
+			wantBody: `{
+				"type":"/errors/internal",
+				"title":"خطای سرور",
+				"status":500,
+				"detail":"مشکلی پیش آمد. لطفاً دوباره تلاش کنید.",
+				"instance":"/user/change-password"
+			}`,
+		},
+		{
+			name:       "invalid stored password hash is safe in English",
+			locale:     "en",
+			err:        invalidStoredPasswordHashErr,
+			wantStatus: http.StatusInternalServerError,
+			wantBody: `{
+				"type":"/errors/internal",
+				"title":"Internal Server Error",
+				"status":500,
+				"detail":"An unexpected error occurred.",
+				"instance":"/user/change-password"
+			}`,
+		},
+		{
+			name:       "invalid stored password hash is safe in Persian",
+			locale:     "fa",
+			err:        invalidStoredPasswordHashErr,
 			wantStatus: http.StatusInternalServerError,
 			wantBody: `{
 				"type":"/errors/internal",

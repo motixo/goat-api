@@ -14,9 +14,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	httpMiddleware "github.com/motixo/goat-api/internal/delivery/http/middleware"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
+	domainService "github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
-	"github.com/motixo/goat-api/internal/usecase/auth"
+	"github.com/motixo/goat-api/internal/usecase/authentication"
 	"github.com/motixo/goat-api/internal/usecase/authorization"
 )
 
@@ -24,16 +26,16 @@ func TestAuthHandlerLoginPreservesRequestAndResponseContract(t *testing.T) {
 	accessExpiresAt := time.Date(2026, time.July, 23, 10, 15, 0, 0, time.UTC)
 	refreshExpiresAt := accessExpiresAt.Add(24 * time.Hour)
 	createdAt := time.Date(2026, time.July, 20, 8, 30, 0, 0, time.UTC)
-	var gotInput auth.LoginInput
-	usecase := &stubAuthUseCase{
-		login: func(_ context.Context, input auth.LoginInput) (auth.LoginOutput, error) {
+	var gotInput authentication.LoginInput
+	usecase := &stubAuthenticationUseCase{
+		login: func(_ context.Context, input authentication.LoginInput) (authentication.LoginOutput, error) {
 			gotInput = input
-			return auth.LoginOutput{
+			return authentication.LoginOutput{
 				AccessToken:           "access-token",
 				AccessTokenExpiresAt:  accessExpiresAt,
 				RefreshToken:          "refresh-token",
 				RefreshTokenExpiresAt: refreshExpiresAt,
-				User: auth.UserOutput{
+				User: authentication.UserOutput{
 					ID:        "user-1",
 					Email:     "user@example.com",
 					Role:      "client",
@@ -55,7 +57,7 @@ func TestAuthHandlerLoginPreservesRequestAndResponseContract(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
-	wantInput := auth.LoginInput{
+	wantInput := authentication.LoginInput{
 		Email:    "user@example.com",
 		Password: "Password1!",
 		IP:       "203.0.113.9",
@@ -83,11 +85,11 @@ func TestAuthHandlerLoginPreservesRequestAndResponseContract(t *testing.T) {
 
 func TestAuthHandlerRegisterPreservesRequestAndResponseContract(t *testing.T) {
 	createdAt := time.Date(2026, time.July, 23, 9, 0, 0, 0, time.UTC)
-	var gotInput auth.RegisterInput
-	usecase := &stubAuthUseCase{
-		signup: func(_ context.Context, input auth.RegisterInput) (auth.UserOutput, error) {
+	var gotInput authentication.RegisterInput
+	usecase := &stubAuthenticationUseCase{
+		signup: func(_ context.Context, input authentication.RegisterInput) (authentication.UserOutput, error) {
 			gotInput = input
-			return auth.UserOutput{
+			return authentication.UserOutput{
 				ID:        "user-2",
 				Email:     "new@example.com",
 				Role:      "client",
@@ -106,7 +108,7 @@ func TestAuthHandlerRegisterPreservesRequestAndResponseContract(t *testing.T) {
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusCreated, recorder.Body.String())
 	}
-	wantInput := auth.RegisterInput{Email: "new@example.com", Password: "Password1!"}
+	wantInput := authentication.RegisterInput{Email: "new@example.com", Password: "Password1!"}
 	if !reflect.DeepEqual(gotInput, wantInput) {
 		t.Fatalf("Signup input = %#v, want %#v", gotInput, wantInput)
 	}
@@ -124,11 +126,11 @@ func TestAuthHandlerRegisterPreservesRequestAndResponseContract(t *testing.T) {
 func TestAuthHandlerRefreshPreservesRequestAndResponseContract(t *testing.T) {
 	accessExpiresAt := time.Date(2026, time.July, 23, 10, 15, 0, 0, time.UTC)
 	refreshExpiresAt := accessExpiresAt.Add(24 * time.Hour)
-	var gotInput auth.RefreshInput
-	usecase := &stubAuthUseCase{
-		refresh: func(_ context.Context, input auth.RefreshInput) (auth.RefreshOutput, error) {
+	var gotInput authentication.RefreshInput
+	usecase := &stubAuthenticationUseCase{
+		refresh: func(_ context.Context, input authentication.RefreshInput) (authentication.RefreshOutput, error) {
 			gotInput = input
-			return auth.RefreshOutput{
+			return authentication.RefreshOutput{
 				AccessToken:           "new-access-token",
 				AccessTokenExpiresAt:  accessExpiresAt,
 				RefreshToken:          "new-refresh-token",
@@ -147,7 +149,7 @@ func TestAuthHandlerRefreshPreservesRequestAndResponseContract(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
-	wantInput := auth.RefreshInput{
+	wantInput := authentication.RefreshInput{
 		RefreshToken: "old-refresh-token",
 		IP:           "203.0.113.9",
 		Device:       "contract-test-agent",
@@ -167,7 +169,7 @@ func TestAuthHandlerRefreshPreservesRequestAndResponseContract(t *testing.T) {
 
 func TestAuthHandlerLogoutPreservesAuthenticatedContract(t *testing.T) {
 	var gotSessionID, gotUserID string
-	usecase := &stubAuthUseCase{
+	usecase := &stubAuthenticationUseCase{
 		logout: func(_ context.Context, sessionID, userID string) error {
 			gotSessionID = sessionID
 			gotUserID = userID
@@ -188,7 +190,7 @@ func TestAuthHandlerLogoutPreservesAuthenticatedContract(t *testing.T) {
 }
 
 func TestAuthHandlerLogoutPreservesKnownFailureContracts(t *testing.T) {
-	currentSessionInvalid := auth.NewCurrentSessionInvalidError(domainErrors.ErrNotFound)
+	currentSessionInvalid := authentication.NewCurrentSessionInvalidError(domainErrors.ErrNotFound)
 	for _, variant := range []struct {
 		name string
 		err  error
@@ -197,7 +199,7 @@ func TestAuthHandlerLogoutPreservesKnownFailureContracts(t *testing.T) {
 		{name: "wrapped", err: fmt.Errorf("logout failed: %w", currentSessionInvalid)},
 	} {
 		t.Run(variant.name, func(t *testing.T) {
-			usecase := &stubAuthUseCase{
+			usecase := &stubAuthenticationUseCase{
 				logout: func(context.Context, string, string) error {
 					return variant.err
 				},
@@ -219,7 +221,7 @@ func TestAuthHandlerLogoutPreservesKnownFailureContracts(t *testing.T) {
 }
 
 func TestAuthHandlerLogoutDoesNotExposeUnknownFailures(t *testing.T) {
-	usecase := &stubAuthUseCase{
+	usecase := &stubAuthenticationUseCase{
 		logout: func(context.Context, string, string) error {
 			return errors.New("redis dial tcp 10.0.0.5:6379: connection refused")
 		},
@@ -239,28 +241,63 @@ func TestAuthHandlerLogoutDoesNotExposeUnknownFailures(t *testing.T) {
 }
 
 func TestAuthHandlerLoginPreservesInvalidCredentialsProblemContract(t *testing.T) {
-	usecase := &stubAuthUseCase{
-		login: func(context.Context, auth.LoginInput) (auth.LoginOutput, error) {
-			return auth.LoginOutput{}, domainErrors.ErrInvalidCredentials
+	tests := []struct {
+		name           string
+		acceptLanguage string
+		wantLanguage   string
+		wantTitle      string
+		wantDetail     string
+	}{
+		{
+			name:         "English",
+			wantLanguage: "en",
+			wantTitle:    "Unauthorized",
+			wantDetail:   "Invalid email or password.",
+		},
+		{
+			name:           "Persian",
+			acceptLanguage: "fa-IR",
+			wantLanguage:   "fa",
+			wantTitle:      "لطفاً وارد حساب خود شوید",
+			wantDetail:     "ایمیل یا رمز عبور اشتباه است.",
 		},
 	}
-	router := newAuthHandlerTestRouter(usecase)
 
-	recorder := performAuthHandlerRequest(t, router, http.MethodPost, "/auth/login", `{
-		"email":"user@example.com",
-		"password":"wrong-password"
-	}`)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			usecase := &stubAuthenticationUseCase{
+				login: func(context.Context, authentication.LoginInput) (authentication.LoginOutput, error) {
+					return authentication.LoginOutput{}, fmt.Errorf(
+						"authenticate credentials: %w: %w",
+						domainErrors.ErrInvalidCredentials,
+						domainService.ErrInvalidStoredPasswordHash,
+					)
+				},
+			}
+			recorder := performAuthHandlerRequestWithLanguage(
+				t,
+				newAuthHandlerTestRouter(usecase),
+				http.MethodPost,
+				"/auth/login",
+				`{"email":"user@example.com","password":"wrong-password"}`,
+				test.acceptLanguage,
+			)
 
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusUnauthorized, recorder.Body.String())
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusUnauthorized, recorder.Body.String())
+			}
+			if got := recorder.Header().Get("Content-Language"); got != test.wantLanguage {
+				t.Fatalf("Content-Language = %q, want %q", got, test.wantLanguage)
+			}
+			assertAuthHandlerJSONEqual(t, recorder.Body.Bytes(), `{
+				"type":"/errors/internal",
+				"title":`+strconv.Quote(test.wantTitle)+`,
+				"status":401,
+				"detail":`+strconv.Quote(test.wantDetail)+`,
+				"instance":"/auth/login"
+			}`)
+		})
 	}
-	assertAuthHandlerJSONEqual(t, recorder.Body.Bytes(), `{
-		"type":"/errors/internal",
-		"title":"Unauthorized",
-		"status":401,
-		"detail":"Invalid email or password.",
-		"instance":"/auth/login"
-	}`)
 }
 
 func TestAuthHandlerLoginLocalizesInactiveAccountProblem(t *testing.T) {
@@ -288,9 +325,9 @@ func TestAuthHandlerLoginLocalizesInactiveAccountProblem(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			usecase := &stubAuthUseCase{
-				login: func(context.Context, auth.LoginInput) (auth.LoginOutput, error) {
-					return auth.LoginOutput{}, fmt.Errorf(
+			usecase := &stubAuthenticationUseCase{
+				login: func(context.Context, authentication.LoginInput) (authentication.LoginOutput, error) {
+					return authentication.LoginOutput{}, fmt.Errorf(
 						"authenticate account: %w",
 						authorization.ErrPrincipalInactive,
 					)
@@ -328,18 +365,18 @@ func TestAuthHandlerLoginLocalizesInactiveAccountProblem(t *testing.T) {
 }
 
 func TestAuthHandlerRejectsMalformedJSONBeforeUseCase(t *testing.T) {
-	usecase := &stubAuthUseCase{
-		login: func(context.Context, auth.LoginInput) (auth.LoginOutput, error) {
+	usecase := &stubAuthenticationUseCase{
+		login: func(context.Context, authentication.LoginInput) (authentication.LoginOutput, error) {
 			t.Fatal("Login called for malformed JSON")
-			return auth.LoginOutput{}, nil
+			return authentication.LoginOutput{}, nil
 		},
-		signup: func(context.Context, auth.RegisterInput) (auth.UserOutput, error) {
+		signup: func(context.Context, authentication.RegisterInput) (authentication.UserOutput, error) {
 			t.Fatal("Signup called for malformed JSON")
-			return auth.UserOutput{}, nil
+			return authentication.UserOutput{}, nil
 		},
-		refresh: func(context.Context, auth.RefreshInput) (auth.RefreshOutput, error) {
+		refresh: func(context.Context, authentication.RefreshInput) (authentication.RefreshOutput, error) {
 			t.Fatal("Refresh called for malformed JSON")
-			return auth.RefreshOutput{}, nil
+			return authentication.RefreshOutput{}, nil
 		},
 	}
 	router := newAuthHandlerTestRouter(usecase)
@@ -371,10 +408,10 @@ func TestAuthHandlerRejectsMalformedJSONBeforeUseCase(t *testing.T) {
 }
 
 func TestAuthHandlerLocalizesValidationProblems(t *testing.T) {
-	usecase := &stubAuthUseCase{
-		login: func(context.Context, auth.LoginInput) (auth.LoginOutput, error) {
+	usecase := &stubAuthenticationUseCase{
+		login: func(context.Context, authentication.LoginInput) (authentication.LoginOutput, error) {
 			t.Fatal("Login called for malformed JSON")
-			return auth.LoginOutput{}, nil
+			return authentication.LoginOutput{}, nil
 		},
 	}
 	recorder := performAuthHandlerRequestWithLanguage(
@@ -411,18 +448,18 @@ func TestAuthHandlerPreservesExistingMissingFieldBindingBehavior(t *testing.T) {
 	loginCalled := false
 	registerCalled := false
 	refreshCalled := false
-	usecase := &stubAuthUseCase{
-		login: func(_ context.Context, input auth.LoginInput) (auth.LoginOutput, error) {
+	usecase := &stubAuthenticationUseCase{
+		login: func(_ context.Context, input authentication.LoginInput) (authentication.LoginOutput, error) {
 			loginCalled = input.Email == "" && input.Password == ""
-			return auth.LoginOutput{}, nil
+			return authentication.LoginOutput{}, nil
 		},
-		signup: func(_ context.Context, input auth.RegisterInput) (auth.UserOutput, error) {
+		signup: func(_ context.Context, input authentication.RegisterInput) (authentication.UserOutput, error) {
 			registerCalled = input.Email == "not-an-email" && input.Password == ""
-			return auth.UserOutput{}, nil
+			return authentication.UserOutput{}, nil
 		},
-		refresh: func(_ context.Context, input auth.RefreshInput) (auth.RefreshOutput, error) {
+		refresh: func(_ context.Context, input authentication.RefreshInput) (authentication.RefreshOutput, error) {
 			refreshCalled = input.RefreshToken == ""
-			return auth.RefreshOutput{}, nil
+			return authentication.RefreshOutput{}, nil
 		},
 	}
 	router := newAuthHandlerTestRouter(usecase)
@@ -447,7 +484,7 @@ func TestAuthHandlerPreservesExistingMissingFieldBindingBehavior(t *testing.T) {
 	}
 }
 
-func newAuthHandlerTestRouter(usecase auth.UseCase) *gin.Engine {
+func newAuthHandlerTestRouter(usecase authentication.UseCase) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	handler := NewAuthHandler(usecase, discardAuthHandlerLogger{})
@@ -510,27 +547,27 @@ func assertAuthHandlerJSONEqual(t *testing.T, got []byte, want string) {
 	}
 }
 
-type stubAuthUseCase struct {
-	auth.UseCase
-	login   func(context.Context, auth.LoginInput) (auth.LoginOutput, error)
-	signup  func(context.Context, auth.RegisterInput) (auth.UserOutput, error)
-	refresh func(context.Context, auth.RefreshInput) (auth.RefreshOutput, error)
+type stubAuthenticationUseCase struct {
+	authentication.UseCase
+	login   func(context.Context, authentication.LoginInput) (authentication.LoginOutput, error)
+	signup  func(context.Context, authentication.RegisterInput) (authentication.UserOutput, error)
+	refresh func(context.Context, authentication.RefreshInput) (authentication.RefreshOutput, error)
 	logout  func(context.Context, string, string) error
 }
 
-func (s *stubAuthUseCase) Login(ctx context.Context, input auth.LoginInput) (auth.LoginOutput, error) {
+func (s *stubAuthenticationUseCase) Login(ctx context.Context, input authentication.LoginInput) (authentication.LoginOutput, error) {
 	return s.login(ctx, input)
 }
 
-func (s *stubAuthUseCase) Signup(ctx context.Context, input auth.RegisterInput) (auth.UserOutput, error) {
+func (s *stubAuthenticationUseCase) Signup(ctx context.Context, input authentication.RegisterInput) (authentication.UserOutput, error) {
 	return s.signup(ctx, input)
 }
 
-func (s *stubAuthUseCase) Refresh(ctx context.Context, input auth.RefreshInput) (auth.RefreshOutput, error) {
+func (s *stubAuthenticationUseCase) Refresh(ctx context.Context, input authentication.RefreshInput) (authentication.RefreshOutput, error) {
 	return s.refresh(ctx, input)
 }
 
-func (s *stubAuthUseCase) Logout(ctx context.Context, sessionID, userID string) error {
+func (s *stubAuthenticationUseCase) Logout(ctx context.Context, sessionID, userID string) error {
 	return s.logout(ctx, sessionID, userID)
 }
 
@@ -541,3 +578,28 @@ func (discardAuthHandlerLogger) Error(string, ...any) {}
 func (discardAuthHandlerLogger) Warn(string, ...any)  {}
 func (discardAuthHandlerLogger) Debug(string, ...any) {}
 func (discardAuthHandlerLogger) Panic(string, ...any) {}
+
+func setHandlerTestPrincipal(
+	c *gin.Context,
+	userID string,
+	sessionID string,
+	role valueobject.UserRole,
+) {
+	permissions, err := valueobject.NewPermissionSet([]valueobject.Permission{
+		valueobject.PermFullAccess,
+	})
+	if err != nil {
+		panic(err)
+	}
+	principal, err := authorization.NewPrincipal(
+		userID,
+		sessionID,
+		7,
+		role,
+		permissions,
+	)
+	if err != nil {
+		panic(err)
+	}
+	httpMiddleware.SetPrincipal(c, principal)
+}

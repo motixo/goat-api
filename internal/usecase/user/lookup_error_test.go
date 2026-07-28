@@ -48,7 +48,11 @@ func TestUserIDLookupUseCasesPreserveSemanticNotFoundAndSQLCause(t *testing.T) {
 		} {
 			t.Run(operation.name+"/"+variant.name, func(t *testing.T) {
 				repo := &lookupUserRepository{findByIDErr: variant.err}
-				usecase := NewUsecase(repo, nil, discardUserLogger{}, nil, nil)
+				usecase := NewUsecase(Dependencies{
+					UserRepository: repo,
+					DetailReader:   repo,
+					Logger:         discardUserLogger{},
+				})
 
 				err := operation.run(usecase)
 
@@ -93,7 +97,11 @@ func TestUserIDLookupUseCasesPreserveUnknownFailures(t *testing.T) {
 	} {
 		t.Run(operation.name, func(t *testing.T) {
 			repo := &lookupUserRepository{findByIDErr: lookupErr}
-			usecase := NewUsecase(repo, nil, discardUserLogger{}, nil, nil)
+			usecase := NewUsecase(Dependencies{
+				UserRepository: repo,
+				DetailReader:   repo,
+				Logger:         discardUserLogger{},
+			})
 
 			err := operation.run(usecase)
 
@@ -116,18 +124,22 @@ func TestGetUserSuccessfulLookupRemainsUnchanged(t *testing.T) {
 		Status:    valueobject.StatusActive,
 		CreatedAt: createdAt,
 	}}
-	usecase := NewUsecase(repo, nil, discardUserLogger{}, nil, nil)
+	usecase := NewUsecase(Dependencies{
+		UserRepository: repo,
+		DetailReader:   repo,
+		Logger:         discardUserLogger{},
+	})
 
 	output, err := usecase.GetUser(context.Background(), "user-1")
 
 	if err != nil {
 		t.Fatalf("GetUser() error = %v", err)
 	}
-	want := UserOutput{
+	want := UserDetail{
 		ID:        "user-1",
 		Email:     "user@example.com",
-		Role:      "client",
-		Status:    "active",
+		Role:      valueobject.RoleClient,
+		Status:    valueobject.StatusActive,
 		CreatedAt: createdAt,
 	}
 	if output != want {
@@ -145,4 +157,21 @@ type lookupUserRepository struct {
 func (r *lookupUserRepository) FindByID(context.Context, string) (*entity.User, error) {
 	r.findByIDCalls++
 	return r.user, r.findByIDErr
+}
+
+func (r *lookupUserRepository) FindDetailByID(context.Context, string) (UserDetail, error) {
+	r.findByIDCalls++
+	if r.findByIDErr != nil {
+		return UserDetail{}, r.findByIDErr
+	}
+	if r.user == nil {
+		return UserDetail{}, nil
+	}
+	return UserDetail{
+		ID:        r.user.ID,
+		Email:     r.user.Email,
+		Role:      r.user.Role,
+		Status:    r.user.Status,
+		CreatedAt: r.user.CreatedAt,
+	}, nil
 }

@@ -5,88 +5,206 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	stdErrors "errors"
 	"fmt"
 	"strings"
 
-	"github.com/motixo/goat-api/internal/config"
-	"github.com/motixo/goat-api/internal/domain/errors"
+	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/service"
-	"github.com/motixo/goat-api/internal/domain/validation"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 	"golang.org/x/crypto/argon2"
 )
 
+var errPasswordHashingContextRequired = stdErrors.New("password hashing context is required")
+
 const (
-	argonTime    = 3
-	argonMemory  = 64 * 1024
-	argonThreads = 4
-	argonKeyLen  = 32
-	saltLen      = 32
+	argonTime                      uint32 = 3
+	argonMemory                    uint32 = 64 * 1024
+	argonThreads                   uint8  = 4
+	argonKeyLen                    uint32 = 32
+	saltLen                               = 32
+	maximumPasswordHashConcurrency        = 4
 )
 
+type PasswordHasherConfig struct {
+	Pepper         string
+	MaxConcurrency int
+}
+
+func (c PasswordHasherConfig) String() string {
+	return fmt.Sprintf(
+		"PasswordHasherConfig{pepper:<redacted>,maxConcurrency:%d}",
+		c.MaxConcurrency,
+	)
+}
+
+func (c PasswordHasherConfig) GoString() string {
+	return c.String()
+}
+
+type deriveKeyFunc func(
+	password []byte,
+	salt []byte,
+	time uint32,
+	memory uint32,
+	threads uint8,
+	keyLen uint32,
+) []byte
+
+type saltReaderFunc func([]byte) (int, error)
+
 type PasswordService struct {
-	pepper string
+	pepper   string
+	capacity chan struct{}
+	readSalt saltReaderFunc
+	derive   deriveKeyFunc
 }
 
-func NewPasswordService(cfg *config.Config) service.PasswordHasher {
+var _ service.PasswordHasher = (*PasswordService)(nil)
+
+func NewPasswordService(cfg PasswordHasherConfig) (*PasswordService, error) {
+	return newPasswordService(cfg, rand.Read, argon2.IDKey)
+}
+
+func newPasswordService(
+	cfg PasswordHasherConfig,
+	readSalt saltReaderFunc,
+	derive deriveKeyFunc,
+) (*PasswordService, error) {
+	if strings.TrimSpace(cfg.Pepper) == "" {
+		return nil, stdErrors.New("password hasher pepper is required")
+	}
+	if cfg.MaxConcurrency <= 0 {
+		return nil, stdErrors.New("password hasher max concurrency must be positive")
+	}
+	if cfg.MaxConcurrency > maximumPasswordHashConcurrency {
+		return nil, fmt.Errorf(
+			"password hasher max concurrency must not exceed %d",
+			maximumPasswordHashConcurrency,
+		)
+	}
 	return &PasswordService{
-		pepper: cfg.PasswordPepper,
+		pepper:   cfg.Pepper,
+		capacity: make(chan struct{}, cfg.MaxConcurrency),
+		readSalt: readSalt,
+		derive:   derive,
+	}, nil
+}
+
+func (s *PasswordService) acquire(ctx context.Context) error {
+	if err := callerContextError(ctx); err != nil {
+		return err
+	}
+	select {
+	case s.capacity <- struct{}{}:
+		if err := callerContextError(ctx); err != nil {
+			s.release()
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return callerContextError(ctx)
 	}
 }
 
-func (s *PasswordService) Hash(ctx context.Context, plaintext string) (valueobject.Password, error) {
-	// Validate the plaintext password
-	if err := s.Validate(plaintext); err != nil {
-		return valueobject.Password{}, err
+func (s *PasswordService) release() {
+	<-s.capacity
+}
+
+func callerContextError(ctx context.Context) error {
+	if ctx == nil {
+		return errPasswordHashingContextRequired
 	}
+	ctxErr := ctx.Err()
+	if ctxErr == nil {
+		return nil
+	}
+	cause := context.Cause(ctx)
+	if cause == nil || stdErrors.Is(ctxErr, cause) {
+		return ctxErr
+	}
+	return stdErrors.Join(ctxErr, cause)
+}
+
+func (*PasswordService) String() string {
+	return "PasswordService{pepper:<redacted>}"
+}
+
+func (s *PasswordService) GoString() string {
+	return s.String()
+}
+
+func (s *PasswordService) Hash(
+	ctx context.Context,
+	password valueobject.PlainPassword,
+) (valueobject.PasswordDigest, error) {
+	if err := callerContextError(ctx); err != nil {
+		return valueobject.PasswordDigest{}, err
+	}
+	if err := password.Validate(); err != nil {
+		return valueobject.PasswordDigest{}, err
+	}
+	if err := s.acquire(ctx); err != nil {
+		return valueobject.PasswordDigest{}, err
+	}
+	defer s.release()
 
 	salt := make([]byte, saltLen)
-	if _, err := rand.Read(salt); err != nil {
-		return valueobject.Password{}, errors.ErrPasswordHashingFailed
+	if _, err := s.readSalt(salt); err != nil {
+		return valueobject.PasswordDigest{}, domainErrors.ErrPasswordHashingFailed
+	}
+	if err := callerContextError(ctx); err != nil {
+		return valueobject.PasswordDigest{}, err
 	}
 
-	// Apply pepper before hashing
-	input := append([]byte(plaintext), []byte(s.pepper)...)
-	hash := argon2.IDKey(input, salt, argonTime, argonMemory, argonThreads, argonKeyLen)
+	input := append(password.Bytes(), []byte(s.pepper)...)
+	hash := s.derive(input, salt, argonTime, argonMemory, argonThreads, argonKeyLen)
 
-	encoded := fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s",
+	encoded := fmt.Sprintf("$%s$v=%d$m=%d,t=%d,p=%d$%s$%s",
+		argonAlgorithm, argonVersion,
 		argonMemory, argonTime, argonThreads,
 		base64.RawStdEncoding.EncodeToString(salt),
 		base64.RawStdEncoding.EncodeToString(hash))
 
-	return valueobject.PasswordFromHash(encoded), nil
+	digest, err := valueobject.NewPasswordDigest(encoded)
+	if err != nil {
+		return valueobject.PasswordDigest{}, fmt.Errorf("construct generated password digest: %w", err)
+	}
+	return digest, nil
 }
 
-func (s *PasswordService) Verify(ctx context.Context, plaintext string, hashed valueobject.Password) bool {
-	parts := strings.Split(hashed.Encoded(), "$")
-	if len(parts) != 6 {
-		return false
+func (s *PasswordService) Verify(
+	ctx context.Context,
+	password valueobject.PlainPassword,
+	digest valueobject.PasswordDigest,
+) (bool, error) {
+	if err := callerContextError(ctx); err != nil {
+		return false, err
 	}
-
-	var mem uint32
-	var time, threads uint8
-	_, serr := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &mem, &time, &threads)
-	if serr != nil {
-		return false
+	if err := password.Validate(); err != nil {
+		return false, err
 	}
-
-	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
+	parsed, err := parseArgon2idHash(digest.Encoded())
 	if err != nil {
-		return false
+		return false, err
+	}
+	if err := s.acquire(ctx); err != nil {
+		return false, err
+	}
+	defer s.release()
+	if err := callerContextError(ctx); err != nil {
+		return false, err
 	}
 
-	expected, err := base64.RawStdEncoding.DecodeString(parts[5])
-	if err != nil {
-		return false
-	}
+	input := append(password.Bytes(), []byte(s.pepper)...)
+	hash := s.derive(
+		input,
+		parsed.salt,
+		parsed.time,
+		parsed.memory,
+		parsed.threads,
+		uint32(len(parsed.derivedKey)),
+	)
 
-	// Apply same pepper for verification
-	input := append([]byte(plaintext), []byte(s.pepper)...)
-	hash := argon2.IDKey(input, salt, uint32(time), mem, uint8(threads), uint32(len(expected)))
-
-	return subtle.ConstantTimeCompare(hash, expected) == 1
-}
-
-func (s *PasswordService) Validate(plaintext string) error {
-	return validation.ValidatePasswordPolicy(plaintext)
+	return subtle.ConstantTimeCompare(hash, parsed.derivedKey) == 1, nil
 }

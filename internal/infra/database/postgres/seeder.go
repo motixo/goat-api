@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/motixo/goat-api/internal/config"
 	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
@@ -80,12 +79,14 @@ func SeedAdminUser(
 	ctx context.Context,
 	db *sqlx.DB,
 	passwordHasher service.PasswordHasher,
-	cfg *config.Config,
+	email string,
+	password string,
 ) error {
-	email := cfg.AdminEmail
-	password := cfg.AdminPassword
-
-	hashedPassword, err := passwordHasher.Hash(ctx, password)
+	plainPassword, err := valueobject.NewPlainPassword(password)
+	if err != nil {
+		return startupOperationError("validate seeded admin password", ctx, err)
+	}
+	digest, err := passwordHasher.Hash(ctx, plainPassword)
 	if err != nil {
 		return startupOperationError("hash seeded admin password", ctx, err)
 	}
@@ -97,7 +98,7 @@ func SeedAdminUser(
 		INSERT INTO users (id, email, password, status, role, created_at)
 		VALUES (gen_random_uuid(), $1, $2, $3, $4, CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
 		ON CONFLICT (email) DO NOTHING
-	`, email, hashedPassword, int8(activeStatus), int8(adminRole))
+	`, email, digest.Encoded(), int8(activeStatus), int8(adminRole))
 
 	if err != nil {
 		return startupOperationError("seed admin user", ctx, err)

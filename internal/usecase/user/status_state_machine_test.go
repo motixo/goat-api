@@ -21,13 +21,11 @@ func TestCreateUserRequiresInactiveInitialStatus(t *testing.T) {
 		t.Run(status.String(), func(t *testing.T) {
 			users := &statusStateMachineUserRepository{}
 			hasher := &statusStateMachinePasswordHasher{}
-			usecase := NewUsecase(
-				users,
-				hasher,
-				discardUserLogger{},
-				nil,
-				nil,
-			)
+			usecase := NewUsecase(Dependencies{
+				UserRepository: users,
+				PasswordHasher: hasher,
+				Logger:         discardUserLogger{},
+			})
 
 			_, err := usecase.CreateUser(context.Background(), CreateInput{
 				Email:    "new@example.com",
@@ -57,13 +55,11 @@ func TestCreateUserRequiresInactiveInitialStatus(t *testing.T) {
 
 func TestCreateUserPersistsInactiveInitialStatus(t *testing.T) {
 	users := &statusStateMachineUserRepository{}
-	usecase := NewUsecase(
-		users,
-		&statusStateMachinePasswordHasher{},
-		discardUserLogger{},
-		nil,
-		nil,
-	)
+	usecase := NewUsecase(Dependencies{
+		UserRepository: users,
+		PasswordHasher: &statusStateMachinePasswordHasher{},
+		Logger:         discardUserLogger{},
+	})
 
 	output, err := usecase.CreateUser(context.Background(), CreateInput{
 		Email:    "new@example.com",
@@ -83,100 +79,10 @@ func TestCreateUserPersistsInactiveInitialStatus(t *testing.T) {
 	}
 }
 
-func TestGenericUserUpdateCannotChangeStatus(t *testing.T) {
-	users := &statusStateMachineUserRepository{
-		found: &entity.User{
-			ID:     "user-1",
-			Status: valueobject.StatusActive,
-		},
-	}
-	hasher := &statusStateMachinePasswordHasher{}
-	usecase := NewUsecase(
-		users,
-		hasher,
-		discardUserLogger{},
-		nil,
-		nil,
-	)
-
-	err := usecase.UpdateUser(context.Background(), UpdateInput{
-		UserID:   "user-1",
-		Email:    "updated@example.com",
-		Password: "Password1!",
-		Status:   valueobject.StatusInactive,
-		Role:     valueobject.RoleOperator,
-	})
-
-	if err == nil {
-		t.Fatal("UpdateUser() error = nil, want status transition rejection")
-	}
-	if !errors.Is(err, domainErrors.ErrInvalidUserStatusTransition) {
-		t.Fatalf(
-			"UpdateUser() error = %v, want ErrInvalidUserStatusTransition",
-			err,
-		)
-	}
-	if users.findCalls != 1 {
-		t.Fatalf("repository finds = %d, want 1", users.findCalls)
-	}
-	if users.updateCalls != 0 {
-		t.Fatalf("repository updates = %d, want 0", users.updateCalls)
-	}
-	if hasher.calls != 0 {
-		t.Fatalf("password hashes = %d, want 0", hasher.calls)
-	}
-}
-
-func TestGenericUserUpdateMayVerifyButDoesNotPersistCurrentStatus(t *testing.T) {
-	users := &statusStateMachineUserRepository{
-		found: &entity.User{
-			ID:     "user-1",
-			Status: valueobject.StatusActive,
-		},
-	}
-	usecase := NewUsecase(
-		users,
-		&statusStateMachinePasswordHasher{},
-		discardUserLogger{},
-		nil,
-		nil,
-	)
-
-	err := usecase.UpdateUser(context.Background(), UpdateInput{
-		UserID:   "user-1",
-		Email:    "updated@example.com",
-		Password: "Password1!",
-		Status:   valueobject.StatusActive,
-		Role:     valueobject.RoleOperator,
-	})
-
-	if err != nil {
-		t.Fatalf("UpdateUser() error = %v", err)
-	}
-	if users.findCalls != 1 || users.updateCalls != 1 {
-		t.Fatalf(
-			"repository calls: find=%d update=%d, want 1/1",
-			users.findCalls,
-			users.updateCalls,
-		)
-	}
-	if users.updated == nil || users.updated.Status != valueobject.StatusUnknown {
-		t.Fatalf(
-			"updated user = %#v, want status excluded from generic persistence",
-			users.updated,
-		)
-	}
-}
-
 type statusStateMachineUserRepository struct {
 	repository.UserRepository
-	found       *entity.User
-	findErr     error
 	created     *entity.User
-	updated     *entity.User
 	createCalls int
-	findCalls   int
-	updateCalls int
 }
 
 func (r *statusStateMachineUserRepository) Create(
@@ -188,23 +94,6 @@ func (r *statusStateMachineUserRepository) Create(
 	return nil
 }
 
-func (r *statusStateMachineUserRepository) FindByID(
-	context.Context,
-	string,
-) (*entity.User, error) {
-	r.findCalls++
-	return r.found, r.findErr
-}
-
-func (r *statusStateMachineUserRepository) Update(
-	_ context.Context,
-	user *entity.User,
-) error {
-	r.updateCalls++
-	r.updated = user
-	return nil
-}
-
 type statusStateMachinePasswordHasher struct {
 	service.PasswordHasher
 	calls int
@@ -212,8 +101,8 @@ type statusStateMachinePasswordHasher struct {
 
 func (h *statusStateMachinePasswordHasher) Hash(
 	context.Context,
-	string,
-) (valueobject.Password, error) {
+	valueobject.PlainPassword,
+) (valueobject.PasswordDigest, error) {
 	h.calls++
-	return valueobject.PasswordFromHash("$argon2id$status-state-machine"), nil
+	return testPasswordDigest("$argon2id$status-state-machine"), nil
 }

@@ -14,7 +14,7 @@ import (
 	"github.com/motixo/goat-api/internal/delivery/http/routes"
 	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/pkg"
-	"github.com/motixo/goat-api/internal/usecase/auth"
+	"github.com/motixo/goat-api/internal/usecase/authentication"
 	"github.com/motixo/goat-api/internal/usecase/authorization"
 	"github.com/motixo/goat-api/internal/usecase/permission"
 	"github.com/motixo/goat-api/internal/usecase/session"
@@ -25,6 +25,26 @@ var (
 	ErrServerAlreadyStarted         = errors.New("HTTP server already started")
 	ErrHTTPServerStoppedBeforeReady = errors.New("HTTP server stopped before accepting connections")
 )
+
+// GinMode is a delivery-owned Gin engine mode.
+type GinMode string
+
+const (
+	// GinModeDebug enables Gin's debug mode.
+	GinModeDebug GinMode = GinMode(gin.DebugMode)
+	// GinModeRelease enables Gin's release mode.
+	GinModeRelease GinMode = GinMode(gin.ReleaseMode)
+)
+
+func newGinEngine(mode GinMode) (*gin.Engine, error) {
+	switch mode {
+	case GinModeDebug, GinModeRelease:
+		gin.SetMode(string(mode))
+	default:
+		return nil, fmt.Errorf("unsupported Gin mode %q", mode)
+	}
+	return gin.New(), nil
+}
 
 type Server struct {
 	engine               *gin.Engine
@@ -46,6 +66,21 @@ type Server struct {
 	listen      func(network, address string) (net.Listener, error)
 }
 
+// ServerDependencies names the application ports and shared services required
+// to construct the HTTP delivery boundary. Runtime configuration remains
+// explicit in NewServer rather than being mixed with long-lived collaborators.
+type ServerDependencies struct {
+	UserUseCase           user.UseCase
+	AuthenticationUseCase authentication.UseCase
+	AuthorizationUseCase  authorization.UseCase
+	PermissionUseCase     permission.UseCase
+	SessionUseCase        session.UseCase
+	Logger                pkg.Logger
+	JWTService            service.JWTService
+	MetricsService        service.MetricsService
+	RateLimiter           service.RateLimiter
+}
+
 type readyListener struct {
 	net.Listener
 	ready chan struct{}
@@ -60,34 +95,30 @@ func (l *readyListener) Accept() (net.Conn, error) {
 }
 
 func NewServer(
-	userUC user.UseCase,
-	authUC auth.UseCase,
-	authorizationUC authorization.UseCase,
-	permUC permission.UseCase,
-	sessionUC session.UseCase,
-	logger pkg.Logger,
-	jwtService service.JWTService,
-	metricsService service.MetricsService,
-	rateLimitService service.RateLimiter,
+	ginMode GinMode,
+	dependencies ServerDependencies,
 	rlConfig middleware.RateLimitConfig,
-) *Server {
-	router := gin.New()
+) (*Server, error) {
+	router, err := newGinEngine(ginMode)
+	if err != nil {
+		return nil, err
+	}
 
 	// Global middleware
-	authMiddleware := middleware.NewAuthMiddleware(jwtService, sessionUC)
-	permMiddleware := middleware.NewPermMiddleware(authorizationUC)
-	metricsMiddleware := middleware.NewMetricsMiddleware(metricsService)
-	rateLimitMiddleware := middleware.NewRateLimitMiddleware(rateLimitService, logger)
+	authMiddleware := middleware.NewAuthMiddleware(dependencies.JWTService, dependencies.SessionUseCase)
+	permMiddleware := middleware.NewPermMiddleware(dependencies.AuthorizationUseCase)
+	metricsMiddleware := middleware.NewMetricsMiddleware(dependencies.MetricsService)
+	rateLimitMiddleware := middleware.NewRateLimitMiddleware(dependencies.RateLimiter, dependencies.Logger)
 
 	router.Use(
-		middleware.Recovery(logger),
+		middleware.Recovery(dependencies.Logger),
 		metricsMiddleware.Handler(),
 	)
 
-	authHandler := handlers.NewAuthHandler(authUC, logger)
-	sessionHandler := handlers.NewSessionHandler(sessionUC, logger)
-	userHandler := handlers.NewUserHandler(userUC, logger)
-	permissionHandler := handlers.NewPermissionHandler(permUC, logger)
+	authHandler := handlers.NewAuthHandler(dependencies.AuthenticationUseCase, dependencies.Logger)
+	sessionHandler := handlers.NewSessionHandler(dependencies.SessionUseCase, dependencies.Logger)
+	userHandler := handlers.NewUserHandler(dependencies.UserUseCase, dependencies.Logger)
+	permissionHandler := handlers.NewPermissionHandler(dependencies.PermissionUseCase, dependencies.Logger)
 
 	httpServerInstance := &http.Server{
 		Handler: router,
@@ -104,13 +135,13 @@ func NewServer(
 		permMiddleware:      permMiddleware,
 		metricsMiddleware:   metricsMiddleware,
 		rateLimitMiddleware: rateLimitMiddleware,
-		metricsService:      metricsService,
+		metricsService:      dependencies.MetricsService,
 		rlConfig:            rlConfig,
 		listen:              net.Listen,
 	}
 
 	server.setupRoutes()
-	return server
+	return server, nil
 }
 
 func (s *Server) setupRoutes() {

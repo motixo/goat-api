@@ -1,4 +1,4 @@
-package auth
+package authentication
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 	"github.com/motixo/goat-api/internal/usecase/session"
 )
 
-type AuthUseCase struct {
+type AuthenticationUseCase struct {
 	userRepo       repository.UserRepository
 	securityStates authorization.SecurityStateReader
 	sessionUC      session.UseCase
@@ -29,34 +29,42 @@ type AuthUseCase struct {
 	sessionTTL     time.Duration
 }
 
-func NewUsecase(
-	userRepo repository.UserRepository,
-	securityStates authorization.SecurityStateReader,
-	sessionUC session.UseCase,
-	passwordHasher service.PasswordHasher,
-	jwtService service.JWTService,
-	logger pkg.Logger,
-	accessTTL AccessTTL,
-	refreshTTL RefreshTTL,
-	sessionTTL SessionTTL,
+// Dependencies names each application port and lifetime consumed by the
+// authentication workflows. This keeps composition explicit and prevents
+// positional wiring mistakes between compatible dependencies.
+type Dependencies struct {
+	UserRepository      repository.UserRepository
+	SecurityStateReader authorization.SecurityStateReader
+	SessionUseCase      session.UseCase
+	PasswordHasher      service.PasswordHasher
+	JWTService          service.JWTService
+	Logger              pkg.Logger
+	AccessTTL           AccessTTL
+	RefreshTTL          RefreshTTL
+	SessionTTL          SessionTTL
+}
 
-) UseCase {
-	return &AuthUseCase{
-		userRepo:       userRepo,
-		securityStates: securityStates,
-		sessionUC:      sessionUC,
-		passwordHasher: passwordHasher,
-		jwtService:     jwtService,
-		logger:         logger,
-		accessTTL:      time.Duration(accessTTL),
-		refreshTTL:     time.Duration(refreshTTL),
-		sessionTTL:     time.Duration(sessionTTL),
+func NewUsecase(dependencies Dependencies) UseCase {
+	return &AuthenticationUseCase{
+		userRepo:       dependencies.UserRepository,
+		securityStates: dependencies.SecurityStateReader,
+		sessionUC:      dependencies.SessionUseCase,
+		passwordHasher: dependencies.PasswordHasher,
+		jwtService:     dependencies.JWTService,
+		logger:         dependencies.Logger,
+		accessTTL:      time.Duration(dependencies.AccessTTL),
+		refreshTTL:     time.Duration(dependencies.RefreshTTL),
+		sessionTTL:     time.Duration(dependencies.SessionTTL),
 	}
 }
 
-func (us *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (UserOutput, error) {
+func (us *AuthenticationUseCase) Signup(ctx context.Context, input RegisterInput) (UserOutput, error) {
 	us.logger.Info("signup attempt", "email", input.Email)
-	hashedPassword, err := us.passwordHasher.Hash(ctx, input.Password)
+	password, err := valueobject.NewPlainPassword(input.Password)
+	if err != nil {
+		return UserOutput{}, err
+	}
+	digest, err := us.passwordHasher.Hash(ctx, password)
 	if err != nil {
 		us.logger.Error("failed to hash password", "email", input.Email, "error", err)
 		return UserOutput{}, err
@@ -65,7 +73,7 @@ func (us *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (UserOut
 	usr := &entity.User{
 		ID:                uuid.New().String(),
 		Email:             input.Email,
-		Password:          hashedPassword,
+		PasswordDigest:    digest,
 		Status:            valueobject.StatusInactive,
 		Role:              valueobject.RoleClient,
 		CredentialVersion: entity.InitialCredentialVersion,
@@ -88,12 +96,15 @@ func (us *AuthUseCase) Signup(ctx context.Context, input RegisterInput) (UserOut
 	}, nil
 }
 
-func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput, error) {
+func (us *AuthenticationUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput, error) {
 	us.logger.Info("login attempt", "email", input.Email, "ip", input.IP, "device", input.Device)
 
 	userEntity, err := us.userRepo.FindByEmail(ctx, input.Email)
 	if err != nil {
 		us.logger.Error("login failed", "error", err)
+		if stdErrors.Is(err, service.ErrInvalidStoredPasswordHash) {
+			return LoginOutput{}, fmt.Errorf("%w: %w", domainErrors.ErrInvalidCredentials, err)
+		}
 		return LoginOutput{}, err
 	}
 	if userEntity == nil {
@@ -106,7 +117,23 @@ func (us *AuthUseCase) Login(ctx context.Context, input LoginInput) (LoginOutput
 		return LoginOutput{}, err
 	}
 
-	if !us.passwordHasher.Verify(ctx, input.Password, userEntity.Password) {
+	password, err := valueobject.NewPlainPassword(input.Password)
+	if err != nil {
+		return LoginOutput{}, domainErrors.ErrInvalidCredentials
+	}
+	passwordMatches, err := us.passwordHasher.Verify(ctx, password, userEntity.PasswordDigest)
+	if err != nil {
+		if stdErrors.Is(err, service.ErrInvalidStoredPasswordHash) {
+			us.logger.Error(
+				"login failed: stored password credential is invalid",
+				"userID", userEntity.ID,
+				"error", err,
+			)
+			return LoginOutput{}, fmt.Errorf("%w: %w", domainErrors.ErrInvalidCredentials, err)
+		}
+		return LoginOutput{}, err
+	}
+	if !passwordMatches {
 		us.logger.Warn("login failed: invalid password", "email", input.Email, "ip", input.IP, "device", input.Device)
 		return LoginOutput{}, domainErrors.ErrInvalidCredentials
 	}
@@ -210,7 +237,7 @@ func authenticationStatusError(status valueobject.UserStatus) error {
 	}
 }
 
-func (us *AuthUseCase) Logout(ctx context.Context, sessionID, userID string) error {
+func (us *AuthenticationUseCase) Logout(ctx context.Context, sessionID, userID string) error {
 
 	us.logger.Info("user logout requested", "userID", userID)
 
@@ -230,7 +257,7 @@ func (us *AuthUseCase) Logout(ctx context.Context, sessionID, userID string) err
 	return nil
 }
 
-func (us *AuthUseCase) Refresh(ctx context.Context, input RefreshInput) (RefreshOutput, error) {
+func (us *AuthenticationUseCase) Refresh(ctx context.Context, input RefreshInput) (RefreshOutput, error) {
 
 	claims, err := us.jwtService.ParseAndValidate(input.RefreshToken)
 	if err != nil {

@@ -1,4 +1,4 @@
-package auth
+package authentication
 
 // CurrentSessionInvalidError means the server-owned session for the
 // authenticated workflow is missing or no longer valid for that principal.

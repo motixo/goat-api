@@ -8,6 +8,7 @@ import (
 func TestApplicationTypesDoNotDeclareTransportTags(t *testing.T) {
 	types := []reflect.Type{
 		reflect.TypeOf(UserOutput{}),
+		reflect.TypeOf(UserDetail{}),
 		reflect.TypeOf(CreateInput{}),
 		reflect.TypeOf(UpdateInput{}),
 		reflect.TypeOf(UpdateEmailInput{}),
@@ -27,6 +28,21 @@ func TestApplicationTypesDoNotDeclareTransportTags(t *testing.T) {
 					t.Errorf("%s.%s has transport tag %s:%q", typ.Name(), field.Name, tag, value)
 				}
 			}
+		}
+	}
+}
+
+func TestUpdateInputExcludesRoleAndStatusMutationState(t *testing.T) {
+	inputType := reflect.TypeOf(UpdateInput{})
+	for _, forbidden := range []string{
+		"Role",
+		"ExpectedRole",
+		"ActorRole",
+		"ActorID",
+		"Status",
+	} {
+		if _, exists := inputType.FieldByName(forbidden); exists {
+			t.Fatalf("UpdateInput must not contain %s", forbidden)
 		}
 	}
 }

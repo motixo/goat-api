@@ -6,17 +6,24 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
 	"github.com/motixo/goat-api/internal/domain/entity"
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
+	useremailchange "github.com/motixo/goat-api/internal/usecase/user/emailchange"
+	userlisting "github.com/motixo/goat-api/internal/usecase/user/listing"
+	userrolechange "github.com/motixo/goat-api/internal/usecase/user/rolechange"
+	userupdating "github.com/motixo/goat-api/internal/usecase/user/updating"
 )
 
 func TestRepositoryIntegrationLoadsAuthoritativeSecurityStateInOneProjection(t *testing.T) {
@@ -89,7 +96,7 @@ func TestRepositoryIntegrationCRUD(t *testing.T) {
 	original := &entity.User{
 		ID:                "11111111-1111-4111-8111-111111111111",
 		Email:             "original@example.com",
-		Password:          valueobject.PasswordFromHash("$argon2id$original-hash"),
+		PasswordDigest:    testPasswordDigest("$argon2id$original-hash"),
 		Status:            valueobject.StatusActive,
 		Role:              valueobject.RoleClient,
 		CredentialVersion: entity.InitialCredentialVersion,
@@ -114,6 +121,35 @@ func TestRepositoryIntegrationCRUD(t *testing.T) {
 		t.Fatalf("FindByID() error = %v", err)
 	}
 	assertPersistedUserEqual(t, byID, original)
+	if byID.PasswordDigest.IsZero() {
+		t.Fatal("FindByID() did not rehydrate the full aggregate password digest")
+	}
+
+	detail, err := repo.FindDetailByID(ctx, original.ID)
+	if err != nil {
+		t.Fatalf("FindDetailByID() error = %v", err)
+	}
+	if detail.ID != original.ID ||
+		detail.Email != original.Email ||
+		detail.Role != original.Role ||
+		detail.Status != original.Status ||
+		!detail.CreatedAt.Equal(original.CreatedAt) {
+		t.Fatalf("FindDetailByID() = %#v, want public fields from %#v", detail, original)
+	}
+
+	statusSnapshot, err := repo.FindStatusSnapshotByID(ctx, original.ID)
+	if err != nil {
+		t.Fatalf("FindStatusSnapshotByID() error = %v", err)
+	}
+	if statusSnapshot.ID != original.ID ||
+		statusSnapshot.Role != original.Role ||
+		statusSnapshot.Status != original.Status {
+		t.Fatalf(
+			"FindStatusSnapshotByID() = %#v, want status preconditions from %#v",
+			statusSnapshot,
+			original,
+		)
+	}
 
 	byEmail, err := repo.FindByEmail(ctx, original.Email)
 	if err != nil {
@@ -137,24 +173,38 @@ func TestRepositoryIntegrationCRUD(t *testing.T) {
 		t.Fatalf("FindByID(missing) error = %v, want preserved sql.ErrNoRows", err)
 	}
 
-	updateStartedAt := time.Now().UTC()
-	update := &entity.User{
-		ID:       original.ID,
-		Email:    "updated@example.com",
-		Password: valueobject.PasswordFromHash("$argon2id$updated-hash"),
-		Status:   valueobject.StatusSuspended,
-		Role:     valueobject.RoleOperator,
+	_, err = repo.FindDetailByID(ctx, "99999999-9999-4999-8999-999999999999")
+	if !errors.Is(err, domainErrors.ErrUserNotFound) {
+		t.Fatalf("FindDetailByID(missing) error = %v, want ErrUserNotFound", err)
 	}
-	if err := repo.Update(ctx, update); err != nil {
-		t.Fatalf("Update() error = %v", err)
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("FindDetailByID(missing) error = %v, want preserved sql.ErrNoRows", err)
+	}
+
+	_, err = repo.FindStatusSnapshotByID(ctx, "99999999-9999-4999-8999-999999999999")
+	if !errors.Is(err, domainErrors.ErrUserNotFound) {
+		t.Fatalf("FindStatusSnapshotByID(missing) error = %v, want ErrUserNotFound", err)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("FindStatusSnapshotByID(missing) error = %v, want preserved sql.ErrNoRows", err)
+	}
+
+	updateStartedAt := time.Now().UTC()
+	update := userupdating.UserUpdateCommand{
+		UserID:         original.ID,
+		Email:          "updated@example.com",
+		PasswordDigest: testPasswordDigest("$argon2id$updated-hash"),
+	}
+	if err := repo.UpdateUser(ctx, update); err != nil {
+		t.Fatalf("UpdateUser() error = %v", err)
 	}
 
 	updated, err := repo.FindByID(ctx, original.ID)
 	if err != nil {
 		t.Fatalf("FindByID(updated) error = %v", err)
 	}
-	if updated.Email != update.Email || updated.Password.Encoded() != update.Password.Encoded() ||
-		updated.Status != original.Status || updated.Role != update.Role {
+	if updated.Email != update.Email || updated.PasswordDigest.Encoded() != update.PasswordDigest.Encoded() ||
+		updated.Status != original.Status || updated.Role != original.Role {
 		t.Fatalf("updated user = %#v, want values from %#v", updated, update)
 	}
 	if updated.CredentialVersion != original.CredentialVersion+1 {
@@ -192,14 +242,14 @@ func TestRepositoryIntegrationCRUD(t *testing.T) {
 		t.Fatalf("updated status = %s, want suspended", updated.Status)
 	}
 
-	if err := repo.Update(ctx, &entity.User{ID: original.ID}); !errors.Is(err, domainErrors.ErrBadRequest) {
-		t.Fatalf("Update(no fields) error = %v, want ErrBadRequest", err)
+	if err := repo.UpdateUser(ctx, userupdating.UserUpdateCommand{UserID: original.ID}); !errors.Is(err, domainErrors.ErrBadRequest) {
+		t.Fatalf("UpdateUser(no fields) error = %v, want ErrBadRequest", err)
 	}
-	if err := repo.Update(ctx, &entity.User{
-		ID:    "99999999-9999-4999-8999-999999999999",
-		Email: "missing@example.com",
+	if err := repo.UpdateEmail(ctx, useremailchange.UserEmailUpdateCommand{
+		UserID: "99999999-9999-4999-8999-999999999999",
+		Email:  "missing@example.com",
 	}); !errors.Is(err, domainErrors.ErrUserNotFound) {
-		t.Fatalf("Update(missing) error = %v, want ErrUserNotFound", err)
+		t.Fatalf("UpdateEmail(missing) error = %v, want ErrUserNotFound", err)
 	}
 
 	if err := repo.Delete(ctx, original.ID); err != nil {
@@ -214,6 +264,456 @@ func TestRepositoryIntegrationCRUD(t *testing.T) {
 	}
 	if err := repo.Delete(ctx, original.ID); !errors.Is(err, domainErrors.ErrUserNotFound) {
 		t.Fatalf("Delete(missing) error = %v, want ErrUserNotFound", err)
+	}
+}
+
+func TestRepositoryIntegrationGenericUserUpdateCommand(t *testing.T) {
+	repo := newPostgresUserIntegrationRepository(t)
+	ctx := context.Background()
+	createdAt := time.Date(2026, time.July, 27, 6, 0, 0, 0, time.UTC)
+	original := integrationUser(
+		"21111111-1111-4111-8111-111111111111",
+		"generic-update@example.com",
+		valueobject.RoleClient,
+		valueobject.StatusActive,
+		createdAt,
+	)
+	conflicting := integrationUser(
+		"22222222-2222-4222-8222-222222222222",
+		"generic-conflict@example.com",
+		valueobject.RoleClient,
+		valueobject.StatusActive,
+		createdAt,
+	)
+	if err := repo.Create(ctx, original); err != nil {
+		t.Fatalf("Create(original) error = %v", err)
+	}
+	if err := repo.Create(ctx, conflicting); err != nil {
+		t.Fatalf("Create(conflicting) error = %v", err)
+	}
+
+	if err := repo.UpdateUser(ctx, userupdating.UserUpdateCommand{
+		UserID: original.ID,
+		Email:  "email-only@example.com",
+	}); err != nil {
+		t.Fatalf("UpdateUser(email only) error = %v", err)
+	}
+	afterEmail, err := repo.FindByID(ctx, original.ID)
+	if err != nil {
+		t.Fatalf("FindByID(after email) error = %v", err)
+	}
+	if afterEmail.Email != "email-only@example.com" ||
+		afterEmail.PasswordDigest.Encoded() != original.PasswordDigest.Encoded() ||
+		afterEmail.Role != original.Role ||
+		afterEmail.CredentialVersion != original.CredentialVersion {
+		t.Fatalf("email-only update = %#v, want credentials and role unchanged", afterEmail)
+	}
+
+	passwordOnlyDigest := testPasswordDigest("$argon2id$password-only-hash")
+	if err := repo.UpdateUser(ctx, userupdating.UserUpdateCommand{
+		UserID:         original.ID,
+		PasswordDigest: passwordOnlyDigest,
+	}); err != nil {
+		t.Fatalf("UpdateUser(password only) error = %v", err)
+	}
+	afterPassword, err := repo.FindByID(ctx, original.ID)
+	if err != nil {
+		t.Fatalf("FindByID(after password) error = %v", err)
+	}
+	if afterPassword.Email != afterEmail.Email ||
+		afterPassword.PasswordDigest.Encoded() != passwordOnlyDigest.Encoded() ||
+		afterPassword.Role != original.Role ||
+		afterPassword.CredentialVersion != original.CredentialVersion+1 {
+		t.Fatalf("password-only update = %#v, want email and role unchanged", afterPassword)
+	}
+
+	mixedDigest := testPasswordDigest("$argon2id$mixed-update-hash")
+	command := userupdating.UserUpdateCommand{
+		UserID:         original.ID,
+		Email:          "generic-updated@example.com",
+		PasswordDigest: mixedDigest,
+	}
+	if err := repo.UpdateUser(ctx, command); err != nil {
+		t.Fatalf("UpdateUser(mixed) error = %v", err)
+	}
+	stored, err := repo.FindByID(ctx, original.ID)
+	if err != nil {
+		t.Fatalf("FindByID(after mixed update) error = %v", err)
+	}
+	if stored.Email != command.Email ||
+		stored.PasswordDigest.Encoded() != mixedDigest.Encoded() ||
+		stored.Role != original.Role ||
+		stored.Status != original.Status ||
+		stored.CredentialVersion != original.CredentialVersion+2 {
+		t.Fatalf("mixed update = %#v, want email/password atomically updated", stored)
+	}
+
+	conflictDigest := testPasswordDigest("$argon2id$conflict-must-not-persist")
+	assertEmailConflictError(t, repo.UpdateUser(ctx, userupdating.UserUpdateCommand{
+		UserID:         original.ID,
+		Email:          conflicting.Email,
+		PasswordDigest: conflictDigest,
+	}))
+	afterConflict, err := repo.FindByID(ctx, original.ID)
+	if err != nil {
+		t.Fatalf("FindByID(after conflict) error = %v", err)
+	}
+	if afterConflict.Email != stored.Email ||
+		afterConflict.PasswordDigest.Encoded() != stored.PasswordDigest.Encoded() ||
+		afterConflict.CredentialVersion != stored.CredentialVersion {
+		t.Fatalf("failed mixed update partially persisted: before=%#v after=%#v", stored, afterConflict)
+	}
+
+	err = repo.UpdateUser(ctx, userupdating.UserUpdateCommand{
+		UserID: "29999999-9999-4999-8999-999999999999",
+		Email:  "missing@example.com",
+	})
+	if !errors.Is(err, domainErrors.ErrUserNotFound) {
+		t.Fatalf("UpdateUser(missing) error = %v, want ErrUserNotFound", err)
+	}
+
+	err = repo.UpdateUser(ctx, userupdating.UserUpdateCommand{UserID: original.ID})
+	if !errors.Is(err, domainErrors.ErrBadRequest) {
+		t.Fatalf("UpdateUser(no fields) error = %v, want ErrBadRequest", err)
+	}
+}
+
+func TestRepositoryIntegrationFocusedEmailUpdateCommand(t *testing.T) {
+	repo := newPostgresUserIntegrationRepository(t)
+	ctx := context.Background()
+	createdAt := time.Date(2026, time.July, 28, 8, 0, 0, 0, time.UTC)
+	user := integrationUser(
+		"23111111-1111-4111-8111-111111111111",
+		"email-command@example.com",
+		valueobject.RoleOperator,
+		valueobject.StatusActive,
+		createdAt,
+	)
+	conflicting := integrationUser(
+		"23222222-2222-4222-8222-222222222222",
+		"email-command-conflict@example.com",
+		valueobject.RoleClient,
+		valueobject.StatusInactive,
+		createdAt,
+	)
+	if err := repo.Create(ctx, user); err != nil {
+		t.Fatalf("Create(user) error = %v", err)
+	}
+	if err := repo.Create(ctx, conflicting); err != nil {
+		t.Fatalf("Create(conflicting) error = %v", err)
+	}
+
+	updateStartedAt := time.Now().UTC()
+	const updatedEmail = "email-command-updated@example.com"
+	if err := repo.UpdateEmail(ctx, useremailchange.UserEmailUpdateCommand{
+		UserID: user.ID,
+		Email:  updatedEmail,
+	}); err != nil {
+		t.Fatalf("UpdateEmail() error = %v", err)
+	}
+
+	updated, err := repo.FindByID(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("FindByID(updated) error = %v", err)
+	}
+	if updated.Email != updatedEmail {
+		t.Fatalf("updated email = %q, want %q", updated.Email, updatedEmail)
+	}
+	if updated.PasswordDigest.Encoded() != user.PasswordDigest.Encoded() ||
+		updated.Role != user.Role ||
+		updated.Status != user.Status ||
+		updated.CredentialVersion != user.CredentialVersion ||
+		!updated.CreatedAt.Equal(user.CreatedAt) {
+		t.Fatalf("focused email update changed unrelated state: %#v", updated)
+	}
+	if updated.UpdatedAt == nil || updated.UpdatedAt.Before(updateStartedAt.Add(-time.Second)) {
+		t.Fatalf("updated_at = %v, want email-update timestamp", updated.UpdatedAt)
+	}
+
+	assertEmailConflictError(t, repo.UpdateEmail(ctx, useremailchange.UserEmailUpdateCommand{
+		UserID: user.ID,
+		Email:  conflicting.Email,
+	}))
+	afterConflict, err := repo.FindByID(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("FindByID(after conflict) error = %v", err)
+	}
+	if afterConflict.Email != updatedEmail {
+		t.Fatalf("email after conflict = %q, want %q", afterConflict.Email, updatedEmail)
+	}
+
+	if err := repo.UpdateEmail(ctx, useremailchange.UserEmailUpdateCommand{
+		UserID: user.ID,
+	}); !errors.Is(err, domainErrors.ErrBadRequest) {
+		t.Fatalf("UpdateEmail(empty email) error = %v, want ErrBadRequest", err)
+	}
+	if err := repo.UpdateEmail(ctx, useremailchange.UserEmailUpdateCommand{
+		UserID: "99999999-9999-4999-8999-999999999999",
+		Email:  "email-command-missing@example.com",
+	}); !errors.Is(err, domainErrors.ErrUserNotFound) {
+		t.Fatalf("UpdateEmail(missing user) error = %v, want ErrUserNotFound", err)
+	}
+
+	cancelledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	err = repo.UpdateEmail(cancelledCtx, useremailchange.UserEmailUpdateCommand{
+		UserID: user.ID,
+		Email:  "email-command-cancelled@example.com",
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("UpdateEmail(cancelled) error = %v, want context.Canceled", err)
+	}
+}
+
+func TestRepositoryIntegrationFocusedRoleUpdateCommand(t *testing.T) {
+	repo := newPostgresUserIntegrationRepository(t)
+	ctx := context.Background()
+	createdAt := time.Date(2026, time.July, 27, 7, 0, 0, 0, time.UTC)
+	original := integrationUser(
+		"31111111-1111-4111-8111-111111111111",
+		"role-command@example.com",
+		valueobject.RoleClient,
+		valueobject.StatusSuspended,
+		createdAt,
+	)
+	if err := repo.Create(ctx, original); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	command := userrolechange.UserRoleUpdateCommand{
+		UserID:        original.ID,
+		ExpectedRole:  valueobject.RoleClient,
+		RequestedRole: valueobject.RoleOperator,
+	}
+	result, err := repo.UpdateRole(ctx, command)
+	if err != nil {
+		t.Fatalf("UpdateRole() error = %v", err)
+	}
+	assertRoleUpdateResult(
+		t,
+		result,
+		userrolechange.UserRoleUpdateApplied,
+		valueobject.RoleOperator,
+	)
+
+	stored, err := repo.FindByID(ctx, original.ID)
+	if err != nil {
+		t.Fatalf("FindByID(updated) error = %v", err)
+	}
+	if stored.Role != command.RequestedRole {
+		t.Fatalf("stored role = %s, want %s", stored.Role, command.RequestedRole)
+	}
+	if stored.Email != original.Email ||
+		stored.PasswordDigest != original.PasswordDigest ||
+		stored.Status != original.Status ||
+		stored.CredentialVersion != original.CredentialVersion ||
+		!stored.CreatedAt.Equal(original.CreatedAt) {
+		t.Fatalf("role update changed fields outside its command: got %#v, original %#v", stored, original)
+	}
+	if stored.UpdatedAt == nil {
+		t.Fatal("stored updated_at = nil, want role-update timestamp")
+	}
+
+	oldUpdatedAt := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := repo.db.ExecContext(
+		ctx,
+		"UPDATE users SET updated_at = $1 WHERE id = $2",
+		oldUpdatedAt,
+		original.ID,
+	); err != nil {
+		t.Fatalf("set deterministic prior updated_at: %v", err)
+	}
+	sameRoleCommand := userrolechange.UserRoleUpdateCommand{
+		UserID:        original.ID,
+		ExpectedRole:  valueobject.RoleOperator,
+		RequestedRole: valueobject.RoleOperator,
+	}
+	result, err = repo.UpdateRole(ctx, sameRoleCommand)
+	if err != nil {
+		t.Fatalf("UpdateRole(same role) error = %v", err)
+	}
+	assertRoleUpdateResult(
+		t,
+		result,
+		userrolechange.UserRoleUpdateApplied,
+		valueobject.RoleOperator,
+	)
+	stored, err = repo.FindByID(ctx, original.ID)
+	if err != nil {
+		t.Fatalf("FindByID(same role) error = %v", err)
+	}
+	if stored.UpdatedAt == nil || !stored.UpdatedAt.After(oldUpdatedAt) {
+		t.Fatalf("same-role updated_at = %v, want after %v", stored.UpdatedAt, oldUpdatedAt)
+	}
+	if stored.CredentialVersion != original.CredentialVersion {
+		t.Fatalf(
+			"credential version after repeated role update = %d, want %d",
+			stored.CredentialVersion,
+			original.CredentialVersion,
+		)
+	}
+
+	alreadyApplied, err := repo.UpdateRole(ctx, command)
+	if err != nil {
+		t.Fatalf("UpdateRole(already applied) error = %v", err)
+	}
+	assertRoleUpdateResult(
+		t,
+		alreadyApplied,
+		userrolechange.UserRoleUpdateAlreadyApplied,
+		valueobject.RoleOperator,
+	)
+
+	conflict, err := repo.UpdateRole(ctx, userrolechange.UserRoleUpdateCommand{
+		UserID:        original.ID,
+		ExpectedRole:  valueobject.RoleClient,
+		RequestedRole: valueobject.RoleAdmin,
+	})
+	if err != nil {
+		t.Fatalf("UpdateRole(conflict) error = %v", err)
+	}
+	assertRoleUpdateResult(
+		t,
+		conflict,
+		userrolechange.UserRoleUpdateConflict,
+		valueobject.RoleOperator,
+	)
+	stored, err = repo.FindByID(ctx, original.ID)
+	if err != nil {
+		t.Fatalf("FindByID(after conflicting update) error = %v", err)
+	}
+	if stored.Role != valueobject.RoleOperator {
+		t.Fatalf("role after conflicting update = %s, want operator unchanged", stored.Role)
+	}
+
+	notFound, err := repo.UpdateRole(ctx, userrolechange.UserRoleUpdateCommand{
+		UserID:        "39999999-9999-4999-8999-999999999999",
+		ExpectedRole:  valueobject.RoleClient,
+		RequestedRole: valueobject.RoleOperator,
+	})
+	if err != nil {
+		t.Fatalf("UpdateRole(missing) error = %v", err)
+	}
+	assertRoleUpdateResult(
+		t,
+		notFound,
+		userrolechange.UserRoleUpdateNotFound,
+		valueobject.RoleUnknown,
+	)
+
+	for _, invalid := range []userrolechange.UserRoleUpdateCommand{
+		{
+			UserID:        original.ID,
+			ExpectedRole:  valueobject.RoleUnknown,
+			RequestedRole: valueobject.RoleClient,
+		},
+		{
+			UserID:        original.ID,
+			ExpectedRole:  valueobject.RoleOperator,
+			RequestedRole: valueobject.RoleUnknown,
+		},
+	} {
+		if _, err := repo.UpdateRole(ctx, invalid); !errors.Is(err, domainErrors.ErrBadRequest) {
+			t.Fatalf("UpdateRole(invalid role) error = %v, want ErrBadRequest", err)
+		}
+	}
+
+	cancelledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := repo.UpdateRole(cancelledCtx, sameRoleCommand); !errors.Is(err, context.Canceled) {
+		t.Fatalf("UpdateRole(cancelled) error = %v, want context.Canceled", err)
+	}
+
+	if _, err := repo.db.ExecContext(
+		ctx,
+		"UPDATE users SET role = 99 WHERE id = $1",
+		original.ID,
+	); err != nil {
+		t.Fatalf("seed unknown authoritative role: %v", err)
+	}
+	if _, err := repo.UpdateRole(ctx, userrolechange.UserRoleUpdateCommand{
+		UserID:        original.ID,
+		ExpectedRole:  valueobject.RoleClient,
+		RequestedRole: valueobject.RoleAdmin,
+	}); err == nil {
+		t.Fatal("UpdateRole(unknown authoritative role) error = nil")
+	}
+}
+
+func TestRepositoryIntegrationConcurrentConflictingRoleUpdates(t *testing.T) {
+	repo := newConcurrentPostgresUserIntegrationRepository(t)
+	ctx := context.Background()
+	user := integrationUser(
+		"32222222-2222-4222-8222-222222222222",
+		"concurrent-role-command@example.com",
+		valueobject.RoleClient,
+		valueobject.StatusActive,
+		time.Now().UTC(),
+	)
+	if err := repo.Create(ctx, user); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	commands := []userrolechange.UserRoleUpdateCommand{
+		{
+			UserID:        user.ID,
+			ExpectedRole:  valueobject.RoleClient,
+			RequestedRole: valueobject.RoleOperator,
+		},
+		{
+			UserID:        user.ID,
+			ExpectedRole:  valueobject.RoleClient,
+			RequestedRole: valueobject.RoleAdmin,
+		},
+	}
+	ready := &sync.WaitGroup{}
+	ready.Add(len(commands))
+	start := make(chan struct{})
+	results := make([]userrolechange.UserRoleUpdateResult, len(commands))
+	errs := make([]error, len(commands))
+	wait := &sync.WaitGroup{}
+	wait.Add(len(commands))
+	for index := range commands {
+		index := index
+		go func() {
+			defer wait.Done()
+			ready.Done()
+			<-start
+			results[index], errs[index] = repo.UpdateRole(ctx, commands[index])
+		}()
+	}
+	ready.Wait()
+	close(start)
+	wait.Wait()
+
+	outcomes := map[userrolechange.UserRoleUpdateOutcome]int{}
+	for index, err := range errs {
+		if err != nil {
+			t.Fatalf("UpdateRole(%d) error = %v", index, err)
+		}
+		outcomes[results[index].Outcome]++
+	}
+	if outcomes[userrolechange.UserRoleUpdateApplied] != 1 ||
+		outcomes[userrolechange.UserRoleUpdateConflict] != 1 {
+		t.Fatalf(
+			"concurrent outcomes = %v, want one applied and one conflict",
+			outcomes,
+		)
+	}
+
+	stored, err := repo.FindByID(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("FindByID(after concurrent role updates) error = %v", err)
+	}
+	if stored.Role != valueobject.RoleOperator && stored.Role != valueobject.RoleAdmin {
+		t.Fatalf("stored role = %s, want committed operator or admin role", stored.Role)
+	}
+	if stored.CredentialVersion != user.CredentialVersion {
+		t.Fatalf(
+			"credential version = %d, want unchanged %d",
+			stored.CredentialVersion,
+			user.CredentialVersion,
+		)
 	}
 }
 
@@ -335,15 +835,6 @@ func TestRepositoryIntegrationUpdateStatusCompareAndSetOutcomes(t *testing.T) {
 		)
 	}
 
-	if err := repo.Update(ctx, &entity.User{
-		ID:     user.ID,
-		Status: valueobject.StatusSuspended,
-	}); !errors.Is(err, domainErrors.ErrBadRequest) {
-		t.Fatalf(
-			"generic Update(status only) error = %v, want ErrBadRequest",
-			err,
-		)
-	}
 	stored, err := repo.FindByID(ctx, user.ID)
 	if err != nil {
 		t.Fatalf("FindByID(after generic status update) error = %v", err)
@@ -512,9 +1003,9 @@ func TestRepositoryIntegrationTranslatesEmailUniqueViolations(t *testing.T) {
 	if err := repo.Create(ctx, second); err != nil {
 		t.Fatalf("Create(second) error = %v", err)
 	}
-	assertEmailConflictError(t, repo.Update(ctx, &entity.User{
-		ID:    second.ID,
-		Email: first.Email,
+	assertEmailConflictError(t, repo.UpdateEmail(ctx, useremailchange.UserEmailUpdateCommand{
+		UserID: second.ID,
+		Email:  first.Email,
 	}))
 
 	storedSecond, err := repo.FindByID(ctx, second.ID)
@@ -526,8 +1017,8 @@ func TestRepositoryIntegrationTranslatesEmailUniqueViolations(t *testing.T) {
 	}
 
 	const uniqueEmail = "second-updated@example.com"
-	if err := repo.Update(ctx, &entity.User{ID: second.ID, Email: uniqueEmail}); err != nil {
-		t.Fatalf("Update(unique email) error = %v", err)
+	if err := repo.UpdateEmail(ctx, useremailchange.UserEmailUpdateCommand{UserID: second.ID, Email: uniqueEmail}); err != nil {
+		t.Fatalf("UpdateEmail(unique email) error = %v", err)
 	}
 	storedSecond, err = repo.FindByID(ctx, second.ID)
 	if err != nil {
@@ -560,7 +1051,7 @@ func TestRepositoryIntegrationUpdatesPasswordAndCredentialVersionAtomically(t *t
 		t.Fatalf("initial credential version = %d, want %d", initialVersion, entity.InitialCredentialVersion)
 	}
 
-	updatedHash := valueobject.PasswordFromHash("$argon2id$updated-credential-hash")
+	updatedHash := testPasswordDigest("$argon2id$updated-credential-hash")
 	updatedVersion, err := repo.UpdatePassword(ctx, user.ID, updatedHash)
 	if err != nil {
 		t.Fatalf("UpdatePassword() error = %v", err)
@@ -573,8 +1064,8 @@ func TestRepositoryIntegrationUpdatesPasswordAndCredentialVersionAtomically(t *t
 	if err != nil {
 		t.Fatalf("FindByID(after update) error = %v", err)
 	}
-	if updated.Password.Encoded() != updatedHash.Encoded() {
-		t.Fatalf("updated password hash = %q, want %q", updated.Password.Encoded(), updatedHash.Encoded())
+	if updated.PasswordDigest.Encoded() != updatedHash.Encoded() {
+		t.Fatalf("updated password hash = %q, want %q", updated.PasswordDigest.Encoded(), updatedHash.Encoded())
 	}
 	if updated.CredentialVersion != updatedVersion {
 		t.Fatalf("stored credential version = %d, want %d", updated.CredentialVersion, updatedVersion)
@@ -583,7 +1074,7 @@ func TestRepositoryIntegrationUpdatesPasswordAndCredentialVersionAtomically(t *t
 	_, err = repo.UpdatePassword(
 		ctx,
 		user.ID,
-		valueobject.PasswordFromHash("$reject-password-update$"),
+		testPasswordDigest("$reject-password-update$"),
 	)
 	if err == nil {
 		t.Fatal("UpdatePassword(rejected hash) error = nil, want PostgreSQL constraint failure")
@@ -596,10 +1087,10 @@ func TestRepositoryIntegrationUpdatesPasswordAndCredentialVersionAtomically(t *t
 	if err != nil {
 		t.Fatalf("FindByID(after rollback) error = %v", err)
 	}
-	if afterRollback.Password.Encoded() != updatedHash.Encoded() {
+	if afterRollback.PasswordDigest.Encoded() != updatedHash.Encoded() {
 		t.Fatalf(
 			"password after failed statement = %q, want unchanged %q",
-			afterRollback.Password.Encoded(),
+			afterRollback.PasswordDigest.Encoded(),
 			updatedHash.Encoded(),
 		)
 	}
@@ -639,55 +1130,50 @@ func TestRepositoryIntegrationListFiltersCountsAndPaginatesDeterministically(t *
 		}
 	}
 
-	filter := repository.UserListFilter{
+	criteria := userlisting.UserListCriteria{
 		Roles:    []valueobject.UserRole{valueobject.RoleClient},
 		Statuses: []valueobject.UserStatus{valueobject.StatusActive},
 		Search:   "example.com",
 	}
-	firstPage, total, err := repo.List(ctx, 0, 2, filter)
+	firstPage, err := repo.ListUsers(ctx, 0, 2, criteria)
 	if err != nil {
-		t.Fatalf("List(first page) error = %v", err)
+		t.Fatalf("ListUsers(first page) error = %v", err)
 	}
-	if total != 3 {
-		t.Fatalf("List(first page) total = %d, want 3", total)
+	if firstPage.Total != 3 {
+		t.Fatalf("ListUsers(first page) total = %d, want 3", firstPage.Total)
 	}
-	assertUserIDs(t, firstPage, []string{
-		"00000000-0000-4000-8000-000000000003",
-		"00000000-0000-4000-8000-000000000002",
-	})
-	for _, user := range firstPage {
-		if !user.Password.IsZero() {
-			t.Fatalf("List() exposed password for user %s", user.ID)
-		}
-	}
-
-	secondPage, total, err := repo.List(ctx, 2, 2, filter)
-	if err != nil {
-		t.Fatalf("List(second page) error = %v", err)
-	}
-	if total != 3 {
-		t.Fatalf("List(second page) total = %d, want 3", total)
-	}
-	assertUserIDs(t, secondPage, []string{"00000000-0000-4000-8000-000000000001"})
-
-	repeatedPage, repeatedTotal, err := repo.List(ctx, 0, 2, filter)
-	if err != nil {
-		t.Fatalf("List(repeated page) error = %v", err)
-	}
-	if repeatedTotal != total {
-		t.Fatalf("List(repeated page) total = %d, want %d", repeatedTotal, total)
-	}
-	assertUserIDs(t, repeatedPage, []string{
+	assertUserListIDs(t, firstPage.Items, []string{
 		"00000000-0000-4000-8000-000000000003",
 		"00000000-0000-4000-8000-000000000002",
 	})
 
-	empty, emptyTotal, err := repo.List(ctx, 0, 10, repository.UserListFilter{Search: "not-present"})
+	secondPage, err := repo.ListUsers(ctx, 2, 2, criteria)
 	if err != nil {
-		t.Fatalf("List(empty) error = %v", err)
+		t.Fatalf("ListUsers(second page) error = %v", err)
 	}
-	if len(empty) != 0 || emptyTotal != 0 {
-		t.Fatalf("List(empty) = (%#v, %d), want empty users and total 0", empty, emptyTotal)
+	if secondPage.Total != 3 {
+		t.Fatalf("ListUsers(second page) total = %d, want 3", secondPage.Total)
+	}
+	assertUserListIDs(t, secondPage.Items, []string{"00000000-0000-4000-8000-000000000001"})
+
+	repeatedPage, err := repo.ListUsers(ctx, 0, 2, criteria)
+	if err != nil {
+		t.Fatalf("ListUsers(repeated page) error = %v", err)
+	}
+	if repeatedPage.Total != firstPage.Total {
+		t.Fatalf("ListUsers(repeated page) total = %d, want %d", repeatedPage.Total, firstPage.Total)
+	}
+	assertUserListIDs(t, repeatedPage.Items, []string{
+		"00000000-0000-4000-8000-000000000003",
+		"00000000-0000-4000-8000-000000000002",
+	})
+
+	empty, err := repo.ListUsers(ctx, 0, 10, userlisting.UserListCriteria{Search: "not-present"})
+	if err != nil {
+		t.Fatalf("ListUsers(empty) error = %v", err)
+	}
+	if len(empty.Items) != 0 || empty.Total != 0 {
+		t.Fatalf("ListUsers(empty) = %#v, want empty items and total 0", empty)
 	}
 }
 
@@ -738,11 +1224,76 @@ func newPostgresUserIntegrationRepository(t *testing.T) *Repository {
 	return NewRepository(db)
 }
 
+func newConcurrentPostgresUserIntegrationRepository(t *testing.T) *Repository {
+	t.Helper()
+	dsn := os.Getenv("GOAT_POSTGRES_TEST_DSN")
+	if dsn == "" {
+		t.Skip("set GOAT_POSTGRES_TEST_DSN to run PostgreSQL integration tests")
+	}
+
+	adminDB, err := sqlx.Connect("pgx", dsn)
+	if err != nil {
+		t.Fatalf("connect to PostgreSQL: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := adminDB.Close(); err != nil {
+			t.Errorf("close PostgreSQL schema administrator: %v", err)
+		}
+	})
+
+	schemaName := "role_cas_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	quotedSchema := pgx.Identifier{schemaName}.Sanitize()
+	if _, err := adminDB.Exec("CREATE SCHEMA " + quotedSchema); err != nil {
+		t.Fatalf("create role CAS test schema: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := adminDB.Exec("DROP SCHEMA " + quotedSchema + " CASCADE"); err != nil {
+			t.Errorf("drop role CAS test schema: %v", err)
+		}
+	})
+
+	connectionConfig, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("parse PostgreSQL test configuration: %v", err)
+	}
+	connectionConfig.RuntimeParams["search_path"] = schemaName
+	database := stdlib.OpenDB(*connectionConfig)
+	database.SetMaxOpenConns(4)
+	database.SetMaxIdleConns(4)
+	db := sqlx.NewDb(database, "pgx")
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close concurrent PostgreSQL test database: %v", err)
+		}
+	})
+	if err := db.PingContext(context.Background()); err != nil {
+		t.Fatalf("ping concurrent PostgreSQL test database: %v", err)
+	}
+
+	const schema = `
+		CREATE TABLE users (
+			id UUID PRIMARY KEY,
+			email TEXT NOT NULL UNIQUE,
+			password TEXT NOT NULL,
+			status SMALLINT NOT NULL,
+			role SMALLINT NOT NULL,
+			credential_version BIGINT NOT NULL DEFAULT 1 CHECK (credential_version > 0),
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMP NULL
+		)
+	`
+	if _, err := db.Exec(schema); err != nil {
+		t.Fatalf("create concurrent role CAS users table: %v", err)
+	}
+
+	return NewRepository(db)
+}
+
 func integrationUser(id, email string, role valueobject.UserRole, status valueobject.UserStatus, createdAt time.Time) *entity.User {
 	return &entity.User{
 		ID:                id,
 		Email:             email,
-		Password:          valueobject.PasswordFromHash("$argon2id$integration-hash"),
+		PasswordDigest:    testPasswordDigest("$argon2id$integration-hash"),
 		Role:              role,
 		Status:            status,
 		CredentialVersion: entity.InitialCredentialVersion,
@@ -755,7 +1306,7 @@ func assertPersistedUserEqual(t *testing.T, got, want *entity.User) {
 	if got == nil {
 		t.Fatal("persisted user is nil")
 	}
-	if got.ID != want.ID || got.Email != want.Email || got.Password.Encoded() != want.Password.Encoded() ||
+	if got.ID != want.ID || got.Email != want.Email || got.PasswordDigest.Encoded() != want.PasswordDigest.Encoded() ||
 		got.Status != want.Status || got.Role != want.Role ||
 		got.CredentialVersion != want.CredentialVersion ||
 		!got.CreatedAt.Equal(want.CreatedAt) {
@@ -769,7 +1320,7 @@ func assertPersistedUserEqual(t *testing.T, got, want *entity.User) {
 	}
 }
 
-func assertUserIDs(t *testing.T, users []*entity.User, want []string) {
+func assertUserListIDs(t *testing.T, users []userlisting.UserListItem, want []string) {
 	t.Helper()
 	if len(users) != len(want) {
 		t.Fatalf("user count = %d, want %d", len(users), len(want))
@@ -794,6 +1345,23 @@ func assertStatusUpdateResult(
 			result,
 			wantOutcome,
 			wantStatus,
+		)
+	}
+}
+
+func assertRoleUpdateResult(
+	t *testing.T,
+	result userrolechange.UserRoleUpdateResult,
+	wantOutcome userrolechange.UserRoleUpdateOutcome,
+	wantRole valueobject.UserRole,
+) {
+	t.Helper()
+	if result.Outcome != wantOutcome || result.CurrentRole != wantRole {
+		t.Fatalf(
+			"role update result = %#v, want outcome %d and role %s",
+			result,
+			wantOutcome,
+			wantRole,
 		)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/motixo/goat-api/internal/delivery/http/middleware"
 	"github.com/motixo/goat-api/internal/delivery/http/routes"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
@@ -72,18 +73,16 @@ func TestServerStartIsReadyForImmediateShutdown(t *testing.T) {
 }
 
 func TestEveryRegisteredRouteHasExplicitAuthorizationClassification(t *testing.T) {
-	server := NewServer(
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		routeClassificationMetrics{registry: prometheus.NewRegistry()},
-		nil,
+	server, err := NewServer(
+		GinModeRelease,
+		ServerDependencies{
+			MetricsService: routeClassificationMetrics{registry: prometheus.NewRegistry()},
+		},
 		middleware.RateLimitConfig{},
 	)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
 
 	// Keep this expected inventory explicit: a new route must receive a
 	// repository-specific risk classification before this test will pass.
@@ -141,6 +140,92 @@ func TestEveryRegisteredRouteHasExplicitAuthorizationClassification(t *testing.T
 		if _, ok := classified[key]; !ok {
 			t.Errorf("Gin route %s bypassed the classification registry", key)
 		}
+	}
+}
+
+func TestNewServerAppliesConfiguredGinMode(t *testing.T) {
+	previousMode := gin.Mode()
+	t.Cleanup(func() {
+		gin.SetMode(previousMode)
+	})
+
+	tests := []struct {
+		name string
+		mode GinMode
+		want string
+	}{
+		{name: "debug", mode: GinModeDebug, want: gin.DebugMode},
+		{name: "release", mode: GinModeRelease, want: gin.ReleaseMode},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server, err := NewServer(
+				test.mode,
+				ServerDependencies{
+					MetricsService: routeClassificationMetrics{registry: prometheus.NewRegistry()},
+				},
+				middleware.RateLimitConfig{},
+			)
+			if err != nil {
+				t.Fatalf("NewServer() error = %v", err)
+			}
+			if server == nil || server.engine == nil {
+				t.Fatal("NewServer() returned no Gin engine")
+			}
+			if got := gin.Mode(); got != test.want {
+				t.Fatalf("Gin mode = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestNewServerRejectsUnsupportedGinMode(t *testing.T) {
+	previousMode := gin.Mode()
+	server, err := NewServer(
+		GinMode("unsupported"),
+		ServerDependencies{},
+		middleware.RateLimitConfig{},
+	)
+	if err == nil {
+		t.Fatal("NewServer() error = nil, want unsupported Gin mode error")
+	}
+	if server != nil {
+		t.Fatal("NewServer() returned a server for an unsupported Gin mode")
+	}
+	if got := gin.Mode(); got != previousMode {
+		t.Fatalf("Gin mode changed to %q after invalid input; want %q", got, previousMode)
+	}
+}
+
+func TestNewServerConstructsDeliveryComponentsFromNamedDependencies(t *testing.T) {
+	metricsService := routeClassificationMetrics{registry: prometheus.NewRegistry()}
+	rateLimitConfig := middleware.RateLimitConfig{
+		Auth:    middleware.RateLimit{Limit: 11, Window: time.Minute},
+		Public:  middleware.RateLimit{Limit: 22, Window: 2 * time.Minute},
+		Private: middleware.RateLimit{Limit: 33, Window: 3 * time.Minute},
+	}
+
+	server, err := NewServer(
+		GinModeRelease,
+		ServerDependencies{MetricsService: metricsService},
+		rateLimitConfig,
+	)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	if server.metricsService != metricsService {
+		t.Fatal("NewServer() did not retain the named metrics dependency")
+	}
+	if server.rlConfig != rateLimitConfig {
+		t.Fatalf("rate-limit config = %#v, want %#v", server.rlConfig, rateLimitConfig)
+	}
+	if server.authHandler == nil || server.userHandler == nil ||
+		server.sessionHandler == nil || server.permissionHandler == nil {
+		t.Fatal("NewServer() did not construct every handler")
+	}
+	if server.authMiddleware == nil || server.permMiddleware == nil ||
+		server.metricsMiddleware == nil || server.rateLimitMiddleware == nil {
+		t.Fatal("NewServer() did not construct every middleware")
 	}
 }
 

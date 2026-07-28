@@ -33,6 +33,12 @@ func (r UserRole) String() string {
 	return s
 }
 
+// IsKnown reports whether the role is one of the defined authorization roles.
+func (r UserRole) IsKnown() bool {
+	_, ok := roleToString[r]
+	return ok
+}
+
 func ParseUserRole(s string) (UserRole, error) {
 	r, ok := stringToRole[s]
 	if !ok {
@@ -58,6 +64,11 @@ func (r UserRole) CanModifyTargetRole(target UserRole) bool {
 	default:
 		return false
 	}
+}
+
+// CanAssignRole keeps role assignment within the actor's role hierarchy.
+func (r UserRole) CanAssignRole(requested UserRole) bool {
+	return requested.IsKnown() && r.CanModifyTargetRole(requested)
 }
 
 func VisibleRoles(actor UserRole) []UserRole {

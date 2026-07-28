@@ -5,13 +5,14 @@ import (
 	"net/http"
 
 	domainErrors "github.com/motixo/goat-api/internal/domain/errors"
-	"github.com/motixo/goat-api/internal/usecase/auth"
+	"github.com/motixo/goat-api/internal/usecase/authentication"
 	"github.com/motixo/goat-api/internal/usecase/authorization"
 	"github.com/motixo/goat-api/internal/usecase/session"
+	"github.com/motixo/goat-api/internal/usecase/user/rolechange"
 )
 
 func MapError(err error) ProblemDescriptor {
-	var currentSessionInvalid *auth.CurrentSessionInvalidError
+	var currentSessionInvalid *authentication.CurrentSessionInvalidError
 
 	switch {
 	case errors.Is(err, domainErrors.ErrUserAccessBlocked),
@@ -159,6 +160,7 @@ func MapError(err error) ProblemDescriptor {
 		}
 	case errors.Is(err, domainErrors.ErrInvalidUserStatusTransition),
 		errors.Is(err, domainErrors.ErrPermissionAlreadyExists),
+		errors.Is(err, rolechange.ErrConcurrentRoleChange),
 		errors.Is(err, domainErrors.ErrConflict):
 		return ProblemDescriptor{
 			Type:      "/errors/conflict",

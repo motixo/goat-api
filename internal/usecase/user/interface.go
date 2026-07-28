@@ -6,9 +6,9 @@ import (
 
 type UseCase interface {
 	CreateUser(ctx context.Context, input CreateInput) (UserOutput, error)
-	GetUser(ctx context.Context, userID string) (UserOutput, error)
+	GetUser(ctx context.Context, userID string) (UserDetail, error)
 	DeleteUser(ctx context.Context, userID string) error
-	GetUserslist(ctx context.Context, input GetListInput) ([]UserOutput, int64, error)
+	GetUserslist(ctx context.Context, input GetListInput) (UserListResult, error)
 	UpdateUser(ctx context.Context, input UpdateInput) error
 	ChangeEmail(ctx context.Context, input UpdateEmailInput) error
 	ChangePassword(ctx context.Context, input UpdatePassInput) error

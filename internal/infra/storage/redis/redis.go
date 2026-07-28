@@ -4,12 +4,62 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/motixo/goat-api/internal/config"
 	"github.com/motixo/goat-api/internal/pkg"
 	"github.com/redis/go-redis/v9"
 )
+
+// ClientConfig contains the values required to construct and validate a Redis client.
+type ClientConfig struct {
+	Host              string
+	Port              uint16
+	Password          string
+	Database          int
+	ConnectionTimeout time.Duration
+}
+
+// String formats the client configuration without exposing credentials.
+func (c ClientConfig) String() string {
+	return fmt.Sprintf(
+		"{Host:%q Port:%d Password:<redacted> Database:%d ConnectionTimeout:%s}",
+		c.Host,
+		c.Port,
+		c.Database,
+		c.ConnectionTimeout,
+	)
+}
+
+// GoString formats the client configuration without exposing credentials.
+func (c ClientConfig) GoString() string {
+	return c.String()
+}
+
+func (c ClientConfig) validate() error {
+	if strings.TrimSpace(c.Host) == "" {
+		return errors.New("redis host is required")
+	}
+	if c.Port == 0 {
+		return errors.New("redis port must be positive")
+	}
+	if c.Database < 0 {
+		return errors.New("redis database must not be negative")
+	}
+	if c.ConnectionTimeout <= 0 {
+		return errors.New("redis connection timeout must be positive")
+	}
+	return nil
+}
+
+func newClientOptions(cfg ClientConfig) *redis.Options {
+	return &redis.Options{
+		Addr:                  fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
+		Password:              cfg.Password,
+		DB:                    cfg.Database,
+		ContextTimeoutEnabled: true,
+	}
+}
 
 type startupRedisClient interface {
 	Ping(context.Context) *redis.StatusCmd
@@ -18,22 +68,19 @@ type startupRedisClient interface {
 
 func NewClient(
 	ctx context.Context,
-	cfg *config.Config,
+	cfg ClientConfig,
 	logger pkg.Logger,
 ) (*redis.Client, error) {
 	if ctx == nil {
 		return nil, errors.New("redis startup context is required")
 	}
-	if cfg == nil {
-		return nil, errors.New("redis configuration is required")
-	}
-	if cfg.RedisConnectionTimeout <= 0 {
-		return nil, errors.New("redis connection timeout must be positive")
+	if err := cfg.validate(); err != nil {
+		return nil, err
 	}
 
-	rdb := redis.NewClient(cfg.RedisOptions())
+	rdb := redis.NewClient(newClientOptions(cfg))
 
-	if err := initializeRedisClient(ctx, cfg.RedisConnectionTimeout, rdb); err != nil {
+	if err := initializeRedisClient(ctx, cfg.ConnectionTimeout, rdb); err != nil {
 		logger.Error("failed to connect to Redis", "error", err)
 		return nil, err
 	}

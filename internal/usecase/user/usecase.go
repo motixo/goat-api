@@ -12,6 +12,7 @@ import (
 	"github.com/motixo/goat-api/internal/domain/service"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 	"github.com/motixo/goat-api/internal/pkg"
+	"github.com/motixo/goat-api/internal/usecase/user/rolechange"
 )
 
 const (
@@ -22,26 +23,49 @@ const (
 )
 
 type UserUseCase struct {
-	userRepo       repository.UserRepository
-	passwordHasher service.PasswordHasher
-	sessionRepo    repository.SessionRepository
-	logger         pkg.Logger
-	metrics        PasswordChangeCleanupMetrics
+	userRepo         repository.UserRepository
+	userDetailReader UserDetailReader
+	userListReader   UserListReader
+	userStatusReader UserStatusSnapshotReader
+	userUpdateWriter UserUpdateWriter
+	userEmailWriter  UserEmailUpdateWriter
+	userRoleWriter   UserRoleUpdateWriter
+	passwordHasher   service.PasswordHasher
+	sessionRepo      repository.SessionRepository
+	logger           pkg.Logger
+	metrics          PasswordChangeCleanupMetrics
 }
 
-func NewUsecase(
-	r repository.UserRepository,
-	passwordHasher service.PasswordHasher,
-	logger pkg.Logger,
-	sessionRepo repository.SessionRepository,
-	metrics PasswordChangeCleanupMetrics,
-) UseCase {
+// Dependencies names each application port consumed by UserUseCase. Keeping
+// this wiring explicit prevents unrelated ports with compatible concrete
+// implementations from being swapped through positional constructor arguments.
+type Dependencies struct {
+	UserRepository               repository.UserRepository
+	DetailReader                 UserDetailReader
+	ListReader                   UserListReader
+	StatusReader                 UserStatusSnapshotReader
+	UpdateWriter                 UserUpdateWriter
+	EmailWriter                  UserEmailUpdateWriter
+	RoleWriter                   UserRoleUpdateWriter
+	PasswordHasher               service.PasswordHasher
+	Logger                       pkg.Logger
+	SessionRepository            repository.SessionRepository
+	PasswordChangeCleanupMetrics PasswordChangeCleanupMetrics
+}
+
+func NewUsecase(dependencies Dependencies) UseCase {
 	return &UserUseCase{
-		userRepo:       r,
-		passwordHasher: passwordHasher,
-		sessionRepo:    sessionRepo,
-		logger:         logger,
-		metrics:        metrics,
+		userRepo:         dependencies.UserRepository,
+		userDetailReader: dependencies.DetailReader,
+		userListReader:   dependencies.ListReader,
+		userStatusReader: dependencies.StatusReader,
+		userUpdateWriter: dependencies.UpdateWriter,
+		userEmailWriter:  dependencies.EmailWriter,
+		userRoleWriter:   dependencies.RoleWriter,
+		passwordHasher:   dependencies.PasswordHasher,
+		sessionRepo:      dependencies.SessionRepository,
+		logger:           dependencies.Logger,
+		metrics:          dependencies.PasswordChangeCleanupMetrics,
 	}
 }
 
@@ -55,7 +79,11 @@ func (us *UserUseCase) CreateUser(ctx context.Context, input CreateInput) (UserO
 		)
 	}
 
-	hashedPassword, err := us.passwordHasher.Hash(ctx, input.Password)
+	password, err := valueobject.NewPlainPassword(input.Password)
+	if err != nil {
+		return UserOutput{}, err
+	}
+	digest, err := us.passwordHasher.Hash(ctx, password)
 	if err != nil {
 		us.logger.Error("failed to hash password", "email", input.Email, "error", err)
 		return UserOutput{}, err
@@ -64,7 +92,7 @@ func (us *UserUseCase) CreateUser(ctx context.Context, input CreateInput) (UserO
 	usr := &entity.User{
 		ID:                uuid.New().String(),
 		Email:             input.Email,
-		Password:          hashedPassword,
+		PasswordDigest:    digest,
 		Status:            input.Status,
 		Role:              input.Role,
 		CredentialVersion: entity.InitialCredentialVersion,
@@ -87,33 +115,26 @@ func (us *UserUseCase) CreateUser(ctx context.Context, input CreateInput) (UserO
 	}, nil
 }
 
-func (us *UserUseCase) GetUser(ctx context.Context, userID string) (UserOutput, error) {
+func (us *UserUseCase) GetUser(ctx context.Context, userID string) (UserDetail, error) {
 	us.logger.Info("Fetching user by ID", "userID:", userID)
-	user, err := us.userRepo.FindByID(ctx, userID)
+	detail, err := us.userDetailReader.FindDetailByID(ctx, userID)
 	if err != nil {
 		us.logger.Error("Failed to fetch user", "userID", userID, "error", err)
-		return UserOutput{}, err
-	}
-	response := UserOutput{
-		ID:        user.ID,
-		Email:     user.Email,
-		Role:      user.Role.String(),
-		Status:    user.Status.String(),
-		CreatedAt: user.CreatedAt,
+		return UserDetail{}, err
 	}
 	us.logger.Info("User fetched successfully", "userID:", userID)
-	return response, nil
+	return detail, nil
 }
 
-func (us *UserUseCase) GetUserslist(ctx context.Context, input GetListInput) ([]UserOutput, int64, error) {
+func (us *UserUseCase) GetUserslist(ctx context.Context, input GetListInput) (UserListResult, error) {
 	us.logger.Info("Fetching users List")
 
 	allowedRoles := valueobject.VisibleRoles(input.ActorRole)
 	if len(allowedRoles) == 0 {
-		return []UserOutput{}, 0, nil
+		return UserListResult{Items: []UserListItem{}}, nil
 	}
 	if input.Filter.MatchNone {
-		return []UserOutput{}, 0, nil
+		return UserListResult{Items: []UserListItem{}}, nil
 	}
 
 	//INTERSECT allowed and requested roles
@@ -132,36 +153,25 @@ func (us *UserUseCase) GetUserslist(ctx context.Context, input GetListInput) ([]
 		}
 
 		if len(effectiveRoles) == 0 {
-			return []UserOutput{}, 0, nil
+			return UserListResult{Items: []UserListItem{}}, nil
 		}
 		input.Filter.Roles = effectiveRoles
 	} else {
 		input.Filter.Roles = allowedRoles
 	}
 
-	users, total, err := us.userRepo.List(ctx, input.Offset, input.Limit, repository.UserListFilter{
+	result, err := us.userListReader.ListUsers(ctx, input.Offset, input.Limit, UserListCriteria{
 		Statuses: input.Filter.Statuses,
 		Roles:    input.Filter.Roles,
 		Search:   input.Filter.Search,
 	})
 	if err != nil {
 		us.logger.Error("Failed to fetch users List", "error", err)
-		return []UserOutput{}, 0, err
+		return UserListResult{}, err
 	}
 
-	response := make([]UserOutput, 0, len(users))
-	for _, usr := range users {
-		r := UserOutput{
-			ID:        usr.ID,
-			Email:     usr.Email,
-			Role:      usr.Role.String(),
-			Status:    usr.Status.String(),
-			CreatedAt: usr.CreatedAt,
-		}
-		response = append(response, r)
-	}
 	us.logger.Info("Users list fetched successfully")
-	return response, total, nil
+	return result, nil
 }
 
 func (us *UserUseCase) DeleteUser(ctx context.Context, userID string) error {
@@ -200,42 +210,23 @@ func (us *UserUseCase) DeleteUser(ctx context.Context, userID string) error {
 
 func (us *UserUseCase) UpdateUser(ctx context.Context, input UpdateInput) error {
 	us.logger.Info("update user attempt", "target_id", input.UserID)
-	if input.Status != valueobject.StatusUnknown {
-		current, err := us.userRepo.FindByID(ctx, input.UserID)
-		if err != nil {
-			us.logger.Error("failed to verify user status before update", "user_id", input.UserID, "error", err)
-			return err
-		}
-		if current == nil {
-			return errors.ErrUserNotFound
-		}
-		if !current.Status.IsKnown() {
-			return fmt.Errorf("current user status is invalid")
-		}
-		if current.Status != input.Status {
-			return invalidUserStatusTransition(current.Status, input.Status)
-		}
+	password, err := valueobject.NewPlainPassword(input.Password)
+	if err != nil {
+		return err
 	}
-
-	hashedPassword, err := us.passwordHasher.Hash(ctx, input.Password)
+	digest, err := us.passwordHasher.Hash(ctx, password)
 	if err != nil {
 		us.logger.Error("failed to hash password", "user_id", input.UserID, "error", err)
 		return err
 	}
 
-	usr := entity.User{
-		ID:       input.UserID,
-		Email:    input.Email,
-		Password: hashedPassword,
-		// Status changes are owned exclusively by ChangeStatus and its
-		// compare-and-set repository operation. The generic update may verify a
-		// supplied same-status value for API compatibility, but must never
-		// persist it.
-		Status: valueobject.StatusUnknown,
-		Role:   input.Role,
+	command := UserUpdateCommand{
+		UserID:         input.UserID,
+		Email:          input.Email,
+		PasswordDigest: digest,
 	}
 
-	if err := us.userRepo.Update(ctx, &usr); err != nil {
+	if err := us.userUpdateWriter.UpdateUser(ctx, command); err != nil {
 		us.logger.Error("failed to update user", "user_id", input.UserID, "error", err)
 		return err
 	}
@@ -246,12 +237,12 @@ func (us *UserUseCase) UpdateUser(ctx context.Context, input UpdateInput) error 
 func (us *UserUseCase) ChangeEmail(ctx context.Context, input UpdateEmailInput) error {
 	us.logger.Info("update user attempt", "user_id", input.UserID)
 
-	usr := &entity.User{
-		ID:    input.UserID,
-		Email: input.Email,
+	command := UserEmailUpdateCommand{
+		UserID: input.UserID,
+		Email:  input.Email,
 	}
 
-	if err := us.userRepo.Update(ctx, usr); err != nil {
+	if err := us.userEmailWriter.UpdateEmail(ctx, command); err != nil {
 		us.logger.Error("user update failed", "user_id", input.UserID, "error", err)
 		return err
 	}
@@ -276,11 +267,23 @@ func (us *UserUseCase) ChangePassword(ctx context.Context, input UpdatePassInput
 		return errors.ErrUserNotFound
 	}
 
-	if !us.passwordHasher.Verify(ctx, input.OldPassword, user.Password) {
+	currentPassword, err := valueobject.NewPlainPassword(input.OldPassword)
+	if err != nil {
+		return errors.ErrInvalidPassword
+	}
+	passwordMatches, err := us.passwordHasher.Verify(ctx, currentPassword, user.PasswordDigest)
+	if err != nil {
+		return err
+	}
+	if !passwordMatches {
 		return errors.ErrInvalidPassword
 	}
 
-	hashedPassword, err := us.passwordHasher.Hash(ctx, input.NewPassword)
+	newPassword, err := valueobject.NewPlainPassword(input.NewPassword)
+	if err != nil {
+		return err
+	}
+	digest, err := us.passwordHasher.Hash(ctx, newPassword)
 	if err != nil {
 		us.logger.Error("password hashing failed", "user_id", input.UserID, "error", err)
 		return err
@@ -291,7 +294,7 @@ func (us *UserUseCase) ChangePassword(ctx context.Context, input UpdatePassInput
 	// statement. That durable commit is both the security and success boundary:
 	// every session holding the previous version becomes invalid before
 	// best-effort Redis cleanup starts.
-	version, err := us.userRepo.UpdatePassword(ctx, user.ID, hashedPassword)
+	version, err := us.userRepo.UpdatePassword(ctx, user.ID, digest)
 	if err != nil {
 		us.logger.Error("user update failed", "user_id", input.UserID, "error", err)
 		return err
@@ -339,32 +342,102 @@ func (us *UserUseCase) observePasswordChangeCleanupFailure(
 }
 
 func (us *UserUseCase) ChangeRole(ctx context.Context, input UpdateRoleInput) error {
-	us.logger.Info("change role attempt", "UserID:", input.UserID)
-	usr := &entity.User{
-		ID:   input.UserID,
-		Role: input.Role,
+	us.logger.Info(
+		"change role attempt",
+		"target_id", input.UserID,
+		"actor_id", input.ActorID,
+	)
+
+	if !input.Role.IsKnown() {
+		return errors.ErrBadRequest
 	}
-	if err := us.userRepo.Update(ctx, usr); err != nil {
-		us.logger.Error("change user role faild", "user_id", input.UserID, "error", err)
+
+	target, err := us.userStatusReader.FindStatusSnapshotByID(ctx, input.UserID)
+	if err != nil {
+		us.logger.Error(
+			"failed to read target role before role change",
+			"target_id", input.UserID,
+			"actor_id", input.ActorID,
+			"error", err,
+		)
 		return err
+	}
+	if err := authorizeRoleMutation(input.ActorRole, target.Role, input.Role); err != nil {
+		us.logger.Error(
+			"user not permitted to change target role",
+			"target_id", input.UserID,
+			"actor_id", input.ActorID,
+			"error", err,
+		)
+		return err
+	}
+
+	command := UserRoleUpdateCommand{
+		UserID:        input.UserID,
+		ExpectedRole:  target.Role,
+		RequestedRole: input.Role,
+	}
+	result, err := us.userRoleWriter.UpdateRole(ctx, command)
+	if err != nil {
+		us.logger.Error("change user role failed", "user_id", input.UserID, "error", err)
+		return err
+	}
+
+	switch result.Outcome {
+	case UserRoleUpdateApplied:
+		if result.CurrentRole != input.Role {
+			return fmt.Errorf("compare-and-set user role returned an invalid applied result")
+		}
+	case UserRoleUpdateAlreadyApplied:
+		if result.CurrentRole != input.Role {
+			return fmt.Errorf("compare-and-set user role returned an invalid idempotent result")
+		}
+		us.logger.Info(
+			"user role was applied by a concurrent request",
+			"user_id", input.UserID,
+			"role", input.Role.String(),
+		)
+		return nil
+	case UserRoleUpdateNotFound:
+		return fmt.Errorf("compare-and-set user role: %w", errors.ErrUserNotFound)
+	case UserRoleUpdateConflict:
+		if !result.CurrentRole.IsKnown() ||
+			result.CurrentRole == target.Role ||
+			result.CurrentRole == input.Role {
+			return fmt.Errorf("compare-and-set user role returned an invalid conflict result")
+		}
+		return fmt.Errorf("compare-and-set user role: %w", rolechange.ErrConcurrentRoleChange)
+	default:
+		return fmt.Errorf("compare-and-set user role returned an invalid outcome")
 	}
 
 	us.logger.Info("user role changed successfully", "user_id:", input.UserID)
 	return nil
 }
 
+func authorizeRoleMutation(
+	actorRole valueobject.UserRole,
+	targetRole valueobject.UserRole,
+	requestedRole valueobject.UserRole,
+) error {
+	if !targetRole.IsKnown() {
+		return fmt.Errorf("current user role is invalid")
+	}
+	if !actorRole.CanModifyTargetRole(targetRole) ||
+		!actorRole.CanAssignRole(requestedRole) {
+		return errors.ErrForbidden
+	}
+	return nil
+}
+
 func (us *UserUseCase) ChangeStatus(ctx context.Context, input UpdateStatusInput) error {
 	us.logger.Info("change status attempt", "target_id", input.UserID, "actor_id", input.ActorID)
 
-	target, err := us.userRepo.FindByID(ctx, input.UserID)
+	target, err := us.userStatusReader.FindStatusSnapshotByID(ctx, input.UserID)
 	if err != nil {
 		us.logger.Error("change user status faild", "target_id", input.UserID, "actor_id", input.ActorID, "error", err)
 		return err
 	}
-	if target == nil {
-		return errors.ErrUserNotFound
-	}
-
 	if !input.ActorRole.CanModifyTargetRole(target.Role) {
 		us.logger.Error("user not permission to perform this action", "target_id", input.UserID, "actor_id", input.ActorID)
 		return errors.ErrForbidden

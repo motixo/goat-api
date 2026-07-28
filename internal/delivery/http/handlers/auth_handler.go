@@ -6,15 +6,15 @@ import (
 	"github.com/motixo/goat-api/internal/delivery/http/middleware"
 	"github.com/motixo/goat-api/internal/delivery/http/response"
 	"github.com/motixo/goat-api/internal/pkg"
-	"github.com/motixo/goat-api/internal/usecase/auth"
+	"github.com/motixo/goat-api/internal/usecase/authentication"
 )
 
 type AuthHandler struct {
-	usecase auth.UseCase
+	usecase authentication.UseCase
 	logger  pkg.Logger
 }
 
-func NewAuthHandler(usecase auth.UseCase, logger pkg.Logger) *AuthHandler {
+func NewAuthHandler(usecase authentication.UseCase, logger pkg.Logger) *AuthHandler {
 	return &AuthHandler{
 		usecase: usecase,
 		logger:  logger,
@@ -30,7 +30,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	input := auth.LoginInput{
+	input := authentication.LoginInput{
 		Email:    request.Email,
 		Password: request.Password,
 		IP:       c.ClientIP(),
@@ -55,7 +55,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	output, err := h.usecase.Signup(c.Request.Context(), auth.RegisterInput{
+	output, err := h.usecase.Signup(c.Request.Context(), authentication.RegisterInput{
 		Email:    request.Email,
 		Password: request.Password,
 	})
@@ -76,7 +76,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	input := auth.RefreshInput{
+	input := authentication.RefreshInput{
 		RefreshToken: request.RefreshToken,
 		IP:           c.ClientIP(),
 		Device:       c.GetHeader("User-Agent"),

@@ -3,13 +3,88 @@ package redis
 import (
 	"context"
 	"errors"
+	"fmt"
+	"go/build"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/motixo/goat-api/internal/config"
 	goredis "github.com/redis/go-redis/v9"
 )
+
+func TestClientConfigMapsRedisOptionsExactly(t *testing.T) {
+	t.Parallel()
+
+	cfg := ClientConfig{
+		Host:              "redis.internal",
+		Port:              6380,
+		Password:          "redis-secret",
+		Database:          2,
+		ConnectionTimeout: 8 * time.Second,
+	}
+
+	options := newClientOptions(cfg)
+	if options.Addr != "redis.internal:6380" {
+		t.Fatalf("Addr = %q, want %q", options.Addr, "redis.internal:6380")
+	}
+	if options.Password != cfg.Password {
+		t.Fatal("Password was not preserved in adapter-owned Redis options")
+	}
+	if options.DB != cfg.Database {
+		t.Fatalf("DB = %d, want %d", options.DB, cfg.Database)
+	}
+	if !options.ContextTimeoutEnabled {
+		t.Fatal("ContextTimeoutEnabled = false, want true")
+	}
+	if options.Username != "" ||
+		options.Protocol != 0 ||
+		options.PoolSize != 0 ||
+		options.TLSConfig != nil ||
+		options.DialTimeout != 0 ||
+		options.ReadTimeout != 0 ||
+		options.WriteTimeout != 0 {
+		t.Fatalf("unconfigured Redis options changed from library defaults: %#v", options)
+	}
+}
+
+func TestClientConfigFormattingRedactsPassword(t *testing.T) {
+	t.Parallel()
+
+	const password = "redis-client-config-secret"
+	cfg := ClientConfig{
+		Host:              "redis.internal",
+		Port:              6380,
+		Password:          password,
+		Database:          2,
+		ConnectionTimeout: time.Second,
+	}
+
+	formatted := fmt.Sprintf("%v %+v %#v", cfg, cfg, cfg)
+	if strings.Contains(formatted, password) {
+		t.Fatalf("formatted ClientConfig exposed Redis credentials: %s", formatted)
+	}
+	if !strings.Contains(formatted, "<redacted>") {
+		t.Fatalf("formatted ClientConfig = %q, want explicit redaction", formatted)
+	}
+}
+
+func TestRedisAdapterDoesNotLoadProcessEnvironmentOrApplicationConfig(t *testing.T) {
+	t.Parallel()
+
+	pkg, err := build.Default.ImportDir(".", build.IgnoreVendor)
+	if err != nil {
+		t.Fatalf("inspect Redis adapter imports: %v", err)
+	}
+	forbidden := map[string]struct{}{
+		"github.com/motixo/goat-api/internal/config": {},
+		"os": {},
+	}
+	for _, importPath := range pkg.Imports {
+		if _, found := forbidden[importPath]; found {
+			t.Errorf("Redis adapter imports forbidden package %q", importPath)
+		}
+	}
+}
 
 func TestInitializeRedisClientValidatesConnectionWithoutClosing(t *testing.T) {
 	t.Parallel()
@@ -144,33 +219,58 @@ func TestInitializeRedisClientPreservesValidationAndCleanupErrors(t *testing.T) 
 func TestNewClientRejectsInvalidStartupInputs(t *testing.T) {
 	t.Parallel()
 
-	validConfig := &config.Config{
-		RedisHost:              "127.0.0.1",
-		RedisPort:              "6379",
-		RedisConnectionTimeout: time.Second,
+	validConfig := ClientConfig{
+		Host:              "127.0.0.1",
+		Port:              6379,
+		ConnectionTimeout: time.Second,
 	}
 	tests := []struct {
 		name string
 		ctx  context.Context
-		cfg  *config.Config
+		cfg  ClientConfig
 	}{
 		{name: "missing context", cfg: validConfig},
-		{name: "missing configuration", ctx: context.Background()},
+		{
+			name: "missing host",
+			ctx:  context.Background(),
+			cfg: ClientConfig{
+				Port:              6379,
+				ConnectionTimeout: time.Second,
+			},
+		},
+		{
+			name: "missing port",
+			ctx:  context.Background(),
+			cfg: ClientConfig{
+				Host:              "127.0.0.1",
+				ConnectionTimeout: time.Second,
+			},
+		},
+		{
+			name: "negative database",
+			ctx:  context.Background(),
+			cfg: ClientConfig{
+				Host:              "127.0.0.1",
+				Port:              6379,
+				Database:          -1,
+				ConnectionTimeout: time.Second,
+			},
+		},
 		{
 			name: "zero timeout",
 			ctx:  context.Background(),
-			cfg: &config.Config{
-				RedisHost: "127.0.0.1",
-				RedisPort: "6379",
+			cfg: ClientConfig{
+				Host: "127.0.0.1",
+				Port: 6379,
 			},
 		},
 		{
 			name: "negative timeout",
 			ctx:  context.Background(),
-			cfg: &config.Config{
-				RedisHost:              "127.0.0.1",
-				RedisPort:              "6379",
-				RedisConnectionTimeout: -time.Second,
+			cfg: ClientConfig{
+				Host:              "127.0.0.1",
+				Port:              6379,
+				ConnectionTimeout: -time.Second,
 			},
 		},
 	}
@@ -194,11 +294,11 @@ func TestNewClientConnectionRefusedDoesNotExposeCredentials(t *testing.T) {
 
 	const password = "redis-startup-test-secret"
 	logger := &startupTestLogger{}
-	client, err := NewClient(context.Background(), &config.Config{
-		RedisHost:              "127.0.0.1",
-		RedisPort:              "1",
-		RedisPassword:          password,
-		RedisConnectionTimeout: 100 * time.Millisecond,
+	client, err := NewClient(context.Background(), ClientConfig{
+		Host:              "127.0.0.1",
+		Port:              1,
+		Password:          password,
+		ConnectionTimeout: 100 * time.Millisecond,
 	}, logger)
 	if client != nil {
 		_ = client.Close()

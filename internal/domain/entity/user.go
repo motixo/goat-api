@@ -11,7 +11,7 @@ const InitialCredentialVersion int64 = 1
 type User struct {
 	ID                string
 	Email             string
-	Password          valueobject.Password
+	PasswordDigest    valueobject.PasswordDigest
 	Status            valueobject.UserStatus
 	Role              valueobject.UserRole
 	CredentialVersion int64

@@ -6,7 +6,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/motixo/goat-api/internal/domain/entity"
 	"github.com/motixo/goat-api/internal/domain/repository"
 	"github.com/motixo/goat-api/internal/domain/valueobject"
 )
@@ -21,11 +20,16 @@ func TestUserAuthorizationMutationsUseOnlyAuthoritativeAdapters(t *testing.T) {
 			name: "role change",
 			change: func(usecase UseCase) error {
 				return usecase.ChangeRole(context.Background(), UpdateRoleInput{
-					UserID: "user-1",
-					Role:   valueobject.RoleOperator,
+					UserID:    "user-1",
+					ActorID:   "admin-1",
+					ActorRole: valueobject.RoleAdmin,
+					Role:      valueobject.RoleOperator,
 				})
 			},
-			wantCalls: []string{"user.update"},
+			wantCalls: []string{
+				"user.find_status_snapshot",
+				"user.update_role",
+			},
 		},
 		{
 			name: "status change",
@@ -38,7 +42,7 @@ func TestUserAuthorizationMutationsUseOnlyAuthoritativeAdapters(t *testing.T) {
 				})
 			},
 			wantCalls: []string{
-				"user.find_by_id",
+				"user.find_status_snapshot",
 				"session.block_delete_all",
 				"user.update_status",
 			},
@@ -48,20 +52,21 @@ func TestUserAuthorizationMutationsUseOnlyAuthoritativeAdapters(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			recorder := &mutationCallRecorder{}
-			usecase := NewUsecase(
-				&mutationUserRepository{
-					recorder: recorder,
-					user: &entity.User{
-						ID:     "user-1",
-						Role:   valueobject.RoleClient,
-						Status: valueobject.StatusActive,
-					},
+			users := &mutationUserRepository{
+				recorder: recorder,
+				snapshot: UserStatusSnapshot{
+					ID:     "user-1",
+					Role:   valueobject.RoleClient,
+					Status: valueobject.StatusActive,
 				},
-				nil,
-				mutationLogger{},
-				&mutationSessionRepository{recorder: recorder},
-				nil,
-			)
+			}
+			usecase := NewUsecase(Dependencies{
+				UserRepository:    users,
+				StatusReader:      users,
+				RoleWriter:        users,
+				Logger:            mutationLogger{},
+				SessionRepository: &mutationSessionRepository{recorder: recorder},
+			})
 
 			if err := test.change(usecase); err != nil {
 				t.Fatalf("change error = %v", err)
@@ -83,11 +88,16 @@ func TestUserAuthorizationMutationsPropagatePersistenceFailures(t *testing.T) {
 			name: "role change",
 			change: func(usecase UseCase) error {
 				return usecase.ChangeRole(context.Background(), UpdateRoleInput{
-					UserID: "user-1",
-					Role:   valueobject.RoleOperator,
+					UserID:    "user-1",
+					ActorID:   "admin-1",
+					ActorRole: valueobject.RoleAdmin,
+					Role:      valueobject.RoleOperator,
 				})
 			},
-			wantCalls: []string{"user.update"},
+			wantCalls: []string{
+				"user.find_status_snapshot",
+				"user.update_role",
+			},
 		},
 		{
 			name: "status change",
@@ -100,7 +110,7 @@ func TestUserAuthorizationMutationsPropagatePersistenceFailures(t *testing.T) {
 				})
 			},
 			wantCalls: []string{
-				"user.find_by_id",
+				"user.find_status_snapshot",
 				"session.block_delete_all",
 				"user.update_status",
 			},
@@ -111,21 +121,22 @@ func TestUserAuthorizationMutationsPropagatePersistenceFailures(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			persistenceErr := errors.New("postgres update failed")
 			recorder := &mutationCallRecorder{}
-			usecase := NewUsecase(
-				&mutationUserRepository{
-					recorder: recorder,
-					err:      persistenceErr,
-					user: &entity.User{
-						ID:     "user-1",
-						Role:   valueobject.RoleClient,
-						Status: valueobject.StatusActive,
-					},
+			users := &mutationUserRepository{
+				recorder: recorder,
+				err:      persistenceErr,
+				snapshot: UserStatusSnapshot{
+					ID:     "user-1",
+					Role:   valueobject.RoleClient,
+					Status: valueobject.StatusActive,
 				},
-				nil,
-				mutationLogger{},
-				&mutationSessionRepository{recorder: recorder},
-				nil,
-			)
+			}
+			usecase := NewUsecase(Dependencies{
+				UserRepository:    users,
+				StatusReader:      users,
+				RoleWriter:        users,
+				Logger:            mutationLogger{},
+				SessionRepository: &mutationSessionRepository{recorder: recorder},
+			})
 
 			err := test.change(usecase)
 			if !errors.Is(err, persistenceErr) {
@@ -150,17 +161,26 @@ type mutationUserRepository struct {
 	repository.UserRepository
 	recorder *mutationCallRecorder
 	err      error
-	user     *entity.User
+	snapshot UserStatusSnapshot
 }
 
-func (r *mutationUserRepository) FindByID(context.Context, string) (*entity.User, error) {
-	r.recorder.record("user.find_by_id")
-	return r.user, nil
+func (r *mutationUserRepository) FindStatusSnapshotByID(
+	context.Context,
+	string,
+) (UserStatusSnapshot, error) {
+	r.recorder.record("user.find_status_snapshot")
+	return r.snapshot, nil
 }
 
-func (r *mutationUserRepository) Update(context.Context, *entity.User) error {
-	r.recorder.record("user.update")
-	return r.err
+func (r *mutationUserRepository) UpdateRole(
+	_ context.Context,
+	command UserRoleUpdateCommand,
+) (UserRoleUpdateResult, error) {
+	r.recorder.record("user.update_role")
+	return UserRoleUpdateResult{
+		Outcome:     UserRoleUpdateApplied,
+		CurrentRole: command.RequestedRole,
+	}, r.err
 }
 
 func (r *mutationUserRepository) UpdateStatus(

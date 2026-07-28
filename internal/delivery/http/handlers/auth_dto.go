@@ -3,7 +3,7 @@ package handlers
 import (
 	"time"
 
-	"github.com/motixo/goat-api/internal/usecase/auth"
+	"github.com/motixo/goat-api/internal/usecase/authentication"
 )
 
 type loginRequest struct {
@@ -43,7 +43,7 @@ type refreshResponse struct {
 	RefreshTokenExpiresAt time.Time `json:"refresh_token_expires_at"`
 }
 
-func newAuthUserResponse(output auth.UserOutput) authUserResponse {
+func newAuthUserResponse(output authentication.UserOutput) authUserResponse {
 	return authUserResponse{
 		ID:        output.ID,
 		Email:     output.Email,
@@ -53,7 +53,7 @@ func newAuthUserResponse(output auth.UserOutput) authUserResponse {
 	}
 }
 
-func newLoginResponse(output auth.LoginOutput) loginResponse {
+func newLoginResponse(output authentication.LoginOutput) loginResponse {
 	return loginResponse{
 		AccessToken:           output.AccessToken,
 		AccessTokenExpiresAt:  output.AccessTokenExpiresAt,
@@ -63,7 +63,7 @@ func newLoginResponse(output auth.LoginOutput) loginResponse {
 	}
 }
 
-func newRefreshResponse(output auth.RefreshOutput) refreshResponse {
+func newRefreshResponse(output authentication.RefreshOutput) refreshResponse {
 	return refreshResponse{
 		AccessToken:           output.AccessToken,
 		AccessTokenExpiresAt:  output.AccessTokenExpiresAt,
