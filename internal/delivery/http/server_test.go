@@ -6,6 +6,8 @@ import (
 	"io"
 	"net"
 	netHTTP "net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -74,7 +76,7 @@ func TestServerStartIsReadyForImmediateShutdown(t *testing.T) {
 
 func TestEveryRegisteredRouteHasExplicitAuthorizationClassification(t *testing.T) {
 	server, err := NewServer(
-		GinModeRelease,
+		testServerConfig(GinModeRelease),
 		ServerDependencies{
 			MetricsService: routeClassificationMetrics{registry: prometheus.NewRegistry()},
 		},
@@ -160,7 +162,7 @@ func TestNewServerAppliesConfiguredGinMode(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			server, err := NewServer(
-				test.mode,
+				testServerConfig(test.mode),
 				ServerDependencies{
 					MetricsService: routeClassificationMetrics{registry: prometheus.NewRegistry()},
 				},
@@ -181,8 +183,9 @@ func TestNewServerAppliesConfiguredGinMode(t *testing.T) {
 
 func TestNewServerRejectsUnsupportedGinMode(t *testing.T) {
 	previousMode := gin.Mode()
+	config := testServerConfig(GinMode("unsupported"))
 	server, err := NewServer(
-		GinMode("unsupported"),
+		config,
 		ServerDependencies{},
 		middleware.RateLimitConfig{},
 	)
@@ -206,7 +209,7 @@ func TestNewServerConstructsDeliveryComponentsFromNamedDependencies(t *testing.T
 	}
 
 	server, err := NewServer(
-		GinModeRelease,
+		testServerConfig(GinModeRelease),
 		ServerDependencies{MetricsService: metricsService},
 		rateLimitConfig,
 	)
@@ -226,6 +229,166 @@ func TestNewServerConstructsDeliveryComponentsFromNamedDependencies(t *testing.T
 	if server.authMiddleware == nil || server.permMiddleware == nil ||
 		server.metricsMiddleware == nil || server.rateLimitMiddleware == nil {
 		t.Fatal("NewServer() did not construct every middleware")
+	}
+}
+
+func TestNewServerAppliesHTTPIngressConfiguration(t *testing.T) {
+	config := testServerConfig(GinModeRelease)
+	config.ReadHeaderTimeout = 4 * time.Second
+	config.ReadTimeout = 12 * time.Second
+	config.WriteTimeout = 25 * time.Second
+	config.IdleTimeout = 55 * time.Second
+	config.MaxHeaderBytes = 32 << 10
+
+	server, err := NewServer(
+		config,
+		ServerDependencies{
+			MetricsService: routeClassificationMetrics{registry: prometheus.NewRegistry()},
+		},
+		middleware.RateLimitConfig{},
+	)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	if got := server.httpServer.ReadHeaderTimeout; got != config.ReadHeaderTimeout {
+		t.Errorf("ReadHeaderTimeout = %s, want %s", got, config.ReadHeaderTimeout)
+	}
+	if got := server.httpServer.ReadTimeout; got != config.ReadTimeout {
+		t.Errorf("ReadTimeout = %s, want %s", got, config.ReadTimeout)
+	}
+	if got := server.httpServer.WriteTimeout; got != config.WriteTimeout {
+		t.Errorf("WriteTimeout = %s, want %s", got, config.WriteTimeout)
+	}
+	if got := server.httpServer.IdleTimeout; got != config.IdleTimeout {
+		t.Errorf("IdleTimeout = %s, want %s", got, config.IdleTimeout)
+	}
+	if got := server.httpServer.MaxHeaderBytes; got != config.MaxHeaderBytes {
+		t.Errorf("MaxHeaderBytes = %d, want %d", got, config.MaxHeaderBytes)
+	}
+}
+
+func TestNewServerRejectsInvalidHTTPIngressConfiguration(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*ServerConfig)
+	}{
+		{name: "read-header timeout", mutate: func(config *ServerConfig) { config.ReadHeaderTimeout = 0 }},
+		{name: "read timeout", mutate: func(config *ServerConfig) { config.ReadTimeout = 0 }},
+		{name: "read-header exceeds read", mutate: func(config *ServerConfig) { config.ReadHeaderTimeout = config.ReadTimeout + time.Second }},
+		{name: "write timeout", mutate: func(config *ServerConfig) { config.WriteTimeout = 0 }},
+		{name: "idle timeout", mutate: func(config *ServerConfig) { config.IdleTimeout = 0 }},
+		{name: "header bytes", mutate: func(config *ServerConfig) { config.MaxHeaderBytes = 0 }},
+		{name: "body bytes", mutate: func(config *ServerConfig) { config.MaxRequestBodyBytes = 0 }},
+		{name: "trusted proxy", mutate: func(config *ServerConfig) { config.TrustedProxies = []string{"not-an-ip"} }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config := testServerConfig(GinModeRelease)
+			test.mutate(&config)
+			server, err := NewServer(config, ServerDependencies{}, middleware.RateLimitConfig{})
+			if err == nil {
+				t.Fatal("NewServer() error = nil, want invalid ingress configuration error")
+			}
+			if server != nil {
+				t.Fatal("NewServer() returned a server for invalid ingress configuration")
+			}
+		})
+	}
+}
+
+func TestNewServerLimitsRequestBodyReads(t *testing.T) {
+	config := testServerConfig(GinModeRelease)
+	config.MaxRequestBodyBytes = 8
+	server, err := NewServer(
+		config,
+		ServerDependencies{
+			MetricsService: routeClassificationMetrics{registry: prometheus.NewRegistry()},
+		},
+		middleware.RateLimitConfig{},
+	)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	var readErr error
+	server.engine.POST("/body-limit-test", func(c *gin.Context) {
+		_, readErr = io.ReadAll(c.Request.Body)
+		c.Status(netHTTP.StatusNoContent)
+	})
+
+	exactRequest := httptest.NewRequest(netHTTP.MethodPost, "/body-limit-test", strings.NewReader("12345678"))
+	server.engine.ServeHTTP(httptest.NewRecorder(), exactRequest)
+	if readErr != nil {
+		t.Fatalf("reading body at configured limit returned %v", readErr)
+	}
+
+	oversizedRequest := httptest.NewRequest(netHTTP.MethodPost, "/body-limit-test", strings.NewReader("123456789"))
+	server.engine.ServeHTTP(httptest.NewRecorder(), oversizedRequest)
+	var maxBytesErr *netHTTP.MaxBytesError
+	if !errors.As(readErr, &maxBytesErr) {
+		t.Fatalf("reading oversized body error = %v, want *http.MaxBytesError", readErr)
+	}
+	if maxBytesErr.Limit != config.MaxRequestBodyBytes {
+		t.Fatalf("body limit = %d, want %d", maxBytesErr.Limit, config.MaxRequestBodyBytes)
+	}
+}
+
+func TestNewServerUsesForwardedClientIPOnlyFromTrustedProxy(t *testing.T) {
+	tests := []struct {
+		name           string
+		trustedProxies []string
+		wantClientIP   string
+	}{
+		{name: "untrusted proxy header ignored", wantClientIP: "198.51.100.10"},
+		{
+			name:           "trusted proxy header accepted",
+			trustedProxies: []string{"198.51.100.10"},
+			wantClientIP:   "203.0.113.25",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config := testServerConfig(GinModeRelease)
+			config.TrustedProxies = test.trustedProxies
+			server, err := NewServer(
+				config,
+				ServerDependencies{
+					MetricsService: routeClassificationMetrics{registry: prometheus.NewRegistry()},
+				},
+				middleware.RateLimitConfig{},
+			)
+			if err != nil {
+				t.Fatalf("NewServer() error = %v", err)
+			}
+
+			server.engine.GET("/client-ip-test", func(c *gin.Context) {
+				c.String(netHTTP.StatusOK, c.ClientIP())
+			})
+			request := httptest.NewRequest(netHTTP.MethodGet, "/client-ip-test", nil)
+			request.RemoteAddr = "198.51.100.10:4321"
+			request.Header.Set("X-Forwarded-For", "203.0.113.25")
+			recorder := httptest.NewRecorder()
+			server.engine.ServeHTTP(recorder, request)
+
+			if got := recorder.Body.String(); got != test.wantClientIP {
+				t.Fatalf("ClientIP() = %q, want %q", got, test.wantClientIP)
+			}
+		})
+	}
+}
+
+func testServerConfig(mode GinMode) ServerConfig {
+	return ServerConfig{
+		GinMode:             mode,
+		ReadHeaderTimeout:   5 * time.Second,
+		ReadTimeout:         15 * time.Second,
+		WriteTimeout:        30 * time.Second,
+		IdleTimeout:         time.Minute,
+		MaxHeaderBytes:      64 << 10,
+		MaxRequestBodyBytes: 1 << 20,
 	}
 }
 

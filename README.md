@@ -141,7 +141,8 @@ JSON field: it is ignored.
 
 ### Project Structure
 ```text
-├── cmd/app/                # Entry point & Wire DI configuration
+├── cmd/app/                # Application entry point and composition root
+├── cmd/migrate/            # Deployment-owned PostgreSQL migration command
 ├── internal/
 │   ├── config/             # Typed process-environment configuration
 │   ├── delivery/http/      # Handlers, Middleware, and Gin Routes
@@ -163,7 +164,7 @@ cd goat-api
 cp .env.example .env
 # Edit .env with your configuration
 
-# 3. Build and run; Make exports .env into the child process
+# 3. Build, apply pending migrations, and run; Make exports .env into each child process
 make run
 
 # 4. Run tests
@@ -176,7 +177,9 @@ make docker-build
 ### Available Make Commands
 ```bash
 make build          # Build the application
-make run            # Build and run with .env exported as process environment
+make migrate        # Build and atomically apply pending PostgreSQL migrations
+make migrate-validate # Verify the database matches the embedded migration set
+make run            # Migrate, then run with .env exported as process environment
 make test           # Run all tests
 make clean          # Clean build artifacts
 make docker-build   # Build Docker image
@@ -192,6 +195,7 @@ while Docker accepts it through `--env-file`. When invoking the binary or
 set -a
 . ./.env
 set +a
+go run ./cmd/migrate up
 go run ./cmd/app
 ```
 
@@ -205,13 +209,45 @@ seeding cannot use the documented default credentials.
 Cancellation can reject password work before admission or while waiting for a
 slot; synchronous Argon2id work already in progress runs to completion.
 
+HTTP request headers, bodies, and connection phases have explicit bounded
+defaults documented in `.env.example`. Forwarded client-IP headers are ignored
+by default. Deployments behind a reverse proxy must set
+`HTTP_TRUSTED_PROXIES` to that proxy's explicit IP address or CIDR range so IP
+rate limiting cannot be influenced by untrusted forwarding headers.
+
+### Database migrations
+
+PostgreSQL schema changes are immutable, sequential SQL files embedded in the
+PostgreSQL adapter. `migrate up` serializes concurrent migration jobs with a
+PostgreSQL advisory lock and applies the complete pending batch in one
+transaction. Applied names and SHA-256 checksums are recorded in
+`schema_migrations`; changed or unknown history fails closed.
+
+The application process never applies DDL. During bootstrap it performs a
+read-only migration-history check and refuses to construct Redis, workers, or
+the HTTP runtime when migrations are missing, pending, or drifted. Run exactly
+one deployment migration job before starting or rolling out application
+instances, then optionally use `migrate validate` as a deployment gate.
+
+All migrations in this repository must remain PostgreSQL-transaction compatible.
+There is intentionally no automatic retry or down-migration path. This reusable
+base has no production data compatibility requirement; an older development
+database created before versioned migrations should be reset rather than
+receiving compatibility metadata manually.
+
 ### Docker Deployment
 
 ```bash
 # Build Image
 docker build -t goat-api .
 
-# Run Container
+# Apply migrations as a deployment step
+docker run --rm \
+  --env-file .env \
+  --entrypoint /app/migrate \
+  goat-api up
+
+# Start the application after migrations succeed
 docker run -p 8080:8080 \
   --env-file .env \
   --name goat-api \

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -17,6 +18,12 @@ const (
 	maximumDBInitializationTimeout = 30 * time.Minute
 	maximumRedisConnectionTimeout  = time.Minute
 	maximumPasswordHashConcurrency = 4
+	maximumHTTPReadHeaderTimeout   = 30 * time.Second
+	maximumHTTPReadTimeout         = 2 * time.Minute
+	maximumHTTPWriteTimeout        = 5 * time.Minute
+	maximumHTTPIdleTimeout         = 10 * time.Minute
+	maximumHTTPHeaderBytes         = 1 << 20
+	maximumHTTPRequestBodyBytes    = 10 << 20
 	defaultAdminEmail              = "admin@goat.api"
 	defaultAdminPassword           = "Qwerty@123"
 )
@@ -24,6 +31,12 @@ const (
 var nonEmptyEnvironmentVariables = []string{
 	"ENV",
 	"SERVER_PORT",
+	"HTTP_READ_HEADER_TIMEOUT",
+	"HTTP_READ_TIMEOUT",
+	"HTTP_WRITE_TIMEOUT",
+	"HTTP_IDLE_TIMEOUT",
+	"HTTP_MAX_HEADER_BYTES",
+	"HTTP_MAX_BODY_BYTES",
 	"DB_HOST",
 	"DB_PORT",
 	"DB_USER",
@@ -57,6 +70,13 @@ var nonEmptyEnvironmentVariables = []string{
 type Config struct {
 	Env                        string        `env:"ENV" envDefault:"development"`
 	ServerPort                 uint16        `env:"SERVER_PORT" envDefault:"8080"`
+	HTTPReadHeaderTimeout      time.Duration `env:"HTTP_READ_HEADER_TIMEOUT" envDefault:"5s"`
+	HTTPReadTimeout            time.Duration `env:"HTTP_READ_TIMEOUT" envDefault:"15s"`
+	HTTPWriteTimeout           time.Duration `env:"HTTP_WRITE_TIMEOUT" envDefault:"30s"`
+	HTTPIdleTimeout            time.Duration `env:"HTTP_IDLE_TIMEOUT" envDefault:"60s"`
+	HTTPMaxHeaderBytes         int           `env:"HTTP_MAX_HEADER_BYTES" envDefault:"65536"`
+	HTTPMaxBodyBytes           int64         `env:"HTTP_MAX_BODY_BYTES" envDefault:"1048576"`
+	HTTPTrustedProxies         []string      `env:"HTTP_TRUSTED_PROXIES" envSeparator:","`
 	DBHost                     string        `env:"DB_HOST,required,notEmpty"`
 	DBPort                     uint16        `env:"DB_PORT" envDefault:"5432"`
 	DBUser                     string        `env:"DB_USER,required,notEmpty"`
@@ -123,6 +143,9 @@ func (c *Config) validate() error {
 	}
 	if c.ServerPort == 0 {
 		return fmt.Errorf("invalid SERVER_PORT: must be between 1 and 65535")
+	}
+	if err := c.validateHTTPIngress(); err != nil {
+		return err
 	}
 	if strings.TrimSpace(c.DBHost) == "" {
 		return fmt.Errorf("invalid DB_HOST: must not be empty")
@@ -241,6 +264,65 @@ func (c *Config) validate() error {
 		(c.AdminEmail == defaultAdminEmail || c.AdminPassword == defaultAdminPassword) {
 		return fmt.Errorf("invalid administrator seed configuration: default credentials are not allowed in production")
 	}
+	return nil
+}
+
+func (c *Config) validateHTTPIngress() error {
+	timeouts := []struct {
+		name    string
+		value   time.Duration
+		maximum time.Duration
+	}{
+		{name: "HTTP_READ_HEADER_TIMEOUT", value: c.HTTPReadHeaderTimeout, maximum: maximumHTTPReadHeaderTimeout},
+		{name: "HTTP_READ_TIMEOUT", value: c.HTTPReadTimeout, maximum: maximumHTTPReadTimeout},
+		{name: "HTTP_WRITE_TIMEOUT", value: c.HTTPWriteTimeout, maximum: maximumHTTPWriteTimeout},
+		{name: "HTTP_IDLE_TIMEOUT", value: c.HTTPIdleTimeout, maximum: maximumHTTPIdleTimeout},
+	}
+	for _, timeout := range timeouts {
+		if timeout.value <= 0 || timeout.value > timeout.maximum {
+			return fmt.Errorf(
+				"invalid %s: must be positive and no greater than %s",
+				timeout.name,
+				timeout.maximum,
+			)
+		}
+	}
+	if c.HTTPReadHeaderTimeout > c.HTTPReadTimeout {
+		return fmt.Errorf("invalid HTTP_READ_HEADER_TIMEOUT: must not exceed HTTP_READ_TIMEOUT")
+	}
+	if c.HTTPMaxHeaderBytes <= 0 || c.HTTPMaxHeaderBytes > maximumHTTPHeaderBytes {
+		return fmt.Errorf(
+			"invalid HTTP_MAX_HEADER_BYTES: must be positive and no greater than %d",
+			maximumHTTPHeaderBytes,
+		)
+	}
+	if c.HTTPMaxBodyBytes <= 0 || c.HTTPMaxBodyBytes > maximumHTTPRequestBodyBytes {
+		return fmt.Errorf(
+			"invalid HTTP_MAX_BODY_BYTES: must be positive and no greater than %d",
+			maximumHTTPRequestBodyBytes,
+		)
+	}
+
+	for index, proxy := range c.HTTPTrustedProxies {
+		proxy = strings.TrimSpace(proxy)
+		if proxy == "" {
+			return fmt.Errorf("invalid HTTP_TRUSTED_PROXIES: entries must be IP addresses or CIDR ranges")
+		}
+		if strings.Contains(proxy, "/") {
+			_, network, err := net.ParseCIDR(proxy)
+			if err != nil {
+				return fmt.Errorf("invalid HTTP_TRUSTED_PROXIES: entries must be IP addresses or CIDR ranges")
+			}
+			ones, _ := network.Mask.Size()
+			if ones == 0 {
+				return fmt.Errorf("invalid HTTP_TRUSTED_PROXIES: universal proxy ranges are not allowed")
+			}
+		} else if net.ParseIP(proxy) == nil {
+			return fmt.Errorf("invalid HTTP_TRUSTED_PROXIES: entries must be IP addresses or CIDR ranges")
+		}
+		c.HTTPTrustedProxies[index] = proxy
+	}
+
 	return nil
 }
 

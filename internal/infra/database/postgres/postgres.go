@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -15,41 +14,10 @@ import (
 
 const (
 	driverName = "pgx"
-
-	userSchema = `
-	CREATE TABLE IF NOT EXISTS users (
-		id UUID PRIMARY KEY,
-		email TEXT NOT NULL UNIQUE,
-		password TEXT NOT NULL,
-		status SMALLINT NOT NULL,
-		role SMALLINT NOT NULL,
-		credential_version BIGINT NOT NULL DEFAULT 1 CHECK (credential_version > 0),
-		created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-		updated_at TIMESTAMP NULL
-	);`
-
-	userCreatedAtIndex = `
-	CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_users_created_at_desc
-	ON users (created_at DESC);
-	`
-
-	permissionSchema = `
-	CREATE TABLE IF NOT EXISTS permissions (
-		id UUID PRIMARY KEY,
-		role SMALLINT NOT NULL,
-		action TEXT NOT NULL,
-		created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-		updated_at TIMESTAMP NULL,
-		CONSTRAINT unique_role_action UNIQUE(role, action)
-	);`
 )
 
 type startupPinger interface {
 	PingContext(context.Context) error
-}
-
-type startupExecutor interface {
-	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }
 
 type databaseCloser interface {
@@ -65,7 +33,7 @@ func NewDatabase(
 	if ctx == nil {
 		return nil, errors.New("PostgreSQL startup context is required")
 	}
-	connectionConfig, err := newConnectionConfig(cfg)
+	migrations, err := loadEmbeddedMigrations()
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +41,10 @@ func NewDatabase(
 		return nil, errors.New("PostgreSQL administrator seed password hasher is required")
 	}
 
-	db := sqlx.NewDb(stdlib.OpenDB(*connectionConfig), driverName)
+	db, err := newDatabasePool(cfg)
+	if err != nil {
+		return nil, err
+	}
 	if err := pingDatabase(ctx, cfg.ConnectionTimeout, db); err != nil {
 		logger.Error("failed to connect to database", "error", err)
 		return nil, closeFailedDatabaseInitialization(db, err)
@@ -84,12 +55,12 @@ func NewDatabase(
 		cfg.InitializationTimeout,
 	)
 	defer cancelInitialization()
-	if err := initializeSchema(initializationCtx, db); err != nil {
-		logger.Error("failed to initialize database schema", "error", err)
+	if err := validateCurrentMigrations(initializationCtx, db, migrations); err != nil {
+		logger.Error("failed to validate database migrations", "error", err)
 		return nil, closeFailedDatabaseInitialization(db, err)
 	}
 
-	logger.Info("Database connected and users, permissions table ensured")
+	logger.Info("Database connected and schema migration state validated")
 
 	if cfg.Seed {
 		if err := SeedPermissions(initializationCtx, db); err != nil {
@@ -113,6 +84,14 @@ func NewDatabase(
 	return db, nil
 }
 
+func newDatabasePool(cfg ClientConfig) (*sqlx.DB, error) {
+	connectionConfig, err := newConnectionConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return sqlx.NewDb(stdlib.OpenDB(*connectionConfig), driverName), nil
+}
+
 func pingDatabase(
 	ctx context.Context,
 	timeout time.Duration,
@@ -125,23 +104,6 @@ func pingDatabase(
 	}
 	cancelPing()
 	return err
-}
-
-func initializeSchema(ctx context.Context, executor startupExecutor) error {
-	operations := []struct {
-		name      string
-		statement string
-	}{
-		{name: "ensure users table", statement: userSchema},
-		{name: "ensure users created-at index", statement: userCreatedAtIndex},
-		{name: "ensure permissions table", statement: permissionSchema},
-	}
-	for _, operation := range operations {
-		if _, err := executor.ExecContext(ctx, operation.statement); err != nil {
-			return startupOperationError(operation.name, ctx, err)
-		}
-	}
-	return nil
 }
 
 func startupOperationError(operation string, ctx context.Context, err error) error {

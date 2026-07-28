@@ -13,6 +13,13 @@ func TestLoadParsesCompleteTypedConfiguration(t *testing.T) {
 	setEnvironmentValues(t, map[string]string{
 		"ENV":                           "development",
 		"SERVER_PORT":                   "9090",
+		"HTTP_READ_HEADER_TIMEOUT":      "6s",
+		"HTTP_READ_TIMEOUT":             "20s",
+		"HTTP_WRITE_TIMEOUT":            "40s",
+		"HTTP_IDLE_TIMEOUT":             "90s",
+		"HTTP_MAX_HEADER_BYTES":         "32768",
+		"HTTP_MAX_BODY_BYTES":           "2097152",
+		"HTTP_TRUSTED_PROXIES":          "127.0.0.1,10.0.0.0/8,::1",
 		"DB_HOST":                       "postgres.internal",
 		"DB_PORT":                       "5544",
 		"DB_USER":                       "goat_user",
@@ -50,6 +57,13 @@ func TestLoadParsesCompleteTypedConfiguration(t *testing.T) {
 	want := &Config{
 		Env:                        "development",
 		ServerPort:                 9090,
+		HTTPReadHeaderTimeout:      6 * time.Second,
+		HTTPReadTimeout:            20 * time.Second,
+		HTTPWriteTimeout:           40 * time.Second,
+		HTTPIdleTimeout:            90 * time.Second,
+		HTTPMaxHeaderBytes:         32768,
+		HTTPMaxBodyBytes:           2097152,
+		HTTPTrustedProxies:         []string{"127.0.0.1", "10.0.0.0/8", "::1"},
 		DBHost:                     "postgres.internal",
 		DBPort:                     5544,
 		DBUser:                     "goat_user",
@@ -103,6 +117,9 @@ func TestLoadAppliesIntentionalDefaults(t *testing.T) {
 		cfg.RedisDB != 0 ||
 		cfg.RedisPassword != "" ||
 		cfg.PasswordHashMaxConcurrency != 2 ||
+		cfg.HTTPMaxHeaderBytes != 64<<10 ||
+		cfg.HTTPMaxBodyBytes != 1<<20 ||
+		len(cfg.HTTPTrustedProxies) != 0 ||
 		cfg.GinMode != "debug" ||
 		!cfg.Seed ||
 		cfg.AdminEmail != defaultAdminEmail ||
@@ -115,6 +132,10 @@ func TestLoadAppliesIntentionalDefaults(t *testing.T) {
 	}{
 		"DB_CONNECTION_TIMEOUT":     {got: cfg.DBConnectionTimeout, want: 5 * time.Second},
 		"DB_INITIALIZATION_TIMEOUT": {got: cfg.DBInitializationTimeout, want: 2 * time.Minute},
+		"HTTP_READ_HEADER_TIMEOUT":  {got: cfg.HTTPReadHeaderTimeout, want: 5 * time.Second},
+		"HTTP_READ_TIMEOUT":         {got: cfg.HTTPReadTimeout, want: 15 * time.Second},
+		"HTTP_WRITE_TIMEOUT":        {got: cfg.HTTPWriteTimeout, want: 30 * time.Second},
+		"HTTP_IDLE_TIMEOUT":         {got: cfg.HTTPIdleTimeout, want: time.Minute},
 		"REDIS_CONNECTION_TIMEOUT":  {got: cfg.RedisConnectionTimeout, want: 5 * time.Second},
 		"JWT_EXPIRATION":            {got: cfg.JWTExpiration, want: 5 * time.Minute},
 		"REFRESH_TOKEN_EXPIRATION":  {got: cfg.RefreshTokenExpiration, want: 168 * time.Hour},
@@ -169,6 +190,8 @@ func TestLoadRejectsMalformedTypedValues(t *testing.T) {
 		{name: "REDIS_DB", value: "not-an-integer"},
 		{name: "SEED", value: "not-a-boolean"},
 		{name: "PASSWORD_HASH_MAX_CONCURRENCY", value: "not-an-integer"},
+		{name: "HTTP_READ_HEADER_TIMEOUT", value: "not-a-duration"},
+		{name: "HTTP_MAX_BODY_BYTES", value: "not-an-integer"},
 		{name: "JWT_EXPIRATION", value: "not-a-duration"},
 	}
 	for _, test := range tests {
@@ -190,6 +213,15 @@ func TestLoadRejectsInvalidRanges(t *testing.T) {
 		wantFragment string
 	}{
 		{name: "SERVER_PORT", value: "0", wantFragment: "SERVER_PORT"},
+		{name: "HTTP_READ_HEADER_TIMEOUT", value: "0s", wantFragment: "HTTP_READ_HEADER_TIMEOUT"},
+		{name: "HTTP_READ_HEADER_TIMEOUT", value: "31s", wantFragment: "HTTP_READ_HEADER_TIMEOUT"},
+		{name: "HTTP_READ_TIMEOUT", value: "121s", wantFragment: "HTTP_READ_TIMEOUT"},
+		{name: "HTTP_WRITE_TIMEOUT", value: "301s", wantFragment: "HTTP_WRITE_TIMEOUT"},
+		{name: "HTTP_IDLE_TIMEOUT", value: "601s", wantFragment: "HTTP_IDLE_TIMEOUT"},
+		{name: "HTTP_MAX_HEADER_BYTES", value: "0", wantFragment: "HTTP_MAX_HEADER_BYTES"},
+		{name: "HTTP_MAX_HEADER_BYTES", value: "1048577", wantFragment: "HTTP_MAX_HEADER_BYTES"},
+		{name: "HTTP_MAX_BODY_BYTES", value: "-1", wantFragment: "HTTP_MAX_BODY_BYTES"},
+		{name: "HTTP_MAX_BODY_BYTES", value: "10485761", wantFragment: "HTTP_MAX_BODY_BYTES"},
 		{name: "DB_PORT", value: "0", wantFragment: "DB_PORT"},
 		{name: "REDIS_PORT", value: "0", wantFragment: "REDIS_PORT"},
 		{name: "REDIS_DB", value: "-1", wantFragment: "REDIS_DB"},
@@ -223,6 +255,45 @@ func TestLoadRejectsInvalidRanges(t *testing.T) {
 	}
 }
 
+func TestLoadValidatesTrustedHTTPProxies(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     string
+		want      []string
+		wantError bool
+	}{
+		{name: "omitted trusts no proxy"},
+		{name: "explicit empty trusts no proxy", value: ""},
+		{
+			name:  "IP and CIDR entries",
+			value: " 127.0.0.1 , 10.0.0.0/8 , ::1 , 2001:db8::/32 ",
+			want:  []string{"127.0.0.1", "10.0.0.0/8", "::1", "2001:db8::/32"},
+		},
+		{name: "hostname rejected", value: "proxy.internal", wantError: true},
+		{name: "empty entry rejected", value: "127.0.0.1,,10.0.0.1", wantError: true},
+		{name: "invalid CIDR rejected", value: "10.0.0.0/99", wantError: true},
+		{name: "universal IPv4 range rejected", value: "0.0.0.0/0", wantError: true},
+		{name: "universal IPv6 range rejected", value: "::/0", wantError: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			setValidLoadEnvironment(t)
+			if test.name != "omitted trusts no proxy" {
+				t.Setenv("HTTP_TRUSTED_PROXIES", test.value)
+			}
+
+			cfg, err := Load()
+			if (err != nil) != test.wantError {
+				t.Fatalf("Load() error = %v, wantError %t", err, test.wantError)
+			}
+			if err == nil && !reflect.DeepEqual(cfg.HTTPTrustedProxies, test.want) {
+				t.Fatalf("HTTPTrustedProxies = %#v, want %#v", cfg.HTTPTrustedProxies, test.want)
+			}
+		})
+	}
+}
+
 func TestLoadRejectsInvalidEnvironmentAndTokenBounds(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -247,9 +318,10 @@ func TestLoadRejectsInvalidEnvironmentAndTokenBounds(t *testing.T) {
 
 func TestLoadRejectsEmptyRequiredValues(t *testing.T) {
 	for name, value := range map[string]string{
-		"REDIS_HOST":      "",
-		"JWT_SECRET":      " ",
-		"PASSWORD_PEPPER": "\t",
+		"HTTP_READ_TIMEOUT": "",
+		"REDIS_HOST":        "",
+		"JWT_SECRET":        " ",
+		"PASSWORD_PEPPER":   "\t",
 	} {
 		t.Run(name, func(t *testing.T) {
 			setValidLoadEnvironment(t)

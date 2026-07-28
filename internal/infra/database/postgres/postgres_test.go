@@ -81,25 +81,6 @@ func TestPingDatabaseAppliesConnectionDeadline(t *testing.T) {
 	}
 }
 
-func TestInitializeSchemaStopsOnContextDeadline(t *testing.T) {
-	executions := 0
-	executor := execContextFunc(func(ctx context.Context, _ string, _ ...any) (sql.Result, error) {
-		executions++
-		<-ctx.Done()
-		return nil, ctx.Err()
-	})
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-
-	err := initializeSchema(ctx, executor)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("initializeSchema() error = %v, want context.DeadlineExceeded", err)
-	}
-	if executions != 1 {
-		t.Fatalf("schema executions = %d, want 1 before cancellation", executions)
-	}
-}
-
 func TestStartupOperationErrorPreservesPrimaryAndCancellationCauses(t *testing.T) {
 	primaryErr := errors.New("PostgreSQL operation failed")
 	cancellationCause := errors.New("startup canceled by operator")
@@ -116,7 +97,7 @@ func TestStartupOperationErrorPreservesPrimaryAndCancellationCauses(t *testing.T
 }
 
 func TestCloseFailedDatabaseInitializationPreservesPrimaryAndCleanupErrors(t *testing.T) {
-	primaryErr := errors.New("schema initialization failed")
+	primaryErr := errors.New("schema migration validation failed")
 	closeErr := errors.New("close failed")
 
 	err := closeFailedDatabaseInitialization(closeFunc(func() error {
@@ -134,16 +115,6 @@ type pingContextFunc func(context.Context) error
 
 func (f pingContextFunc) PingContext(ctx context.Context) error {
 	return f(ctx)
-}
-
-type execContextFunc func(context.Context, string, ...any) (sql.Result, error)
-
-func (f execContextFunc) ExecContext(
-	ctx context.Context,
-	query string,
-	args ...any,
-) (sql.Result, error) {
-	return f(ctx, query, args...)
 }
 
 type closeFunc func() error

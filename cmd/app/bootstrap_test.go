@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -448,6 +449,60 @@ func TestInitializeAppStopsAfterPostgresFailureAndPreservesLoggerCleanupError(t 
 	want := []string{"logger.create", "postgres.create", "logger.sync"}
 	if got := recorder.snapshot(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("startup events = %v, want %v", got, want)
+	}
+}
+
+func TestInitializeAppStopsBeforeRedisAndRuntimeWhenMigrationsArePending(t *testing.T) {
+	t.Parallel()
+
+	recorder := &lifecycleRecorder{}
+	dependencies := bootstrapDependencies{
+		newLogger: func() (loggerResource, error) {
+			recorder.append("logger.create")
+			return loggerResource{
+				logger: discardLogger{},
+				sync:   recorder.action("logger.sync", nil),
+			}, nil
+		},
+		newPostgres: func(
+			context.Context,
+			postgres.ClientConfig,
+			pkg.Logger,
+			service.PasswordHasher,
+		) (postgresResource, error) {
+			recorder.append("postgres.validate-migrations")
+			return postgresResource{}, fmt.Errorf("validate schema: %w", postgres.ErrMigrationsPending)
+		},
+		newRedis: func(context.Context, *config.Config, pkg.Logger) (redisResource, error) {
+			t.Fatal("newRedis() called after migration validation failed")
+			return redisResource{}, nil
+		},
+		validateAssets: func(context.Context, *redis.Client) error {
+			t.Fatal("validateAssets() called after migration validation failed")
+			return nil
+		},
+		buildRuntime: func(
+			*config.Config,
+			pkg.Logger,
+			*sqlx.DB,
+			*redis.Client,
+			service.PasswordHasher,
+		) (runtimeResources, error) {
+			t.Fatal("buildRuntime() called after migration validation failed")
+			return runtimeResources{}, nil
+		},
+	}
+
+	app, err := initializeApp(context.Background(), bootstrapTestConfig(), dependencies)
+	if app != nil {
+		t.Fatal("initializeApp() returned an application with pending migrations")
+	}
+	if !errors.Is(err, postgres.ErrMigrationsPending) {
+		t.Fatalf("initializeApp() error = %v, want ErrMigrationsPending", err)
+	}
+	want := []string{"logger.create", "postgres.validate-migrations", "logger.sync"}
+	if got := recorder.snapshot(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("pending-migration startup events = %v, want %v", got, want)
 	}
 }
 

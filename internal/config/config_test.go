@@ -144,6 +144,46 @@ func TestValidateBoundsPasswordHashConcurrency(t *testing.T) {
 	}
 }
 
+func TestValidateBoundsHTTPIngress(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*Config)
+		wantErr bool
+	}{
+		{name: "valid defaults", mutate: func(*Config) {}},
+		{
+			name: "read-header timeout exceeds read timeout",
+			mutate: func(cfg *Config) {
+				cfg.HTTPReadHeaderTimeout = 16 * time.Second
+				cfg.HTTPReadTimeout = 15 * time.Second
+			},
+			wantErr: true,
+		},
+		{
+			name: "maximum values",
+			mutate: func(cfg *Config) {
+				cfg.HTTPReadHeaderTimeout = maximumHTTPReadHeaderTimeout
+				cfg.HTTPReadTimeout = maximumHTTPReadTimeout
+				cfg.HTTPWriteTimeout = maximumHTTPWriteTimeout
+				cfg.HTTPIdleTimeout = maximumHTTPIdleTimeout
+				cfg.HTTPMaxHeaderBytes = maximumHTTPHeaderBytes
+				cfg.HTTPMaxBodyBytes = maximumHTTPRequestBodyBytes
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validConfig()
+			test.mutate(cfg)
+			err := cfg.validate()
+			if (err != nil) != test.wantErr {
+				t.Fatalf("validate() error = %v, wantErr %t", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestLoadAppliesDatabaseStartupTimeoutDefaults(t *testing.T) {
 	setValidLoadEnvironment(t)
 	unsetEnvironment(t, "DB_CONNECTION_TIMEOUT")
@@ -225,6 +265,12 @@ func validConfig() *Config {
 	return &Config{
 		Env:                        "development",
 		ServerPort:                 8080,
+		HTTPReadHeaderTimeout:      5 * time.Second,
+		HTTPReadTimeout:            15 * time.Second,
+		HTTPWriteTimeout:           30 * time.Second,
+		HTTPIdleTimeout:            time.Minute,
+		HTTPMaxHeaderBytes:         64 << 10,
+		HTTPMaxBodyBytes:           1 << 20,
 		DBHost:                     "127.0.0.1",
 		DBPort:                     5432,
 		DBUser:                     "postgres",

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/motixo/goat-api/internal/delivery/http/handlers"
@@ -36,14 +37,60 @@ const (
 	GinModeRelease GinMode = GinMode(gin.ReleaseMode)
 )
 
-func newGinEngine(mode GinMode) (*gin.Engine, error) {
+func newGinEngine(mode GinMode, trustedProxies []string) (*gin.Engine, error) {
 	switch mode {
 	case GinModeDebug, GinModeRelease:
 		gin.SetMode(string(mode))
 	default:
 		return nil, fmt.Errorf("unsupported Gin mode %q", mode)
 	}
-	return gin.New(), nil
+
+	router := gin.New()
+	if err := router.SetTrustedProxies(trustedProxies); err != nil {
+		return nil, fmt.Errorf("configure trusted HTTP proxies: %w", err)
+	}
+	return router, nil
+}
+
+// ServerConfig contains only delivery-owned HTTP ingress settings. Process
+// environment parsing and policy validation remain in the composition/config
+// boundary.
+type ServerConfig struct {
+	GinMode             GinMode
+	ReadHeaderTimeout   time.Duration
+	ReadTimeout         time.Duration
+	WriteTimeout        time.Duration
+	IdleTimeout         time.Duration
+	MaxHeaderBytes      int
+	MaxRequestBodyBytes int64
+	TrustedProxies      []string
+}
+
+func (c ServerConfig) validate() error {
+	timeouts := []struct {
+		name  string
+		value time.Duration
+	}{
+		{name: "read-header timeout", value: c.ReadHeaderTimeout},
+		{name: "read timeout", value: c.ReadTimeout},
+		{name: "write timeout", value: c.WriteTimeout},
+		{name: "idle timeout", value: c.IdleTimeout},
+	}
+	for _, timeout := range timeouts {
+		if timeout.value <= 0 {
+			return fmt.Errorf("HTTP %s must be positive", timeout.name)
+		}
+	}
+	if c.ReadHeaderTimeout > c.ReadTimeout {
+		return fmt.Errorf("HTTP read-header timeout must not exceed read timeout")
+	}
+	if c.MaxHeaderBytes <= 0 {
+		return fmt.Errorf("HTTP maximum header bytes must be positive")
+	}
+	if c.MaxRequestBodyBytes <= 0 {
+		return fmt.Errorf("HTTP maximum request body bytes must be positive")
+	}
+	return nil
 }
 
 type Server struct {
@@ -95,11 +142,15 @@ func (l *readyListener) Accept() (net.Conn, error) {
 }
 
 func NewServer(
-	ginMode GinMode,
+	config ServerConfig,
 	dependencies ServerDependencies,
 	rlConfig middleware.RateLimitConfig,
 ) (*Server, error) {
-	router, err := newGinEngine(ginMode)
+	if err := config.validate(); err != nil {
+		return nil, err
+	}
+	trustedProxies := append([]string(nil), config.TrustedProxies...)
+	router, err := newGinEngine(config.GinMode, trustedProxies)
 	if err != nil {
 		return nil, err
 	}
@@ -112,6 +163,7 @@ func NewServer(
 
 	router.Use(
 		middleware.Recovery(dependencies.Logger),
+		middleware.RequestBodyLimit(config.MaxRequestBodyBytes),
 		metricsMiddleware.Handler(),
 	)
 
@@ -121,7 +173,12 @@ func NewServer(
 	permissionHandler := handlers.NewPermissionHandler(dependencies.PermissionUseCase, dependencies.Logger)
 
 	httpServerInstance := &http.Server{
-		Handler: router,
+		Handler:           router,
+		ReadHeaderTimeout: config.ReadHeaderTimeout,
+		ReadTimeout:       config.ReadTimeout,
+		WriteTimeout:      config.WriteTimeout,
+		IdleTimeout:       config.IdleTimeout,
+		MaxHeaderBytes:    config.MaxHeaderBytes,
 	}
 
 	server := &Server{

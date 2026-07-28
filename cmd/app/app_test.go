@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/motixo/goat-api/internal/config"
+	deliveryHTTP "github.com/motixo/goat-api/internal/delivery/http"
 	"github.com/motixo/goat-api/internal/delivery/http/middleware"
 	authInfra "github.com/motixo/goat-api/internal/infra/auth"
 	"github.com/motixo/goat-api/internal/infra/database/postgres"
@@ -41,6 +42,40 @@ func TestNewRateLimitConfig(t *testing.T) {
 
 	if got := newRateLimitConfig(cfg); !reflect.DeepEqual(got, want) {
 		t.Fatalf("newRateLimitConfig() = %#v, want %#v", got, want)
+	}
+}
+
+func TestNewHTTPServerConfig(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		GinMode:               "release",
+		HTTPReadHeaderTimeout: 6 * time.Second,
+		HTTPReadTimeout:       20 * time.Second,
+		HTTPWriteTimeout:      40 * time.Second,
+		HTTPIdleTimeout:       90 * time.Second,
+		HTTPMaxHeaderBytes:    32 << 10,
+		HTTPMaxBodyBytes:      2 << 20,
+		HTTPTrustedProxies:    []string{"127.0.0.1", "10.0.0.0/8"},
+	}
+	want := deliveryHTTP.ServerConfig{
+		GinMode:             deliveryHTTP.GinModeRelease,
+		ReadHeaderTimeout:   cfg.HTTPReadHeaderTimeout,
+		ReadTimeout:         cfg.HTTPReadTimeout,
+		WriteTimeout:        cfg.HTTPWriteTimeout,
+		IdleTimeout:         cfg.HTTPIdleTimeout,
+		MaxHeaderBytes:      cfg.HTTPMaxHeaderBytes,
+		MaxRequestBodyBytes: cfg.HTTPMaxBodyBytes,
+		TrustedProxies:      []string{"127.0.0.1", "10.0.0.0/8"},
+	}
+
+	got := newHTTPServerConfig(cfg)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("newHTTPServerConfig() = %#v, want %#v", got, want)
+	}
+	cfg.HTTPTrustedProxies[0] = "203.0.113.1"
+	if got.TrustedProxies[0] != "127.0.0.1" {
+		t.Fatal("newHTTPServerConfig() retained the mutable application-config slice")
 	}
 }
 

@@ -1,11 +1,13 @@
 BIN_DIR := ./build/bin
 APP := $(BIN_DIR)/app
+MIGRATE := $(BIN_DIR)/migrate
 MAIN_PKG := ./cmd/app
+MIGRATE_PKG := ./cmd/migrate
 ENV_FILE := .env
 
 GOLANGCI_LINT := $(shell go env GOPATH)/bin/golangci-lint
 
-.PHONY: all build clean run test lint help
+.PHONY: all build clean migrate migrate-validate run test lint help
 
 all: clean test build
 
@@ -18,6 +20,8 @@ build:
 	mkdir -p $(BIN_DIR)
 	@echo "Building $(APP)..."
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o $(APP) $(MAIN_PKG)
+	@echo "Building $(MIGRATE)..."
+	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o $(MIGRATE) $(MIGRATE_PKG)
 	@echo "Build completed!"
 
 clean:
@@ -25,7 +29,25 @@ clean:
 	rm -rf $(BIN_DIR)
 	@echo "Clean completed!"
 
-run: build
+migrate: build
+	@echo "Applying PostgreSQL migrations with environment from $(ENV_FILE)..."
+	@if [ -f "$(ENV_FILE)" ]; then \
+		export $$(grep -v '^#' $(ENV_FILE) | xargs) && $(MIGRATE) up; \
+	else \
+		echo "Warning: $(ENV_FILE) not found, running without environment file"; \
+		$(MIGRATE) up; \
+	fi
+
+migrate-validate: build
+	@echo "Validating PostgreSQL migrations with environment from $(ENV_FILE)..."
+	@if [ -f "$(ENV_FILE)" ]; then \
+		export $$(grep -v '^#' $(ENV_FILE) | xargs) && $(MIGRATE) validate; \
+	else \
+		echo "Warning: $(ENV_FILE) not found, running without environment file"; \
+		$(MIGRATE) validate; \
+	fi
+
+run: migrate
 	@echo "Running $(APP) with environment from $(ENV_FILE)..."
 	@if [ -f "$(ENV_FILE)" ]; then \
 		export $$(grep -v '^#' $(ENV_FILE) | xargs) && $(APP); \
@@ -58,7 +80,9 @@ help:
 	@echo "  all          - Clean, test, and build"
 	@echo "  build        - Build the application"
 	@echo "  clean        - Clean build artifacts"
-	@echo "  run          - Build and run the application"
+	@echo "  migrate      - Build and apply PostgreSQL migrations"
+	@echo "  migrate-validate - Verify PostgreSQL is at the embedded schema version"
+	@echo "  run          - Migrate, then run the application"
 	@echo "  test         - Run tests"
 	@echo "  lint         - Run linter (optional)"
 	@echo "  docker-build - Build Docker image"

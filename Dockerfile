@@ -18,6 +18,12 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -o /out/app \
     ./cmd/app
 
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -trimpath \
+    -ldflags="-s -w" \
+    -o /out/migrate \
+    ./cmd/migrate
+
 # Runtime image
 FROM alpine:latest AS runtime
 
@@ -26,6 +32,7 @@ RUN apk add --no-cache ca-certificates \
 
 WORKDIR /app
 COPY --from=builder --chown=appuser:appuser /out/app /app/app
+COPY --from=builder --chown=appuser:appuser /out/migrate /app/migrate
 
 USER appuser
 

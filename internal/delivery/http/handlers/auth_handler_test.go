@@ -444,6 +444,41 @@ func TestAuthHandlerLocalizesValidationProblems(t *testing.T) {
 	}`)
 }
 
+func TestAuthHandlerOversizedBodyPreservesInvalidPayloadProblem(t *testing.T) {
+	usecase := &stubAuthenticationUseCase{
+		login: func(context.Context, authentication.LoginInput) (authentication.LoginOutput, error) {
+			t.Fatal("Login called for an oversized request body")
+			return authentication.LoginOutput{}, nil
+		},
+	}
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(httpMiddleware.RequestBodyLimit(32))
+	router.POST("/auth/login", NewAuthHandler(usecase, discardAuthHandlerLogger{}).Login)
+
+	recorder := performAuthHandlerRequest(
+		t,
+		router,
+		http.MethodPost,
+		"/auth/login",
+		`{"email":"user@example.com","password":"Password1!"}`,
+	)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "application/problem+json" {
+		t.Fatalf("Content-Type = %q, want application/problem+json", got)
+	}
+	assertAuthHandlerJSONEqual(t, recorder.Body.Bytes(), `{
+		"type":"/errors/validation",
+		"title":"Bad Request",
+		"status":400,
+		"detail":"Invalid request payload",
+		"instance":"/auth/login"
+	}`)
+}
+
 func TestAuthHandlerPreservesExistingMissingFieldBindingBehavior(t *testing.T) {
 	loginCalled := false
 	registerCalled := false

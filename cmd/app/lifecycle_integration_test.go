@@ -21,6 +21,19 @@ func TestApplicationLifecycleIntegration(t *testing.T) {
 	if os.Getenv("GOAT_LIFECYCLE_INTEGRATION") != "1" {
 		t.Skip("set GOAT_LIFECYCLE_INTEGRATION=1 to run application lifecycle integration tests")
 	}
+	migrationConfig := lifecycleIntegrationConfig(t)
+	migrationCtx, cancelMigration := context.WithTimeout(
+		context.Background(),
+		migrationConfig.DBInitializationTimeout,
+	)
+	defer cancelMigration()
+	if _, err := postgres.Migrate(
+		migrationCtx,
+		newPostgresClientConfig(migrationConfig),
+		discardLogger{},
+	); err != nil {
+		t.Fatalf("apply lifecycle integration migrations: %v", err)
+	}
 
 	t.Run("successful bootstrap and cleanup closes both stores", func(t *testing.T) {
 		cfg := lifecycleIntegrationConfig(t)
@@ -116,6 +129,12 @@ func lifecycleIntegrationConfig(t *testing.T) *config.Config {
 	return &config.Config{
 		Env:                        "development",
 		ServerPort:                 0,
+		HTTPReadHeaderTimeout:      5 * time.Second,
+		HTTPReadTimeout:            15 * time.Second,
+		HTTPWriteTimeout:           30 * time.Second,
+		HTTPIdleTimeout:            time.Minute,
+		HTTPMaxHeaderBytes:         64 << 10,
+		HTTPMaxBodyBytes:           1 << 20,
 		DBHost:                     envOrDefault("GOAT_POSTGRES_HOST", "127.0.0.1"),
 		DBPort:                     parseIntegrationPort(t, "GOAT_POSTGRES_PORT", envOrDefault("GOAT_POSTGRES_PORT", "5432")),
 		DBUser:                     envOrDefault("GOAT_POSTGRES_USER", "postgres"),

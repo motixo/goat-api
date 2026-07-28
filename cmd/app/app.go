@@ -335,7 +335,7 @@ func buildRuntime(
 	cleaner := cron.NewSessionCleaner(sessionRepository, appLogger)
 
 	server, err := deliveryHTTP.NewServer(
-		deliveryHTTP.GinMode(cfg.GinMode),
+		newHTTPServerConfig(cfg),
 		deliveryHTTP.ServerDependencies{
 			UserUseCase:           userUseCase,
 			AuthenticationUseCase: authenticationUseCase,
@@ -357,6 +357,19 @@ func buildRuntime(
 		server:  server,
 		cleaner: cleaner,
 	}, nil
+}
+
+func newHTTPServerConfig(cfg *config.Config) deliveryHTTP.ServerConfig {
+	return deliveryHTTP.ServerConfig{
+		GinMode:             deliveryHTTP.GinMode(cfg.GinMode),
+		ReadHeaderTimeout:   cfg.HTTPReadHeaderTimeout,
+		ReadTimeout:         cfg.HTTPReadTimeout,
+		WriteTimeout:        cfg.HTTPWriteTimeout,
+		IdleTimeout:         cfg.HTTPIdleTimeout,
+		MaxHeaderBytes:      cfg.HTTPMaxHeaderBytes,
+		MaxRequestBodyBytes: cfg.HTTPMaxBodyBytes,
+		TrustedProxies:      append([]string(nil), cfg.HTTPTrustedProxies...),
+	}
 }
 
 func newRedisClientConfig(cfg *config.Config) redisStorage.ClientConfig {
